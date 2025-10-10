@@ -1,0 +1,122 @@
+import mongoose from 'mongoose';
+
+const GridOptionSchema = new mongoose.Schema({
+  rows: [String],
+  columns: [String]
+}, { _id: false });
+
+const ShowWhenSchema = new mongoose.Schema({
+  questionId: {
+    type: String,
+    required: true
+  },
+  value: mongoose.Schema.Types.Mixed
+}, { _id: false });
+
+const FollowUpQuestionSchema = new mongoose.Schema({
+  id: {
+    type: String,
+    required: true
+  },
+  text: {
+    type: String,
+    required: true
+  },
+  type: {
+    type: String,
+    enum: [
+      'text', 'radio', 'checkbox', 'email', 'url', 'tel', 'date', 'time',
+      'file', 'range', 'rating', 'scale', 'radio-grid', 'checkbox-grid',
+      'radio-image', 'paragraph', 'search-select', 'number', 'location'
+    ],
+    required: true
+  },
+  required: {
+    type: Boolean,
+    default: false
+  },
+  options: [String],
+  gridOptions: GridOptionSchema,
+  min: Number,
+  max: Number,
+  step: Number,
+  showWhen: ShowWhenSchema,
+  parentId: String,
+  imageUrl: String,
+  description: String,
+  sectionId: String,
+  followUpQuestions: [mongoose.Schema.Types.Mixed] // Support nested follow-up questions
+}, { _id: false });
+
+const SectionSchema = new mongoose.Schema({
+  id: {
+    type: String,
+    required: true
+  },
+  title: {
+    type: String,
+    required: true
+  },
+  description: String,
+  questions: [FollowUpQuestionSchema]
+}, { _id: false });
+
+const FormSchema = new mongoose.Schema({
+  id: {
+    type: String,
+    required: true,
+    unique: true
+  },
+  title: {
+    type: String,
+    required: true
+  },
+  description: {
+    type: String,
+    required: true
+  },
+  logoUrl: String,
+  imageUrl: String,
+  sections: [SectionSchema],
+  followUpQuestions: [FollowUpQuestionSchema],
+  parentFormId: String,
+  parentFormTitle: String,
+  isVisible: {
+    type: Boolean,
+    default: false
+  },
+  createdBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  tenantId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Tenant',
+    required: true
+  },
+  isActive: {
+    type: Boolean,
+    default: true
+  },
+  permissions: {
+    canRespond: [String], // Array of role names
+    canViewResponses: [String],
+    canEdit: [String],
+    canAddFollowUp: [String],
+    canDelete: [String]
+  }
+}, {
+  timestamps: true
+});
+
+// Index for efficient queries
+FormSchema.index({ id: 1 });
+FormSchema.index({ createdBy: 1 });
+FormSchema.index({ isVisible: 1 });
+FormSchema.index({ isActive: 1 });
+FormSchema.index({ tenantId: 1 });
+
+const Form = mongoose.model('Form', FormSchema);
+
+export default Form;

@@ -1,0 +1,918 @@
+import mongoose from 'mongoose';
+import Form from '../models/Form.js';
+import Response from '../models/Response.js';
+import { v4 as uuidv4 } from 'uuid';
+
+const applyPopulate = (query, populateOptions) => {
+  if (!populateOptions) {
+    return query;
+  }
+
+  let populatedQuery = query;
+
+  if (Array.isArray(populateOptions)) {
+    populateOptions.forEach((option) => {
+      populatedQuery = populatedQuery.populate(option);
+    });
+  } else {
+    populatedQuery = populatedQuery.populate(populateOptions);
+  }
+
+  return populatedQuery;
+};
+
+const findFormByIdentifier = async (identifier, populateOptions) => {
+  let formQuery = applyPopulate(Form.findOne({ id: identifier }), populateOptions);
+  let form = await formQuery;
+
+  if (!form && mongoose.Types.ObjectId.isValid(identifier)) {
+    formQuery = applyPopulate(Form.findById(identifier), populateOptions);
+    form = await formQuery;
+  }
+
+  return form;
+};
+
+export const createForm = async (req, res) => {
+  try {
+    console.log('=== Create Form Request ===');
+    console.log('User:', req.user?.email, 'Role:', req.user?.role);
+    console.log('Request body keys:', Object.keys(req.body));
+    
+    // Determine tenantId based on user role
+    let tenantId;
+    if (req.user.role === 'superadmin') {
+      // SuperAdmin must provide tenantId in request body
+      tenantId = req.body.tenantId;
+      console.log('SuperAdmin - tenantId from body:', tenantId);
+      if (!tenantId) {
+        return res.status(400).json({
+          success: false,
+          message: 'tenantId is required for superadmin to create forms'
+        });
+      }
+    } else {
+      // Other users use their own tenantId
+      tenantId = req.user.tenantId;
+      console.log('Regular user - tenantId from user:', tenantId);
+      if (!tenantId) {
+        return res.status(400).json({
+          success: false,
+          message: 'User does not have a tenantId assigned'
+        });
+      }
+    }
+
+    // Validate tenantId is a valid ObjectId
+    if (!mongoose.Types.ObjectId.isValid(tenantId)) {
+      console.error('Invalid tenantId format:', tenantId);
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid tenantId format. Must be a valid MongoDB ObjectId.'
+      });
+    }
+
+    const formData = {
+      ...req.body,
+      id: req.body.id || uuidv4(),
+      createdBy: req.user._id,
+      tenantId: tenantId
+    };
+
+    console.log('Form data to save:', {
+      id: formData.id,
+      title: formData.title,
+      description: formData.description?.substring(0, 50),
+      sectionsCount: formData.sections?.length,
+      tenantId: formData.tenantId,
+      createdBy: formData.createdBy
+    });
+
+    const form = new Form(formData);
+    await form.save();
+
+    console.log('Form created successfully with ID:', form.id);
+
+    res.status(201).json({
+      success: true,
+      message: 'Form created successfully',
+      data: { form }
+    });
+
+  } catch (error) {
+    console.error('=== Create form error ===');
+    console.error('Error name:', error.name);
+    console.error('Error message:', error.message);
+    
+    if (error.code === 11000) {
+      console.error('Duplicate key error:', error.keyValue);
+      return res.status(400).json({
+        success: false,
+        message: 'Form with this ID already exists'
+      });
+    }
+
+    // Log the full error for debugging
+    if (error.name === 'ValidationError') {
+      console.error('Validation error details:', JSON.stringify(error.errors, null, 2));
+      const errorDetails = Object.keys(error.errors).map(key => ({
+        field: key,
+        message: error.errors[key].message,
+        value: error.errors[key].value
+      }));
+      console.error('Formatted errors:', errorDetails);
+      
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors: errorDetails
+      });
+    }
+    
+    console.error('Unhandled error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+export const getAllForms = async (req, res) => {
+  try {
+    const { page = 1, limit = 10, search, isVisible, isActive, createdBy } = req.query;
+
+    const query = { ...req.tenantFilter };
+
+    // Search by title or description
+    if (search) {
+      query.$or = [
+        { title: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    // Filter by visibility
+    if (isVisible !== undefined) {
+      query.isVisible = isVisible === 'true';
+    }
+
+    // Filter by active status
+    if (isActive !== undefined) {
+      query.isActive = isActive === 'true';
+    }
+
+    // Filter by creator
+    if (createdBy) {
+      query.createdBy = createdBy;
+    }
+
+    const options = {
+      page: parseInt(page),
+      limit: parseInt(limit),
+      sort: { createdAt: -1 },
+      populate: {
+        path: 'createdBy',
+        select: 'username firstName lastName email'
+      }
+    };
+
+    const forms = await Form.find(query)
+      .populate(options.populate.path, options.populate.select)
+      .sort(options.sort)
+      .limit(options.limit * 1)
+      .skip((options.page - 1) * options.limit);
+
+    const total = await Form.countDocuments(query);
+
+    res.json({
+      success: true,
+      data: {
+        forms,
+        pagination: {
+          currentPage: options.page,
+          totalPages: Math.ceil(total / options.limit),
+          totalForms: total,
+          hasNextPage: options.page < Math.ceil(total / options.limit),
+          hasPrevPage: options.page > 1
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Get all forms error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+export const getPublicForms = async (req, res) => {
+  try {
+    const { tenantSlug } = req.params;
+    
+    // If tenantSlug is provided (public customer access), find tenant by slug
+    let query = { isActive: true, isVisible: true };
+    
+    if (tenantSlug) {
+      // Import Tenant model
+      const Tenant = mongoose.model('Tenant');
+      const tenant = await Tenant.findOne({ slug: tenantSlug, isActive: true });
+      
+      if (!tenant) {
+        return res.status(404).json({
+          success: false,
+          message: 'Business not found or inactive'
+        });
+      }
+      
+      query.tenantId = tenant._id;
+    } else if (req.tenantFilter) {
+      // Authenticated user - apply tenant filter
+      query = { ...query, ...req.tenantFilter };
+    }
+    
+    const forms = await Form.find(query)
+      .select('id title description logoUrl imageUrl createdAt tenantId isActive isVisible sections parentFormId')
+      .populate('sections.questions')
+      .sort({ createdAt: -1 });
+
+    const parentForms = forms.filter((form) => !form.parentFormId);
+    const publicForms = parentForms.filter((form) => form.isVisible === true);
+
+    res.json({
+      success: true,
+      data: { forms: publicForms }
+    });
+
+  } catch (error) {
+    console.error('Get public forms error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+export const getFormById = async (req, res) => {
+  try {
+    const { id, tenantSlug } = req.params;
+
+    const populateOptions = req.populateOptions || {
+      path: 'createdBy',
+      select: 'username firstName lastName email'
+    };
+
+    let form = await findFormByIdentifier(id, populateOptions);
+
+    if (!form) {
+      return res.status(404).json({
+        success: false,
+        message: 'Form not found'
+      });
+    }
+
+    // For public access with tenant slug, verify tenant and form visibility
+    if (tenantSlug) {
+      const Tenant = mongoose.model('Tenant');
+      const tenant = await Tenant.findOne({ slug: tenantSlug, isActive: true });
+      
+      if (!tenant) {
+        return res.status(404).json({
+          success: false,
+          message: 'Business not found or inactive'
+        });
+      }
+      
+      // Verify form belongs to this tenant
+      if (form.tenantId.toString() !== tenant._id.toString()) {
+        return res.status(404).json({
+          success: false,
+          message: 'Form not found'
+        });
+      }
+      
+      // Check if form is visible
+      if (!form.isVisible) {
+        return res.status(404).json({
+          success: false,
+          message: 'Form not found'
+        });
+      }
+    }
+    
+    // For public access (no req.user and no tenantSlug), check if form is visible
+    if (!req.user && !tenantSlug && !form.isVisible) {
+      return res.status(404).json({
+        success: false,
+        message: 'Form not found'
+      });
+    }
+
+    // Debug logging
+    console.log('=== Returning form ===');
+    console.log('Form ID:', form.id);
+    console.log('Sections:', form.sections?.length || 0);
+    if (form.sections && form.sections.length > 0) {
+      form.sections.forEach((section, idx) => {
+        console.log(`Section ${idx}: ${section.title}, Questions: ${section.questions?.length || 0}`);
+        if (section.questions) {
+          section.questions.forEach((q, qIdx) => {
+            console.log(`  Q${qIdx}: ${q.text}, showWhen:`, q.showWhen ? `${q.showWhen.questionId} = ${q.showWhen.value}` : 'none');
+          });
+        }
+      });
+    }
+
+    res.json({
+      success: true,
+      data: { form }
+    });
+
+  } catch (error) {
+    console.error('Get form by ID error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+export const updateForm = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const form = await Form.findOne({ id });
+
+    if (!form) {
+      return res.status(404).json({
+        success: false,
+        message: 'Form not found'
+      });
+    }
+
+    // Check permissions
+    if (form.createdBy.toString() !== req.user._id.toString() && 
+        req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. You can only edit your own forms.'
+      });
+    }
+
+    // For admin, ensure they can only edit forms in their tenant
+    if (req.user.role === 'admin' && form.tenantId.toString() !== req.user.tenantId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. You can only edit forms in your organization.'
+      });
+    }
+
+    // Update form
+    Object.assign(form, req.body);
+    await form.save();
+
+    res.json({
+      success: true,
+      message: 'Form updated successfully',
+      data: { form }
+    });
+
+  } catch (error) {
+    console.error('Update form error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+export const deleteForm = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const form = await Form.findOne({ id });
+
+    if (!form) {
+      return res.status(404).json({
+        success: false,
+        message: 'Form not found'
+      });
+    }
+
+    // Check permissions
+    if (form.createdBy.toString() !== req.user._id.toString() && 
+        req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. You can only delete your own forms.'
+      });
+    }
+
+    // For admin, ensure they can only delete forms in their tenant
+    if (req.user.role === 'admin' && form.tenantId.toString() !== req.user.tenantId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. You can only delete forms in your organization.'
+      });
+    }
+
+    // Delete related responses
+    await Response.deleteMany({ questionId: id });
+
+    // Delete form
+    await Form.findOneAndDelete({ id });
+
+    res.json({
+      success: true,
+      message: 'Form and related responses deleted successfully'
+    });
+
+  } catch (error) {
+    console.error('Delete form error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+export const updateFormVisibility = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isVisible } = req.body;
+
+    const form = await Form.findOne({ id });
+
+    if (!form) {
+      return res.status(404).json({
+        success: false,
+        message: 'Form not found'
+      });
+    }
+
+    // Check permissions
+    if (form.createdBy.toString() !== req.user._id.toString() && 
+        req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. You can only modify your own forms.'
+      });
+    }
+
+    // For admin, ensure they can only modify forms in their tenant
+    if (req.user.role === 'admin' && form.tenantId.toString() !== req.user.tenantId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. You can only modify forms in your organization.'
+      });
+    }
+
+    form.isVisible = isVisible;
+    await form.save();
+
+    res.json({
+      success: true,
+      message: `Form ${isVisible ? 'published' : 'unpublished'} successfully`,
+      data: { form }
+    });
+
+  } catch (error) {
+    console.error('Update form visibility error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+export const updateFormActiveStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isActive } = req.body;
+
+    const form = await Form.findOne({ id });
+
+    if (!form) {
+      return res.status(404).json({
+        success: false,
+        message: 'Form not found'
+      });
+    }
+
+    // Check permissions
+    if (form.createdBy.toString() !== req.user._id.toString() &&
+        req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. You can only modify your own forms.'
+      });
+    }
+
+    // For admin, ensure they can only modify forms in their tenant
+    if (req.user.role === 'admin' && form.tenantId.toString() !== req.user.tenantId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. You can only modify forms in your organization.'
+      });
+    }
+
+    form.isActive = isActive;
+    await form.save();
+
+    res.json({
+      success: true,
+      message: `Form ${isActive ? 'activated' : 'deactivated'} successfully`,
+      data: { form }
+    });
+
+  } catch (error) {
+    console.error('Update form active status error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+export const duplicateForm = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const originalForm = await Form.findOne({ id });
+
+    if (!originalForm) {
+      return res.status(404).json({
+        success: false,
+        message: 'Form not found'
+      });
+    }
+
+    // Create duplicate
+    const duplicateData = originalForm.toObject();
+    delete duplicateData._id;
+    delete duplicateData.__v;
+    
+    duplicateData.id = uuidv4();
+    duplicateData.title = `${duplicateData.title} (Copy)`;
+    duplicateData.isVisible = false;
+    duplicateData.createdBy = req.user._id;
+    // Keep the same tenantId as the original form (admin can only duplicate their own tenant's forms)
+    duplicateData.tenantId = originalForm.tenantId;
+    duplicateData.createdAt = new Date();
+    duplicateData.updatedAt = new Date();
+
+    const duplicateForm = new Form(duplicateData);
+    await duplicateForm.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Form duplicated successfully',
+      data: { form: duplicateForm }
+    });
+
+  } catch (error) {
+    console.error('Duplicate form error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+export const getFormAnalytics = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { period = '30d' } = req.query;
+
+    const form = await Form.findOne({ id });
+
+    if (!form) {
+      return res.status(404).json({
+        success: false,
+        message: 'Form not found'
+      });
+    }
+
+    // Calculate date range
+    const now = new Date();
+    let startDate;
+    
+    switch (period) {
+      case '7d':
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case '30d':
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        break;
+      case '90d':
+        startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+        break;
+      default:
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    }
+
+    // Get responses for analytics
+    const responses = await Response.find({
+      questionId: id,
+      createdAt: { $gte: startDate }
+    }).sort({ createdAt: 1 });
+
+    // Calculate analytics
+    const totalResponses = responses.length;
+    const averageResponseTime = responses.length > 0 
+      ? responses.reduce((acc, curr, index) => {
+          if (index === 0) return 0;
+          return acc + (new Date(curr.createdAt) - new Date(responses[index - 1].createdAt));
+        }, 0) / (responses.length - 1) 
+      : 0;
+
+    // Group responses by day
+    const dailyResponses = responses.reduce((acc, response) => {
+      const date = new Date(response.createdAt).toISOString().split('T')[0];
+      acc[date] = (acc[date] || 0) + 1;
+      return acc;
+    }, {});
+
+    // Status distribution
+    const statusDistribution = responses.reduce((acc, response) => {
+      acc[response.status] = (acc[response.status] || 0) + 1;
+      return acc;
+    }, {});
+
+    res.json({
+      success: true,
+      data: {
+        totalResponses,
+        averageResponseTime: Math.round(averageResponseTime / (1000 * 60)), // in minutes
+        dailyResponses,
+        statusDistribution,
+        period,
+        form: {
+          id: form.id,
+          title: form.title,
+          createdAt: form.createdAt
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Get form analytics error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// New endpoint for creating forms with follow-up question configuration
+export const createFormWithFollowUp = async (req, res) => {
+  try {
+    const {
+      title,
+      description,
+      logoUrl,
+      imageUrl,
+      options = ['Option A', 'Option B', 'Option C', 'Option D'],
+      followUpConfig = {
+        'Option A': { hasFollowUp: true, required: true },
+        'Option B': { hasFollowUp: false, required: false },
+        'Option C': { hasFollowUp: false, required: false },
+        'Option D': { hasFollowUp: true, required: true }
+      }
+    } = req.body;
+
+    const formId = uuidv4();
+
+    // Create main question with 4 options
+    const mainQuestion = {
+      id: `main-${uuidv4()}`,
+      text: title,
+      type: 'radio',
+      required: true,
+      options: options,
+      description: description
+    };
+
+    // Create follow-up questions for options that need them
+    const followUpQuestions = [];
+    
+    options.forEach((option, index) => {
+      const config = followUpConfig[option];
+      if (config && config.hasFollowUp) {
+        followUpQuestions.push({
+          id: `followup-${option.toLowerCase().replace(/\s+/g, '-')}-${uuidv4()}`,
+          text: `Please provide additional details for ${option}:`,
+          type: 'paragraph',
+          required: config.required,
+          showWhen: {
+            questionId: mainQuestion.id,
+            value: option
+          },
+          parentId: mainQuestion.id,
+          description: `This follow-up question is ${config.required ? 'mandatory' : 'optional'} for ${option}`
+        });
+      }
+    });
+
+    const formData = {
+      id: formId,
+      title,
+      description,
+      logoUrl,
+      imageUrl,
+      sections: [{
+        id: `section-${uuidv4()}`,
+        title: 'Main Section',
+        description: 'Please select one option and provide follow-up details if required',
+        questions: [mainQuestion, ...followUpQuestions]
+      }],
+      followUpQuestions,
+      isVisible: false,
+      createdBy: req.user._id,
+      permissions: {
+        canRespond: ['all'],
+        canViewResponses: [req.user.role],
+        canEdit: [req.user.role],
+        canAddFollowUp: [req.user.role],
+        canDelete: [req.user.role]
+      }
+    };
+
+    const form = new Form(formData);
+    await form.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Form with follow-up questions created successfully',
+      data: { 
+        form,
+        followUpConfig
+      }
+    });
+
+  } catch (error) {
+    console.error('Create form with follow-up error:', error);
+    
+    if (error.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: 'Form with this ID already exists'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Update follow-up question configuration
+export const updateFollowUpConfig = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { followUpConfig } = req.body;
+
+    const form = await Form.findOne({ id });
+
+    if (!form) {
+      return res.status(404).json({
+        success: false,
+        message: 'Form not found'
+      });
+    }
+
+    // Check permissions
+    if (form.createdBy.toString() !== req.user._id.toString() && 
+        req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. You can only modify your own forms.'
+      });
+    }
+
+    // For admin, ensure they can only modify forms in their tenant
+    if (req.user.role === 'admin' && form.tenantId.toString() !== req.user.tenantId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. You can only modify forms in your organization.'
+      });
+    }
+
+    // Update follow-up questions based on new configuration
+    const updatedFollowUpQuestions = [];
+    
+    if (form.sections.length > 0 && form.sections[0].questions.length > 0) {
+      const mainQuestion = form.sections[0].questions[0];
+      
+      if (mainQuestion.options) {
+        mainQuestion.options.forEach(option => {
+          const config = followUpConfig[option];
+          if (config && config.hasFollowUp) {
+            // Find existing follow-up question or create new one
+            const existingFollowUp = form.followUpQuestions.find(
+              fq => fq.showWhen && fq.showWhen.value === option
+            );
+            
+            if (existingFollowUp) {
+              existingFollowUp.required = config.required;
+              existingFollowUp.description = `This follow-up question is ${config.required ? 'mandatory' : 'optional'} for ${option}`;
+              updatedFollowUpQuestions.push(existingFollowUp);
+            } else {
+              updatedFollowUpQuestions.push({
+                id: `followup-${option.toLowerCase().replace(/\s+/g, '-')}-${uuidv4()}`,
+                text: `Please provide additional details for ${option}:`,
+                type: 'paragraph',
+                required: config.required,
+                showWhen: {
+                  questionId: mainQuestion.id,
+                  value: option
+                },
+                parentId: mainQuestion.id,
+                description: `This follow-up question is ${config.required ? 'mandatory' : 'optional'} for ${option}`
+              });
+            }
+          }
+        });
+      }
+    }
+
+    form.followUpQuestions = updatedFollowUpQuestions;
+    if (form.sections.length > 0) {
+      form.sections[0].questions = [
+        form.sections[0].questions[0], // Keep main question
+        ...updatedFollowUpQuestions
+      ];
+    }
+
+    await form.save();
+
+    res.json({
+      success: true,
+      message: 'Follow-up configuration updated successfully',
+      data: { 
+        form,
+        followUpConfig
+      }
+    });
+
+  } catch (error) {
+    console.error('Update follow-up config error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Get follow-up configuration for a form
+export const getFollowUpConfig = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const form = await Form.findOne({ id });
+
+    if (!form) {
+      return res.status(404).json({
+        success: false,
+        message: 'Form not found'
+      });
+    }
+
+    const followUpConfig = {};
+    
+    if (form.sections.length > 0 && form.sections[0].questions.length > 0) {
+      const mainQuestion = form.sections[0].questions[0];
+      
+      if (mainQuestion.options) {
+        mainQuestion.options.forEach(option => {
+          const followUpQuestion = form.followUpQuestions.find(
+            fq => fq.showWhen && fq.showWhen.value === option
+          );
+          
+          followUpConfig[option] = {
+            hasFollowUp: !!followUpQuestion,
+            required: followUpQuestion ? followUpQuestion.required : false
+          };
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        formId: form.id,
+        title: form.title,
+        followUpConfig
+      }
+    });
+
+  } catch (error) {
+    console.error('Get follow-up config error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
