@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
+import { createServer } from "http";
 import connectDB from "./config/database.js";
 import authRoutes from "./routes/authRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
@@ -16,6 +17,7 @@ import mailRoutes from "./routes/mailRoutes.js";
 import tenantRoutes from "./routes/tenantRoutes.js";
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
 import { handleUploadError } from "./middleware/upload.js";
+import { initializeSocket } from "./socket/socketHandler.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -173,12 +175,19 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
 
+// Create HTTP server
+const httpServer = createServer(app);
+
+// Initialize Socket.IO
+initializeSocket(httpServer);
+
 export default app;
 
 if (process.argv[1] === __filename) {
-  app.listen(PORT, () => {
+  httpServer.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`🌐 API Base URL: http://localhost:${PORT}/api`);
+    console.log(`🔌 WebSocket server initialized for real-time updates`);
   });
 }

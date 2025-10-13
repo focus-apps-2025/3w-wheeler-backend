@@ -3,6 +3,7 @@ import Form from '../models/Form.js';
 import Tenant from '../models/Tenant.js';
 import { v4 as uuidv4 } from 'uuid';
 import { collectSubmissionMetadata } from '../services/locationService.js';
+import { emitResponseCreated, emitResponseUpdated, emitResponseDeleted } from '../socket/socketHandler.js';
 
 export const createResponse = async (req, res) => {
   try {
@@ -49,7 +50,8 @@ export const createResponse = async (req, res) => {
 
     const submissionMetadata = await collectSubmissionMetadata(req);
 
-    if (req.body.location && typeof req.body.location === 'object') {
+    // Only capture location if the form has location tracking enabled
+    if (form.locationEnabled !== false && req.body.location && typeof req.body.location === 'object') {
       const { latitude, longitude, accuracy, source, capturedAt } = req.body.location;
       submissionMetadata.capturedLocation = {
         latitude: typeof latitude === 'number' ? latitude : null,
@@ -74,6 +76,16 @@ export const createResponse = async (req, res) => {
 
     const response = new Response(responseData);
     await response.save();
+
+    // Emit real-time event for new response
+    emitResponseCreated(questionId, {
+      id: response.id,
+      questionId: response.questionId,
+      status: response.status,
+      submittedBy: response.submittedBy,
+      createdAt: response.createdAt,
+      answers: response.answers instanceof Map ? Object.fromEntries(response.answers) : response.answers
+    });
 
     res.status(201).json({
       success: true,
@@ -268,6 +280,17 @@ export const updateResponse = async (req, res) => {
       answers: Object.fromEntries(response.answers)
     };
 
+    // Emit real-time event for updated response
+    emitResponseUpdated(response.questionId, {
+      id: response.id,
+      questionId: response.questionId,
+      status: response.status,
+      submittedBy: response.submittedBy,
+      createdAt: response.createdAt,
+      updatedAt: response.updatedAt,
+      answers: Object.fromEntries(response.answers)
+    });
+
     res.json({
       success: true,
       message: 'Response updated successfully',
@@ -337,7 +360,11 @@ export const deleteResponse = async (req, res) => {
       });
     }
 
+    const questionId = response.questionId;
     await Response.findOneAndDelete({ id, ...req.tenantFilter });
+
+    // Emit real-time event for deleted response
+    emitResponseDeleted(questionId, id);
 
     res.json({
       success: true,
@@ -383,7 +410,7 @@ export const deleteMultipleResponses = async (req, res) => {
 export const getResponsesByForm = async (req, res) => {
   try {
     const { formId } = req.params;
-    const { page = 1, limit = 10, status } = req.query;
+    const { page = 1, limit = 10000, status } = req.query;
 
     // Verify form exists
     const form = await Form.findOne({ id: formId, ...req.tenantFilter });

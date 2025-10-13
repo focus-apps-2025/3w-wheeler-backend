@@ -342,7 +342,8 @@ export const updateForm = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const form = await Form.findOne({ id });
+    // Use the helper function to find form by either custom id or MongoDB _id
+    const form = await findFormByIdentifier(id);
 
     if (!form) {
       return res.status(404).json({
@@ -391,7 +392,8 @@ export const deleteForm = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const form = await Form.findOne({ id });
+    // Use the helper function to find form by either custom id or MongoDB _id
+    const form = await findFormByIdentifier(id);
 
     if (!form) {
       return res.status(404).json({
@@ -420,8 +422,8 @@ export const deleteForm = async (req, res) => {
     // Delete related responses
     await Response.deleteMany({ questionId: id });
 
-    // Delete form
-    await Form.findOneAndDelete({ id });
+    // Delete form using the form's _id (MongoDB ObjectId)
+    await Form.findByIdAndDelete(form._id);
 
     res.json({
       success: true,
@@ -442,7 +444,8 @@ export const updateFormVisibility = async (req, res) => {
     const { id } = req.params;
     const { isVisible } = req.body;
 
-    const form = await Form.findOne({ id });
+    // Use the helper function to find form by either custom id or MongoDB _id
+    const form = await findFormByIdentifier(id);
 
     if (!form) {
       return res.status(404).json({
@@ -491,7 +494,8 @@ export const updateFormActiveStatus = async (req, res) => {
     const { id } = req.params;
     const { isActive } = req.body;
 
-    const form = await Form.findOne({ id });
+    // Use the helper function to find form by either custom id or MongoDB _id
+    const form = await findFormByIdentifier(id);
 
     if (!form) {
       return res.status(404).json({
@@ -539,7 +543,8 @@ export const duplicateForm = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const originalForm = await Form.findOne({ id });
+    // Use the helper function to find form by either custom id or MongoDB _id
+    const originalForm = await findFormByIdentifier(id);
 
     if (!originalForm) {
       return res.status(404).json({
@@ -585,7 +590,8 @@ export const getFormAnalytics = async (req, res) => {
     const { id } = req.params;
     const { period = '30d' } = req.query;
 
-    const form = await Form.findOne({ id });
+    // Use the helper function to find form by either custom id or MongoDB _id
+    const form = await findFormByIdentifier(id);
 
     if (!form) {
       return res.status(404).json({
@@ -774,7 +780,8 @@ export const updateFollowUpConfig = async (req, res) => {
     const { id } = req.params;
     const { followUpConfig } = req.body;
 
-    const form = await Form.findOne({ id });
+    // Use the helper function to find form by either custom id or MongoDB _id
+    const form = await findFormByIdentifier(id);
 
     if (!form) {
       return res.status(404).json({
@@ -871,7 +878,8 @@ export const getFollowUpConfig = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const form = await Form.findOne({ id });
+    // Use the helper function to find form by either custom id or MongoDB _id
+    const form = await findFormByIdentifier(id);
 
     if (!form) {
       return res.status(404).json({
