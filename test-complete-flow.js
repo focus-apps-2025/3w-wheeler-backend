@@ -38,7 +38,7 @@ async function testCompleteFlow() {
         },
         {
           id: 'feedback',
-          type: 'textarea',
+          type: 'paragraph',
           question: 'Any feedback?',
           required: false
         }

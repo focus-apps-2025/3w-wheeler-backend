@@ -27,7 +27,9 @@ const FollowUpQuestionSchema = new mongoose.Schema({
     enum: [
       'text', 'radio', 'checkbox', 'email', 'url', 'tel', 'date', 'time',
       'file', 'range', 'rating', 'scale', 'radio-grid', 'checkbox-grid',
-      'radio-image', 'paragraph', 'search-select', 'number', 'location'
+      'radio-image', 'paragraph', 'search-select', 'number', 'location',
+      // Legacy types for backward compatibility (will be migrated)
+      'select', 'textarea'
     ],
     required: true
   },

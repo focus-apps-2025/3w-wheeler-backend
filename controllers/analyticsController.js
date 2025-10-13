@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import Form from '../models/Form.js';
 import Response from '../models/Response.js';
 import User from '../models/User.js';
@@ -208,8 +209,10 @@ export const getFormAnalytics = async (req, res) => {
     // Get all responses for this form (not just period) with tenant filter
     const allResponses = await Response.find({
       ...req.tenantFilter,
-      questionId: formId
-    }).sort({ createdAt: -1 }).populate('assignedTo', 'firstName lastName email');
+      $or: [{ questionId: formId }, { questionId: form._id?.toString() }]
+    })
+      .sort({ createdAt: -1 })
+      .populate('assignedTo', 'firstName lastName email');
 
     // Filter responses for timeline (within period)
     const periodResponses = allResponses.filter(r => new Date(r.createdAt) >= startDate);
@@ -269,8 +272,22 @@ export const getFormAnalytics = async (req, res) => {
         totalResponses,
         responseStats,
         responses: recentResponses,
-        timeline
-      }
+        timeline,
+        questionInsights: {
+          sections: form.sections || [],
+          followUpQuestions: form.followUpQuestions || [],
+          responses: allResponses.map((response) => ({
+            id: response.id,
+            questionId: response.questionId,
+            answers:
+              response.answers instanceof Map
+                ? Object.fromEntries(response.answers)
+                : response.answers,
+            status: response.status,
+            createdAt: response.createdAt,
+          })),
+        },
+      },
     });
 
   } catch (error) {
