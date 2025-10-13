@@ -48,9 +48,10 @@ export const createResponse = async (req, res) => {
       }
     }
 
-    const submissionMetadata = await collectSubmissionMetadata(req);
+    const submissionMetadata = await collectSubmissionMetadata(req, {
+      includeLocation: form.locationEnabled !== false,
+    });
 
-    // Only capture location if the form has location tracking enabled
     if (form.locationEnabled !== false && req.body.location && typeof req.body.location === 'object') {
       const { latitude, longitude, accuracy, source, capturedAt } = req.body.location;
       submissionMetadata.capturedLocation = {

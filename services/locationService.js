@@ -117,13 +117,12 @@ export const getLocationFromIp = async (ipAddress) => {
 /**
  * Collect all submission metadata
  */
-export const collectSubmissionMetadata = async (req) => {
+export const collectSubmissionMetadata = async (req, { includeLocation = true } = {}) => {
   const ipAddress = getClientIp(req);
   const userAgent = req.headers['user-agent'] || '';
   const { browser, device, os } = parseUserAgent(userAgent);
-  
-  // Get location data (async)
-  const location = await getLocationFromIp(ipAddress);
+
+  const location = includeLocation ? await getLocationFromIp(ipAddress) : null;
 
   return {
     ipAddress,
@@ -131,16 +130,18 @@ export const collectSubmissionMetadata = async (req) => {
     browser,
     device,
     os,
-    location: location || {
-      country: 'Unknown',
-      countryCode: 'XX',
-      region: 'Unknown',
-      city: 'Unknown',
-      latitude: null,
-      longitude: null,
-      timezone: 'UTC',
-      isp: 'Unknown'
-    },
+    location: includeLocation
+      ? location || {
+          country: 'Unknown',
+          countryCode: 'XX',
+          region: 'Unknown',
+          city: 'Unknown',
+          latitude: null,
+          longitude: null,
+          timezone: 'UTC',
+          isp: 'Unknown'
+        }
+      : null,
     submittedAt: new Date()
   };
 };
