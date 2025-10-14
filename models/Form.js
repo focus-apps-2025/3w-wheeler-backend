@@ -38,6 +38,8 @@ const FollowUpQuestionSchema = new mongoose.Schema({
     default: false
   },
   options: [String],
+  correctAnswer: String, // For quiz evaluation (single correct answer)
+  correctAnswers: [String], // For quiz evaluation (multiple correct answers)
   gridOptions: GridOptionSchema,
   min: Number,
   max: Number,

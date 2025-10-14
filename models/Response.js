@@ -33,6 +33,16 @@ const ResponseSchema = new mongoose.Schema({
     default: 'pending'
   },
   notes: String,
+  score: {
+    correct: {
+      type: Number,
+      default: 0
+    },
+    total: {
+      type: Number,
+      default: 0
+    }
+  },
   submittedBy: String, // Can store name or identifier of the person who submitted
   submitterContact: {
     email: String,

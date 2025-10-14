@@ -63,6 +63,69 @@ export const createResponse = async (req, res) => {
       };
     }
 
+    // Calculate score for quiz forms
+    const allQuestions = [];
+    if (form.sections) {
+      form.sections.forEach(section => {
+        if (section.questions) {
+          allQuestions.push(...section.questions);
+        }
+      });
+    }
+    if (form.followUpQuestions) {
+      allQuestions.push(...form.followUpQuestions);
+    }
+
+    let correct = 0;
+    let total = 0;
+    const questionResults = {}; // Store individual question results
+    
+    allQuestions.forEach(question => {
+      // Check if question has correct answer(s)
+      const hasCorrectAnswer = question.correctAnswer || (question.correctAnswers && question.correctAnswers.length > 0);
+      
+      if (hasCorrectAnswer) {
+        total++;
+        const answer = answers[question.id];
+        let isCorrect = false;
+
+        // Handle multiple correct answers
+        if (question.correctAnswers && question.correctAnswers.length > 0) {
+          if (Array.isArray(answer)) {
+            // For checkbox questions - check if all selected answers are correct
+            const normalizedAnswer = answer.map(a => String(a).toLowerCase());
+            const normalizedCorrect = question.correctAnswers.map(a => String(a).toLowerCase());
+            isCorrect = normalizedAnswer.length === normalizedCorrect.length &&
+                       normalizedAnswer.every(a => normalizedCorrect.includes(a));
+          } else {
+            // Single answer - check if it's in the correct answers array
+            const normalizedAnswer = String(answer).toLowerCase();
+            const normalizedCorrect = question.correctAnswers.map(a => String(a).toLowerCase());
+            isCorrect = normalizedCorrect.includes(normalizedAnswer);
+          }
+        } 
+        // Handle single correct answer (backward compatibility)
+        else if (question.correctAnswer) {
+          if (Array.isArray(answer)) {
+            // If answer is array but only one correct answer, check if array contains it
+            isCorrect = answer.some(a => String(a).toLowerCase() === String(question.correctAnswer).toLowerCase());
+          } else {
+            isCorrect = String(answer).toLowerCase() === String(question.correctAnswer).toLowerCase();
+          }
+        }
+
+        if (isCorrect) {
+          correct++;
+        }
+        
+        questionResults[question.id] = {
+          isCorrect,
+          userAnswer: answer,
+          correctAnswer: question.correctAnswers || [question.correctAnswer]
+        };
+      }
+    });
+
     const responseData = {
       id: uuidv4(),
       questionId,
@@ -72,7 +135,8 @@ export const createResponse = async (req, res) => {
       submitterContact,
       submissionMetadata,
       status: 'pending',
-      tenantId: form.tenantId
+      tenantId: form.tenantId,
+      score: { correct, total }
     };
 
     const response = new Response(responseData);
@@ -91,7 +155,14 @@ export const createResponse = async (req, res) => {
     res.status(201).json({
       success: true,
       message: 'Response submitted successfully',
-      data: { response }
+      data: { 
+        response,
+        score: {
+          correct,
+          total,
+          percentage: total > 0 ? Math.round((correct / total) * 100) : 0
+        }
+      }
     });
 
   } catch (error) {
