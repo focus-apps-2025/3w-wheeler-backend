@@ -924,3 +924,287 @@ export const getFollowUpConfig = async (req, res) => {
     });
   }
 };
+
+// Link child form to parent form
+export const linkChildForm = async (req, res) => {
+  try {
+    const { id } = req.params; // Parent form ID
+    const { childFormId } = req.body;
+
+    if (!childFormId) {
+      return res.status(400).json({
+        success: false,
+        message: 'childFormId is required'
+      });
+    }
+
+    // Find parent form
+    const parentForm = await findFormByIdentifier(id);
+    if (!parentForm) {
+      return res.status(404).json({
+        success: false,
+        message: 'Parent form not found'
+      });
+    }
+
+    // Find child form
+    const childForm = await findFormByIdentifier(childFormId);
+    if (!childForm) {
+      return res.status(404).json({
+        success: false,
+        message: 'Child form not found'
+      });
+    }
+
+    // Check if forms belong to the same tenant
+    if (parentForm.tenantId.toString() !== childForm.tenantId.toString()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Parent and child forms must belong to the same organization'
+      });
+    }
+
+    // Check permissions
+    if (parentForm.createdBy.toString() !== req.user._id.toString() &&
+        req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. You can only modify your own forms.'
+      });
+    }
+
+    // Initialize childForms array if it doesn't exist
+    if (!parentForm.childForms) {
+      parentForm.childForms = [];
+    }
+
+    // Check if child form is already linked
+    const existingLink = parentForm.childForms.find(
+      cf => cf.formId === childForm.id
+    );
+
+    if (existingLink) {
+      return res.status(400).json({
+        success: false,
+        message: 'This form is already linked as a child form'
+      });
+    }
+
+    // Add child form
+    const order = parentForm.childForms.length;
+    parentForm.childForms.push({
+      formId: childForm.id,
+      formTitle: childForm.title,
+      order
+    });
+
+    await parentForm.save();
+
+    res.json({
+      success: true,
+      message: 'Child form linked successfully',
+      data: { 
+        parentForm,
+        childForm: {
+          formId: childForm.id,
+          formTitle: childForm.title,
+          order
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Link child form error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Unlink child form from parent form
+export const unlinkChildForm = async (req, res) => {
+  try {
+    const { id, childFormId } = req.params;
+
+    const parentForm = await findFormByIdentifier(id);
+    if (!parentForm) {
+      return res.status(404).json({
+        success: false,
+        message: 'Parent form not found'
+      });
+    }
+
+    // Check permissions
+    if (parentForm.createdBy.toString() !== req.user._id.toString() &&
+        req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. You can only modify your own forms.'
+      });
+    }
+
+    if (!parentForm.childForms || parentForm.childForms.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No child forms linked to this parent form'
+      });
+    }
+
+    const initialLength = parentForm.childForms.length;
+    parentForm.childForms = parentForm.childForms.filter(
+      cf => cf.formId !== childFormId
+    );
+
+    if (parentForm.childForms.length === initialLength) {
+      return res.status(404).json({
+        success: false,
+        message: 'Child form not found in parent form'
+      });
+    }
+
+    // Reorder remaining child forms
+    parentForm.childForms.forEach((cf, index) => {
+      cf.order = index;
+    });
+
+    await parentForm.save();
+
+    res.json({
+      success: true,
+      message: 'Child form unlinked successfully',
+      data: { parentForm }
+    });
+
+  } catch (error) {
+    console.error('Unlink child form error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Get child forms for a parent form
+export const getChildForms = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const parentForm = await findFormByIdentifier(id);
+    if (!parentForm) {
+      return res.status(404).json({
+        success: false,
+        message: 'Parent form not found'
+      });
+    }
+
+    // Get full details of child forms
+    const childFormDetails = [];
+    if (parentForm.childForms && parentForm.childForms.length > 0) {
+      for (const childRef of parentForm.childForms) {
+        const childForm = await findFormByIdentifier(childRef.formId);
+        if (childForm) {
+          childFormDetails.push({
+            id: childForm.id,
+            _id: childForm._id,
+            title: childForm.title,
+            description: childForm.description,
+            isVisible: childForm.isVisible,
+            isActive: childForm.isActive,
+            order: childRef.order
+          });
+        }
+      }
+    }
+
+    // Sort by order
+    childFormDetails.sort((a, b) => a.order - b.order);
+
+    res.json({
+      success: true,
+      data: {
+        parentFormId: parentForm.id,
+        parentFormTitle: parentForm.title,
+        childForms: childFormDetails
+      }
+    });
+
+  } catch (error) {
+    console.error('Get child forms error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Reorder child forms
+export const reorderChildForms = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { childFormOrder } = req.body; // Array of formIds in desired order
+
+    if (!Array.isArray(childFormOrder)) {
+      return res.status(400).json({
+        success: false,
+        message: 'childFormOrder must be an array'
+      });
+    }
+
+    const parentForm = await findFormByIdentifier(id);
+    if (!parentForm) {
+      return res.status(404).json({
+        success: false,
+        message: 'Parent form not found'
+      });
+    }
+
+    // Check permissions
+    if (parentForm.createdBy.toString() !== req.user._id.toString() &&
+        req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. You can only modify your own forms.'
+      });
+    }
+
+    if (!parentForm.childForms || parentForm.childForms.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No child forms linked to this parent form'
+      });
+    }
+
+    // Create a map of formId to child form data
+    const childFormsMap = new Map();
+    parentForm.childForms.forEach(cf => {
+      childFormsMap.set(cf.formId, cf);
+    });
+
+    // Reorder based on provided array
+    const reorderedChildForms = [];
+    childFormOrder.forEach((formId, index) => {
+      const childForm = childFormsMap.get(formId);
+      if (childForm) {
+        childForm.order = index;
+        reorderedChildForms.push(childForm);
+      }
+    });
+
+    parentForm.childForms = reorderedChildForms;
+    await parentForm.save();
+
+    res.json({
+      success: true,
+      message: 'Child forms reordered successfully',
+      data: { parentForm }
+    });
+
+  } catch (error) {
+    console.error('Reorder child forms error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};

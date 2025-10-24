@@ -85,6 +85,11 @@ const FormSchema = new mongoose.Schema({
   followUpQuestions: [FollowUpQuestionSchema],
   parentFormId: String,
   parentFormTitle: String,
+  childForms: [{
+    formId: String,
+    formTitle: String,
+    order: Number // Order in which child forms should be presented
+  }],
   isVisible: {
     type: Boolean,
     default: false

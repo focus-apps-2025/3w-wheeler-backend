@@ -12,7 +12,11 @@ import {
   getFormAnalytics,
   createFormWithFollowUp,
   updateFollowUpConfig,
-  getFollowUpConfig
+  getFollowUpConfig,
+  linkChildForm,
+  unlinkChildForm,
+  getChildForms,
+  reorderChildForms
 } from '../controllers/formController.js';
 import { authenticate, adminOnly, teacherOrAdmin } from '../middleware/auth.js';
 import { addTenantFilter } from '../middleware/tenantIsolation.js';
@@ -47,5 +51,11 @@ router.get('/:id/analytics', getFormAnalytics);
 router.post('/with-followup', createFormWithFollowUp);
 router.put('/:id/followup-config', updateFollowUpConfig);
 router.get('/:id/followup-config', getFollowUpConfig);
+
+// Child form management (parent-child form relationships)
+router.post('/:id/child-forms', linkChildForm);
+router.delete('/:id/child-forms/:childFormId', unlinkChildForm);
+router.get('/:id/child-forms', getChildForms);
+router.put('/:id/child-forms/reorder', reorderChildForms);
 
 export default router;
