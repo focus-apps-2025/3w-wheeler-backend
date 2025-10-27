@@ -49,7 +49,9 @@ const FollowUpQuestionSchema = new mongoose.Schema({
   imageUrl: String,
   description: String,
   sectionId: String,
-  followUpQuestions: [mongoose.Schema.Types.Mixed] // Support nested follow-up questions
+  followUpQuestions: [mongoose.Schema.Types.Mixed], // Support nested follow-up questions
+  followUpConfig: mongoose.Schema.Types.Mixed, // Configuration for option-based section branching
+  goToSection: String // Target section ID for conditional branching
 }, { _id: false });
 
 const SectionSchema = new mongoose.Schema({
