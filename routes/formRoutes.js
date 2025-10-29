@@ -16,7 +16,10 @@ import {
   linkChildForm,
   unlinkChildForm,
   getChildForms,
-  reorderChildForms
+  reorderChildForms,
+  setSectionBranching,
+  getSectionBranching,
+  getSectionBranchingPublic
 } from '../controllers/formController.js';
 import { authenticate, adminOnly, teacherOrAdmin } from '../middleware/auth.js';
 import { addTenantFilter } from '../middleware/tenantIsolation.js';
@@ -26,6 +29,7 @@ const router = express.Router();
 // Public routes (no authentication required)
 router.get('/public/:tenantSlug', getPublicForms);  // Get all public forms for a tenant
 router.get('/:id/public/:tenantSlug', getFormById);  // Get specific form for a tenant
+router.get('/:id/section-branching/public/:tenantSlug', getSectionBranchingPublic);
 
 // Protected routes
 router.use(authenticate);
@@ -57,5 +61,10 @@ router.post('/:id/child-forms', linkChildForm);
 router.delete('/:id/child-forms/:childFormId', unlinkChildForm);
 router.get('/:id/child-forms', getChildForms);
 router.put('/:id/child-forms/reorder', reorderChildForms);
+
+// Section branching management
+router.post('/:id/section-branching', setSectionBranching);
+router.get('/:id/section-branching', getSectionBranching);
+router.get('/:id/section-branching/public/:tenantSlug', getSectionBranchingPublic);
 
 export default router;

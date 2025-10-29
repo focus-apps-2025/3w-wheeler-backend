@@ -13,6 +13,30 @@ const ShowWhenSchema = new mongoose.Schema({
   value: mongoose.Schema.Types.Mixed
 }, { _id: false });
 
+const SectionBranchingRuleSchema = new mongoose.Schema({
+  questionId: {
+    type: String,
+    required: true
+  },
+  sectionId: {
+    type: String,
+    required: true
+  },
+  optionLabel: {
+    type: String,
+    required: true
+  },
+  optionIndex: Number,
+  targetSectionId: {
+    type: String,
+    required: true
+  },
+  isOtherOption: {
+    type: Boolean,
+    default: false
+  }
+}, { _id: false });
+
 const FollowUpQuestionSchema = new mongoose.Schema({
   id: {
     type: String,
@@ -92,6 +116,7 @@ const FormSchema = new mongoose.Schema({
     formTitle: String,
     order: Number // Order in which child forms should be presented
   }],
+  sectionBranching: [SectionBranchingRuleSchema], // Array of section branching rules
   isVisible: {
     type: Boolean,
     default: false
