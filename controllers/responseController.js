@@ -81,48 +81,69 @@ export const createResponse = async (req, res) => {
     const questionResults = {}; // Store individual question results
     
     allQuestions.forEach(question => {
-      // Check if question has correct answer(s)
-      const hasCorrectAnswer = question.correctAnswer || (question.correctAnswers && question.correctAnswers.length > 0);
-      
-      if (hasCorrectAnswer) {
+      // Handle yesNoNA type questions (auto-scoring)
+      if (question.type === 'yesNoNA') {
         total++;
         const answer = answers[question.id];
         let isCorrect = false;
-
-        // Handle multiple correct answers
-        if (question.correctAnswers && question.correctAnswers.length > 0) {
-          if (Array.isArray(answer)) {
-            // For checkbox questions - check if all selected answers are correct
-            const normalizedAnswer = answer.map(a => String(a).toLowerCase());
-            const normalizedCorrect = question.correctAnswers.map(a => String(a).toLowerCase());
-            isCorrect = normalizedAnswer.length === normalizedCorrect.length &&
-                       normalizedAnswer.every(a => normalizedCorrect.includes(a));
-          } else {
-            // Single answer - check if it's in the correct answers array
-            const normalizedAnswer = String(answer).toLowerCase();
-            const normalizedCorrect = question.correctAnswers.map(a => String(a).toLowerCase());
-            isCorrect = normalizedCorrect.includes(normalizedAnswer);
-          }
-        } 
-        // Handle single correct answer (backward compatibility)
-        else if (question.correctAnswer) {
-          if (Array.isArray(answer)) {
-            // If answer is array but only one correct answer, check if array contains it
-            isCorrect = answer.some(a => String(a).toLowerCase() === String(question.correctAnswer).toLowerCase());
-          } else {
-            isCorrect = String(answer).toLowerCase() === String(question.correctAnswer).toLowerCase();
-          }
-        }
-
-        if (isCorrect) {
+        
+        // Yes = 1 point, No and N/A = 0 points
+        if (answer && String(answer).toLowerCase() === 'yes') {
+          isCorrect = true;
           correct++;
         }
         
         questionResults[question.id] = {
           isCorrect,
           userAnswer: answer,
-          correctAnswer: question.correctAnswers || [question.correctAnswer]
+          questionType: 'yesNoNA',
+          scoring: { yes: 1, no: 0, nOrNA: 0 }
         };
+      } 
+      // Check if question has correct answer(s)
+      else {
+        const hasCorrectAnswer = question.correctAnswer || (question.correctAnswers && question.correctAnswers.length > 0);
+        
+        if (hasCorrectAnswer) {
+          total++;
+          const answer = answers[question.id];
+          let isCorrect = false;
+
+          // Handle multiple correct answers
+          if (question.correctAnswers && question.correctAnswers.length > 0) {
+            if (Array.isArray(answer)) {
+              // For checkbox questions - check if all selected answers are correct
+              const normalizedAnswer = answer.map(a => String(a).toLowerCase());
+              const normalizedCorrect = question.correctAnswers.map(a => String(a).toLowerCase());
+              isCorrect = normalizedAnswer.length === normalizedCorrect.length &&
+                         normalizedAnswer.every(a => normalizedCorrect.includes(a));
+            } else {
+              // Single answer - check if it's in the correct answers array
+              const normalizedAnswer = String(answer).toLowerCase();
+              const normalizedCorrect = question.correctAnswers.map(a => String(a).toLowerCase());
+              isCorrect = normalizedCorrect.includes(normalizedAnswer);
+            }
+          } 
+          // Handle single correct answer (backward compatibility)
+          else if (question.correctAnswer) {
+            if (Array.isArray(answer)) {
+              // If answer is array but only one correct answer, check if array contains it
+              isCorrect = answer.some(a => String(a).toLowerCase() === String(question.correctAnswer).toLowerCase());
+            } else {
+              isCorrect = String(answer).toLowerCase() === String(question.correctAnswer).toLowerCase();
+            }
+          }
+
+          if (isCorrect) {
+            correct++;
+          }
+          
+          questionResults[question.id] = {
+            isCorrect,
+            userAnswer: answer,
+            correctAnswer: question.correctAnswers || [question.correctAnswer]
+          };
+        }
       }
     });
 

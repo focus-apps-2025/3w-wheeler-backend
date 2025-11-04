@@ -88,6 +88,66 @@ export const createForm = async (req, res) => {
       createdBy: formData.createdBy
     });
 
+    // Normalize question types before form creation (handles spaces/slashes)
+    const normalizeQuestionTypes = (question) => {
+      const typeMap = {
+        // Legacy/UI type names - without spaces/slashes
+        'shorttext': 'text', 'shortint': 'text', 
+        'multiplechoice': 'radio', 
+        'longtext': 'paragraph', 'longinput': 'paragraph',
+        'dropdown': 'select', 'checkboxes': 'checkbox', 
+        'fileupload': 'file', 'file upload': 'file',
+        
+        // Yes/No variations
+        'yesnona': 'yesNoNA', 'yesno': 'yesNoNA',
+        
+        // Core types - pass through
+        'email': 'email', 'url': 'url', 'tel': 'tel',
+        'date': 'date', 'time': 'time', 'file': 'file', 'range': 'range',
+        'rating': 'rating', 'scale': 'scale', 'radio-grid': 'radio-grid',
+        'radiogrid': 'radio-grid', 'checkbox-grid': 'checkbox-grid', 'checkboxgrid': 'checkbox-grid',
+        'radio-image': 'radio-image', 'radioimage': 'radio-image',
+        'search-select': 'search-select', 'searchselect': 'search-select',
+        'number': 'number', 'location': 'location',
+        'boolean': 'boolean', 'textarea': 'textarea', 
+        'text': 'text', 'radio': 'radio', 'paragraph': 'paragraph', 
+        'select': 'select', 'checkbox': 'checkbox',
+        'yesnona': 'yesNoNA'  // Pass-through for already-correct yesNoNA
+      };
+      
+      if (question?.type) {
+        let normalizedType = String(question.type)
+          .toLowerCase()
+          .trim()
+          .replace(/\s+/g, ' ')
+          .replace(/\s*\/\s*/g, '');
+        
+        const mappedType = typeMap[normalizedType] || typeMap[normalizedType.replace(/\s/g, '')] || question.type;
+        if (question.type !== mappedType) {
+          console.log(`Normalizing question type: "${question.type}" → "${mappedType}"`);
+        }
+        question.type = mappedType;
+      }
+      if (Array.isArray(question?.followUpQuestions)) {
+        question.followUpQuestions = question.followUpQuestions.map(fq => normalizeQuestionTypes(fq));
+      }
+      return question;
+    };
+
+    // Normalize all sections
+    if (Array.isArray(formData.sections)) {
+      formData.sections.forEach(section => {
+        if (Array.isArray(section.questions)) {
+          section.questions = section.questions.map(q => normalizeQuestionTypes(q));
+        }
+      });
+    }
+
+    // Normalize top-level follow-up questions
+    if (Array.isArray(formData.followUpQuestions)) {
+      formData.followUpQuestions = formData.followUpQuestions.map(q => normalizeQuestionTypes(q));
+    }
+
     const form = new Form(formData);
     await form.save();
 
@@ -371,6 +431,60 @@ export const updateForm = async (req, res) => {
 
     // Update form
     Object.assign(form, req.body);
+
+    // Normalize question types before saving (handles spaces/slashes)
+    const normalizeQuestionTypes = (question) => {
+      const typeMap = {
+        // Legacy/UI type names - without spaces/slashes
+        'shorttext': 'text', 'shortint': 'text', 
+        'multiplechoice': 'radio', 
+        'longtext': 'paragraph', 'longinput': 'paragraph',
+        'dropdown': 'select', 'checkboxes': 'checkbox', 
+        'fileupload': 'file', 'file upload': 'file',
+        
+        // Yes/No variations
+        'yesnona': 'yesNoNA', 'yesno': 'yesNoNA',
+        
+        // Core types - pass through
+        'email': 'email', 'url': 'url', 'tel': 'tel',
+        'date': 'date', 'time': 'time', 'file': 'file', 'range': 'range',
+        'rating': 'rating', 'scale': 'scale', 'radio-grid': 'radio-grid',
+        'radiogrid': 'radio-grid', 'checkbox-grid': 'checkbox-grid', 'checkboxgrid': 'checkbox-grid',
+        'radio-image': 'radio-image', 'radioimage': 'radio-image',
+        'search-select': 'search-select', 'searchselect': 'search-select',
+        'number': 'number', 'location': 'location',
+        'boolean': 'boolean', 'textarea': 'textarea', 
+        'text': 'text', 'radio': 'radio', 'paragraph': 'paragraph', 
+        'select': 'select', 'checkbox': 'checkbox'
+      };
+      
+      if (question?.type) {
+        let normalizedType = String(question.type)
+          .toLowerCase()
+          .trim()
+          .replace(/\s+/g, ' ')
+          .replace(/\s*\/\s*/g, '');
+        
+        question.type = typeMap[normalizedType] || typeMap[normalizedType.replace(/\s/g, '')] || question.type;
+      }
+      if (Array.isArray(question?.followUpQuestions)) {
+        question.followUpQuestions = question.followUpQuestions.map(fq => normalizeQuestionTypes(fq));
+      }
+      return question;
+    };
+
+    if (Array.isArray(form.sections)) {
+      form.sections.forEach(section => {
+        if (Array.isArray(section.questions)) {
+          section.questions = section.questions.map(q => normalizeQuestionTypes(q));
+        }
+      });
+    }
+
+    if (Array.isArray(form.followUpQuestions)) {
+      form.followUpQuestions = form.followUpQuestions.map(q => normalizeQuestionTypes(q));
+    }
+
     await form.save();
 
     res.json({
@@ -1335,6 +1449,147 @@ export const getSectionBranchingPublic = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Internal server error'
+    });
+  }
+};
+
+// Import form from simplified CSV template
+export const importFormFromCSV = async (req, res) => {
+  try {
+    console.log('=== Import Form from CSV ===');
+    console.log('User:', req.user?.email, 'Role:', req.user?.role);
+
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({
+        success: false,
+        message: 'No CSV file provided'
+      });
+    }
+
+    // Determine tenantId based on user role
+    let tenantId;
+    if (req.user.role === 'superadmin') {
+      tenantId = req.body.tenantId;
+      if (!tenantId) {
+        return res.status(400).json({
+          success: false,
+          message: 'tenantId is required for superadmin'
+        });
+      }
+    } else {
+      tenantId = req.user.tenantId;
+      if (!tenantId) {
+        return res.status(400).json({
+          success: false,
+          message: 'User does not have a tenantId assigned'
+        });
+      }
+    }
+
+    // Validate tenantId
+    if (!mongoose.Types.ObjectId.isValid(tenantId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid tenantId format'
+      });
+    }
+
+    // Convert buffer to string
+    const csvData = req.file.buffer.toString('utf-8');
+
+    // Import the parser
+    const { parseSimplifiedCSVForm, validateSubmitButtons } = await import('../utils/csvFormParser.js');
+
+    // Parse CSV
+    const formData = parseSimplifiedCSVForm(csvData, {
+      id: uuidv4(),
+      createdBy: req.user._id,
+      tenantId: tenantId,
+      isVisible: false  // Default to private
+    });
+
+    // Validate submit buttons
+    const validation = validateSubmitButtons(formData);
+    if (!validation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        issues: validation.issues
+      });
+    }
+
+    // Normalize all question types before form creation (handles spaces/slashes)
+    const normalizeQuestionTypes = (question) => {
+      const typeMap = {
+        // Legacy/UI type names - without spaces/slashes
+        'shorttext': 'text', 'shortint': 'text', 
+        'multiplechoice': 'radio', 
+        'longtext': 'paragraph', 'longinput': 'paragraph',
+        'dropdown': 'select', 'checkboxes': 'checkbox', 
+        'fileupload': 'file', 'file upload': 'file',
+        
+        // Yes/No variations
+        'yesnona': 'yesNoNA', 'yesno': 'yesNoNA',
+        
+        // Core types - pass through
+        'email': 'email', 'url': 'url', 'tel': 'tel',
+        'date': 'date', 'time': 'time', 'file': 'file', 'range': 'range',
+        'rating': 'rating', 'scale': 'scale', 'radio-grid': 'radio-grid',
+        'radiogrid': 'radio-grid', 'checkbox-grid': 'checkbox-grid', 'checkboxgrid': 'checkbox-grid',
+        'radio-image': 'radio-image', 'radioimage': 'radio-image',
+        'search-select': 'search-select', 'searchselect': 'search-select',
+        'number': 'number', 'location': 'location',
+        'boolean': 'boolean', 'textarea': 'textarea', 
+        'text': 'text', 'radio': 'radio', 'paragraph': 'paragraph', 
+        'select': 'select', 'checkbox': 'checkbox'
+      };
+      
+      if (question?.type) {
+        let normalizedType = String(question.type)
+          .toLowerCase()
+          .trim()
+          .replace(/\s+/g, ' ')
+          .replace(/\s*\/\s*/g, '');
+        
+        question.type = typeMap[normalizedType] || typeMap[normalizedType.replace(/\s/g, '')] || question.type;
+      }
+      if (Array.isArray(question?.followUpQuestions)) {
+        question.followUpQuestions = question.followUpQuestions.map(fq => normalizeQuestionTypes(fq));
+      }
+      return question;
+    };
+
+    // Normalize all sections
+    if (Array.isArray(formData.sections)) {
+      formData.sections.forEach(section => {
+        if (Array.isArray(section.questions)) {
+          section.questions = section.questions.map(q => normalizeQuestionTypes(q));
+        }
+      });
+    }
+
+    // Normalize top-level follow-up questions
+    if (Array.isArray(formData.followUpQuestions)) {
+      formData.followUpQuestions = formData.followUpQuestions.map(q => normalizeQuestionTypes(q));
+    }
+
+    // Create form
+    const form = new Form(formData);
+    await form.save();
+
+    console.log('Form imported successfully from CSV with ID:', form.id);
+
+    res.status(201).json({
+      success: true,
+      message: 'Form imported successfully from CSV',
+      data: { form }
+    });
+
+  } catch (error) {
+    console.error('CSV import error:', error);
+    res.status(400).json({
+      success: false,
+      message: error.message || 'CSV import failed'
     });
   }
 };

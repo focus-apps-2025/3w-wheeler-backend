@@ -19,10 +19,14 @@ import {
   reorderChildForms,
   setSectionBranching,
   getSectionBranching,
-  getSectionBranchingPublic
+  getSectionBranchingPublic,
+  importFormFromCSV
 } from '../controllers/formController.js';
 import { authenticate, adminOnly, teacherOrAdmin } from '../middleware/auth.js';
 import { addTenantFilter } from '../middleware/tenantIsolation.js';
+import multer from 'multer';
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 const router = express.Router();
 
@@ -37,6 +41,7 @@ router.use(addTenantFilter);
 
 // Form CRUD operations
 router.post('/', createForm);
+router.post('/import/csv', upload.single('file'), importFormFromCSV);
 router.get('/', getAllForms);
 router.get('/public', getPublicForms);  // Moved here for tenant isolation
 router.get('/:id', getFormById);

@@ -51,7 +51,8 @@ const FollowUpQuestionSchema = new mongoose.Schema({
     enum: [
       'text', 'radio', 'checkbox', 'email', 'url', 'tel', 'date', 'time',
       'file', 'range', 'rating', 'scale', 'radio-grid', 'checkbox-grid',
-      'radio-image', 'paragraph', 'search-select', 'number', 'location',
+      'radio-image', 'paragraph', 'search-select', 'number', 'location', 'boolean',
+      'yesNoNA',
       // Legacy types for backward compatibility (will be migrated)
       'select', 'textarea'
     ],
@@ -148,6 +149,153 @@ const FormSchema = new mongoose.Schema({
   }
 }, {
   timestamps: true
+});
+
+/**
+ * Pre-save middleware to normalize question types from legacy/frontend names to backend enum values
+ * Handles case-insensitive input and human-readable names with spaces/slashes
+ */
+const normalizeQuestionType = (type) => {
+  if (!type) return type;
+  
+  // Normalize: lowercase, trim, remove extra spaces, replace slashes with nothing
+  let normalizedType = String(type)
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, ' ') // normalize multiple spaces to single space
+    .replace(/\s*\/\s*/g, ''); // remove slashes and surrounding spaces
+  
+  const typeMap = {
+    // Legacy/UI type names - without spaces/slashes
+    'shorttext': 'text',
+    'shortint': 'text',
+    'multiplechoice': 'radio',
+    'longtext': 'paragraph',
+    'longinput': 'paragraph',
+    'dropdown': 'select',
+    'checkboxes': 'checkbox',
+    'fileupload': 'file',
+    'file upload': 'file',
+    
+    // Yes/No variations
+    'yesnona': 'yesNoNA',
+    'yesno': 'yesNoNA',
+    
+    // Core types - pass through
+    'text': 'text',
+    'radio': 'radio',
+    'paragraph': 'paragraph',
+    'select': 'select',
+    'checkbox': 'checkbox',
+    'yesnona': 'yesNoNA',  // lowercase pass-through
+    
+    // Extended types - supported by schema
+    'email': 'email',
+    'url': 'url',
+    'tel': 'tel',
+    'date': 'date',
+    'time': 'time',
+    'file': 'file',
+    'range': 'range',
+    'rating': 'rating',
+    'scale': 'scale',
+    'radio-grid': 'radio-grid',
+    'radiogrid': 'radio-grid',
+    'checkbox-grid': 'checkbox-grid',
+    'checkboxgrid': 'checkbox-grid',
+    'radio-image': 'radio-image',
+    'radioimage': 'radio-image',
+    'search-select': 'search-select',
+    'searchselect': 'search-select',
+    'number': 'number',
+    'location': 'location',
+    'boolean': 'boolean',
+    'textarea': 'textarea'
+  };
+  
+  // First try exact match after normalization
+  if (typeMap[normalizedType]) {
+    return typeMap[normalizedType];
+  }
+  
+  // If not found, try with spaces removed entirely
+  const noSpaces = normalizedType.replace(/\s/g, '');
+  if (typeMap[noSpaces]) {
+    return typeMap[noSpaces];
+  }
+  
+  return type; // Return original if no match found
+};
+
+const normalizeQuestionTypes = (question) => {
+  if (question && typeof question === 'object') {
+    if (question.type) {
+      question.type = normalizeQuestionType(question.type);
+    }
+    
+    // Recursively normalize follow-up questions
+    if (Array.isArray(question.followUpQuestions)) {
+      question.followUpQuestions = question.followUpQuestions.map(fq => normalizeQuestionTypes(fq));
+    }
+  }
+  
+  return question;
+};
+
+FormSchema.pre('save', function(next) {
+  try {
+    // Normalize question types in sections
+    if (Array.isArray(this.sections)) {
+      let modified = false;
+      this.sections.forEach(section => {
+        if (Array.isArray(section.questions)) {
+          section.questions.forEach(question => {
+            const originalType = question.type;
+            const normalizedType = normalizeQuestionType(question.type);
+            if (originalType !== normalizedType) {
+              question.type = normalizedType;
+              modified = true;
+            }
+            
+            // Recursively normalize follow-up questions
+            if (Array.isArray(question.followUpQuestions)) {
+              question.followUpQuestions.forEach(fq => {
+                const fqOriginalType = fq.type;
+                const fqNormalizedType = normalizeQuestionType(fq.type);
+                if (fqOriginalType !== fqNormalizedType) {
+                  fq.type = fqNormalizedType;
+                  modified = true;
+                }
+              });
+            }
+          });
+        }
+      });
+      if (modified) {
+        this.markModified('sections');
+      }
+    }
+    
+    // Normalize top-level follow-up questions
+    if (Array.isArray(this.followUpQuestions)) {
+      let modified = false;
+      this.followUpQuestions.forEach(q => {
+        const originalType = q.type;
+        const normalizedType = normalizeQuestionType(q.type);
+        if (originalType !== normalizedType) {
+          q.type = normalizedType;
+          modified = true;
+        }
+      });
+      if (modified) {
+        this.markModified('followUpQuestions');
+      }
+    }
+    
+    next();
+  } catch (error) {
+    next(error);
+  }
 });
 
 // Index for efficient queries
