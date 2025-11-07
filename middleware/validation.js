@@ -61,8 +61,16 @@ export const validateUserCreation = (req, res, next) => {
   
   if (!role) {
     errors.push('Role is required');
-  } else if (!['admin', 'teacher', 'student', 'staff'].includes(role)) {
-    errors.push('Role must be one of: admin, teacher, student, staff');
+  } else if (!['admin', 'subadmin', 'teacher', 'student', 'staff'].includes(role)) {
+    errors.push('Role must be one of: admin, subadmin, teacher, student, staff');
+  }
+
+  if (req.body.permissions !== undefined) {
+    if (!Array.isArray(req.body.permissions)) {
+      errors.push('Permissions must be an array of strings');
+    } else if (!req.body.permissions.every((permission) => typeof permission === 'string')) {
+      errors.push('Permissions must be an array of strings');
+    }
   }
   
   if (errors.length > 0) {

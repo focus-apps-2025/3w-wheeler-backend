@@ -12,10 +12,10 @@ This guide explains how to use the simplified CSV template to create forms with 
 
 ## Template Structure
 
-### Required Columns (16 Total)
+### Required Columns (17 Total)
 
 ```
-Form Title | Form Description | Section Number | Section Title | Section Description | 
+Form Title | Form Description | Section Number | Section Title | Section Description | Section Weightage |
 Question | Question Description | Question Type | Required | Options | Option Notes | 
 Section Navigation | Follow up Option | Parent Question | Correct Answer | Correct Answers
 ```
@@ -31,6 +31,7 @@ Section Navigation | Follow up Option | Parent Question | Correct Answer | Corre
 | **Section Number** | Which section (1, 2, 3...) | 1 | ✅ Yes |
 | **Section Title** | Title of this section | "Welcome" | ✅ Yes |
 | **Section Description** | What this section covers | "Tell us about your favorite animals" | ❌ Optional |
+| **Section Weightage** | Percentage weight of this section (0-100) | 20 | ❌ Optional (must total 100% if used) |
 | **Question** | The question text | "Which is your favorite pet?" | ✅ Yes |
 | **Question Description** | Additional details | "Choose one animal" | ❌ Optional |
 | **Question Type** | Type of question | `radio`, `checkbox`, `text`, `textarea`, `number`, `date`, `boolean`, `grid`, `rating`, `image`, `yesNoNA` | ✅ Yes |
@@ -43,6 +44,71 @@ Section Navigation | Follow up Option | Parent Question | Correct Answer | Corre
 | **Follow Up Trigger** | Which option value triggers this follow-up | "dog" | ❌ Optional (required if Parent Question is set) |
 | **Correct Answer** | For quiz: correct answer value | "dog" | ❌ Optional |
 | **Correct Answers** | For quiz: multiple answers (pipe-separated) | "Loyal\|Friendly" | ❌ Optional |
+
+## Section Weightage (Percentage Distribution)
+
+### What is Section Weightage?
+
+Section weightage allows you to assign importance percentages to different sections of your form. This is useful for:
+- **Scoring/Grading:** Different sections contribute different amounts to the final score
+- **Analytics:** Understanding which sections are more important
+- **Assessment Forms:** Weight theory, practical, and interview sections differently
+
+### How It Works
+
+- **Value Range:** 0-100 (percentage)
+- **Total Must Equal 100%:** If any section has weightage > 0, all sections together must total exactly 100%
+- **Optional:** You can leave all sections at 0 if you don't need weightage
+- **Decimal Values:** Supported (e.g., 33.33 for 3 equal sections)
+
+### CSV Example: Equal Distribution
+
+```csv
+Form Title,Form Description,Section Number,Section Title,Section Weightage,Question,Question Type,Required
+Exam Form,Final Exam,1,Theory,40,What is photosynthesis?,text,TRUE
+Exam Form,Final Exam,1,Theory,40,Explain gravity,paragraph,TRUE
+Exam Form,Final Exam,2,Practical,40,Upload your experiment,file,TRUE
+Exam Form,Final Exam,3,Viva,20,Tell us about your project,paragraph,TRUE
+```
+
+**Result:** Theory (40%) + Practical (40%) + Viva (20%) = 100% ✓
+
+### CSV Example: Unequal Distribution
+
+```csv
+Form Title,Section Number,Section Title,Section Weightage,Question,...
+Survey,1,Introduction,10,What is your name?,...
+Survey,2,Core Questions,50,Rate our service,...
+Survey,2,Core Questions,50,Would you recommend us?,...
+Survey,3,Additional Feedback,20,Any suggestions?,...
+Survey,4,Demographics,20,What is your age?,...
+```
+
+**Result:** 10% + 50% + 20% + 20% = 100% ✓
+
+### Validation Rules
+
+✅ **Valid Examples:**
+- All sections = 0% (weightage not used)
+- 5 sections × 20% = 100%
+- 40% + 30% + 20% + 10% = 100%
+
+❌ **Invalid Examples:**
+- 30% + 30% + 30% = 90% (doesn't total 100%)
+- 25% + 25% + 25% + 25% + 25% = 125% (exceeds 100%)
+- One section = 50%, others = 0% (partial weightage not allowed)
+
+### Important Notes
+
+1. **All questions in same section must have same weightage value**
+   - Section 1, Question 1: 20%
+   - Section 1, Question 2: 20% ← Same section, same weightage
+
+2. **Parser validates total = 100%**
+   - Error message: "Section weightage must add up to 100%. Current total: 90%"
+
+3. **Leave blank or set to 0 if not using weightage**
+   - No validation error if all sections are 0
 
 ## Yes/No/N/A Question Type (Auto-Scoring)
 

@@ -137,3 +137,132 @@ export const sendTestEmail = async (req, res) => {
     });
   }
 };
+
+export const sendResponseReport = async (req, res) => {
+  try {
+    console.log('📨 sendResponseReport called');
+    console.log('User:', req.user?.email, 'Role:', req.user?.role);
+    console.log('req.body:', req.body);
+    console.log('req.files:', req.files ? Object.keys(req.files) : 'NO FILES');
+    
+    const { email, subject } = req.body;
+    const file = req.files?.file;
+
+    console.log('Email:', email);
+    console.log('Subject:', subject);
+    console.log('File:', file ? `${file.name} (${file.size} bytes)` : 'NO FILE');
+
+    if (!email) {
+      console.error('❌ Missing email');
+      return res.status(400).json({
+        success: false,
+        message: 'Email address is required'
+      });
+    }
+
+    if (!subject) {
+      console.error('❌ Missing subject');
+      return res.status(400).json({
+        success: false,
+        message: 'Subject is required'
+      });
+    }
+
+    if (!file) {
+      console.error('❌ No file received');
+      return res.status(400).json({
+        success: false,
+        message: 'Excel file is required',
+        receivedFields: Object.keys(req.body)
+      });
+    }
+
+    const fileData = file.data || file;
+    const fileName = file.name || 'report.xlsx';
+
+    console.log('Validating email format...');
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid email address format'
+      });
+    }
+
+    console.log('Sending email...');
+    const result = await MailService.sendResponseReportWithAttachment(
+      email,
+      subject,
+      fileData,
+      fileName
+    );
+
+    if (!result.success) {
+      console.error('❌ MailService returned error:', result.error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to send email',
+        error: result.error
+      });
+    }
+
+    console.log('✅ Report sent successfully');
+    res.json({
+      success: true,
+      message: 'Report sent successfully',
+      data: result
+    });
+
+  } catch (error) {
+    console.error('❌ Error in sendResponseReport:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to send report',
+      error: error.message
+    });
+  }
+};
+
+export const testResponseReportEmail = async (req, res) => {
+  try {
+    const { to } = req.body;
+
+    if (!to) {
+      return res.status(400).json({
+        success: false,
+        message: 'Recipient email is required'
+      });
+    }
+
+    const testBuffer = Buffer.from('Test Report Data');
+    
+    const result = await MailService.sendResponseReportWithAttachment(
+      to,
+      'Test Report - Response Report System',
+      testBuffer,
+      'test-report.xlsx'
+    );
+
+    if (result.success) {
+      res.json({
+        success: true,
+        message: 'Test email sent successfully!',
+        data: result
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to send test email',
+        error: result.error
+      });
+    }
+
+  } catch (error) {
+    console.error('Error in testResponseReportEmail:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to send test email',
+      error: error.message
+    });
+  }
+};

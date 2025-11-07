@@ -1,8 +1,22 @@
 import User from '../models/User.js';
 
+const MODULE_PERMISSIONS = [
+  'dashboard:view',
+  'analytics:view',
+  'requests:view',
+  'requests:manage'
+];
+
 export const createUser = async (req, res) => {
   try {
-    const { username, email, password, firstName, lastName, role } = req.body;
+    const { username, email, password, firstName, lastName, role, permissions } = req.body;
+
+    if (req.user.role === 'admin' && role === 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Admins cannot create additional admin accounts'
+      });
+    }
 
     // Check if user already exists
     const existingUser = await User.findOne({
@@ -17,8 +31,12 @@ export const createUser = async (req, res) => {
       });
     }
 
+    const sanitizedPermissions = Array.isArray(permissions)
+      ? Array.from(new Set(permissions.filter((permission) => MODULE_PERMISSIONS.includes(permission))))
+      : [];
+
     // Create new user
-    const newUser = new User({
+    const newUserData = {
       username,
       email,
       password,
@@ -26,10 +44,16 @@ export const createUser = async (req, res) => {
       lastName,
       role,
       createdBy: req.user._id,
-      // Assign tenantId from the creator (admin or superadmin)
-      // For superadmin creating users, tenantId should be provided in req.body
       tenantId: req.user.role === 'superadmin' ? req.body.tenantId : req.user.tenantId
-    });
+    };
+
+    if (role === 'subadmin') {
+      newUserData.permissions = sanitizedPermissions;
+    } else if (sanitizedPermissions.length > 0) {
+      newUserData.permissions = sanitizedPermissions;
+    }
+
+    const newUser = new User(newUserData);
 
     await newUser.save();
 
@@ -152,7 +176,7 @@ export const getUserById = async (req, res) => {
 export const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const { username, email, firstName, lastName, role, isActive } = req.body;
+    const { username, email, firstName, lastName, role, isActive, permissions } = req.body;
 
     const user = await User.findOne({ _id: id, ...req.tenantFilter });
 
@@ -160,6 +184,13 @@ export const updateUser = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: 'User not found'
+      });
+    }
+
+    if (role && req.user.role !== 'superadmin' && role === 'admin' && req.user._id.toString() !== user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only superadmin can assign admin role'
       });
     }
 
@@ -182,6 +213,17 @@ export const updateUser = async (req, res) => {
       }
     }
 
+    let sanitizedPermissions;
+    if (permissions !== undefined) {
+      if (!Array.isArray(permissions) || !permissions.every((permission) => typeof permission === 'string')) {
+        return res.status(400).json({
+          success: false,
+          message: 'Permissions must be an array of strings'
+        });
+      }
+      sanitizedPermissions = Array.from(new Set(permissions.filter((permission) => MODULE_PERMISSIONS.includes(permission))));
+    }
+
     // Update user fields
     if (username) user.username = username;
     if (email) user.email = email;
@@ -189,6 +231,7 @@ export const updateUser = async (req, res) => {
     if (lastName) user.lastName = lastName;
     if (role) user.role = role;
     if (typeof isActive === 'boolean') user.isActive = isActive;
+    if (sanitizedPermissions !== undefined) user.permissions = sanitizedPermissions;
 
     await user.save();
 

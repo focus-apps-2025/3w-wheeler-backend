@@ -33,6 +33,55 @@ const findFormByIdentifier = async (identifier, populateOptions) => {
   return form;
 };
 
+class SectionWeightageError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'SectionWeightageError';
+  }
+}
+
+const WEIGHTAGE_TOLERANCE = 0.01;
+
+const normalizeSectionWeightage = (sections) => {
+  if (!Array.isArray(sections)) {
+    return 0;
+  }
+
+  let total = 0;
+
+  sections.forEach((section, index) => {
+    if (!section) {
+      return;
+    }
+
+    const weightValue = section.weightage ?? 0;
+    const weightage = Number(weightValue);
+
+    if (Number.isNaN(weightage)) {
+      throw new SectionWeightageError(
+        `Section "${section.title || section.id}" has an invalid weightage value: ${weightValue}`
+      );
+    }
+
+    if (weightage < 0 || weightage > 100) {
+      throw new SectionWeightageError(
+        `Section "${section.title || section.id}" must have a weightage between 0 and 100. Received: ${weightage}`
+      );
+    }
+
+    section.weightage = weightage;
+    total += weightage;
+  });
+
+  if (total > 0 && Math.abs(total - 100) > WEIGHTAGE_TOLERANCE) {
+    throw new SectionWeightageError(
+      `Section weightage must add up to 100%. Current total: ${total.toFixed(2)}%`
+    );
+  }
+
+  return total;
+};
+
 export const createForm = async (req, res) => {
   try {
     console.log('=== Create Form Request ===');
@@ -78,6 +127,18 @@ export const createForm = async (req, res) => {
       createdBy: req.user._id,
       tenantId: tenantId
     };
+
+    try {
+      normalizeSectionWeightage(formData.sections);
+    } catch (error) {
+      if (error instanceof SectionWeightageError) {
+        return res.status(400).json({
+          success: false,
+          message: error.message
+        });
+      }
+      throw error;
+    }
 
     console.log('Form data to save:', {
       id: formData.id,
@@ -244,10 +305,45 @@ export const getAllForms = async (req, res) => {
 
     const total = await Form.countDocuments(query);
 
+    const formIdsForCounts = forms
+      .map((form) => form.id || (form._id ? form._id.toString() : null))
+      .filter((id) => Boolean(id));
+
+    let responseCountsMap = new Map();
+    if (formIdsForCounts.length > 0) {
+      const responseCounts = await Response.aggregate([
+        {
+          $match: {
+            ...req.tenantFilter,
+            questionId: { $in: formIdsForCounts }
+          }
+        },
+        {
+          $group: {
+            _id: "$questionId",
+            count: { $sum: 1 }
+          }
+        }
+      ]);
+
+      responseCountsMap = new Map(
+        responseCounts.map((item) => [item._id, item.count])
+      );
+    }
+
+    const formsWithCounts = forms.map((form) => {
+      const plain = form.toObject({ virtuals: true });
+      const lookupId = form.id || (form._id ? form._id.toString() : "");
+      return {
+        ...plain,
+        responseCount: responseCountsMap.get(lookupId) || 0
+      };
+    });
+
     res.json({
       success: true,
       data: {
-        forms,
+        forms: formsWithCounts,
         pagination: {
           currentPage: options.page,
           totalPages: Math.ceil(total / options.limit),
@@ -431,6 +527,18 @@ export const updateForm = async (req, res) => {
 
     // Update form
     Object.assign(form, req.body);
+
+    try {
+      normalizeSectionWeightage(form.sections);
+    } catch (error) {
+      if (error instanceof SectionWeightageError) {
+        return res.status(400).json({
+          success: false,
+          message: error.message
+        });
+      }
+      throw error;
+    }
 
     // Normalize question types before saving (handles spaces/slashes)
     const normalizeQuestionTypes = (question) => {

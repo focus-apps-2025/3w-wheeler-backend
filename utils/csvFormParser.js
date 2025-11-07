@@ -147,6 +147,7 @@ export const parseSimplifiedCSVForm = (csvData, formMetadata = {}) => {
       const sectionNum = parseInt(row['Section Number']);
       const sectionTitle = row['Section Title'];
       const sectionDesc = row['Section Description'] || '';
+      const sectionWeightage = row['Section Weightage'] ? parseFloat(row['Section Weightage']) : 0;
       const question = row['Question'];
       const questionDesc = row['Question Description'] || '';
       const questionType = row['Question Type'];
@@ -172,6 +173,7 @@ export const parseSimplifiedCSVForm = (csvData, formMetadata = {}) => {
           id: sectionId,
           title: sectionTitle,
           description: sectionDesc,
+          weightage: sectionWeightage,
           number: sectionNum,
           questions: []
         });
@@ -310,6 +312,14 @@ export const parseSimplifiedCSVForm = (csvData, formMetadata = {}) => {
     const sections = Array.from(sectionMap.values())
       .sort((a, b) => a.number - b.number)
       .map(({ number, ...rest }) => rest);
+
+    // Validate section weightage (if provided, should add up to 100)
+    const totalWeightage = sections.reduce((sum, section) => sum + (section.weightage || 0), 0);
+    if (totalWeightage > 0 && Math.abs(totalWeightage - 100) > 0.01) {
+      throw new Error(
+        `Section weightage must add up to 100%. Current total: ${totalWeightage.toFixed(2)}%`
+      );
+    }
 
     // Validate that all target sections exist
     const sectionIds = new Set(sections.map(s => s.id));

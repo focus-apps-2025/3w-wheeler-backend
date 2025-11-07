@@ -210,6 +210,64 @@ class MailService {
     }
   }
 
+  // Send response report with Excel attachment
+  async sendResponseReportWithAttachment(recipientEmail, subject, fileData, fileName) {
+    try {
+      console.log('📧 Attempting to send report email...');
+      console.log('From:', process.env.SMTP_USER);
+      console.log('To:', recipientEmail);
+      console.log('Subject:', subject);
+      
+      const mailOptions = {
+        from: process.env.SMTP_USER,
+        to: recipientEmail,
+        subject: subject || 'Response Report',
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #2563eb; border-bottom: 2px solid #2563eb; padding-bottom: 10px;">
+              Response Report
+            </h2>
+            
+            <p>Dear Recipient,</p>
+            
+            <p>Please find attached the Excel report with the dashboard data and response details organized by sections.</p>
+
+            <div style="background: #f0fdf4; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #16a34a;">
+              <h3 style="color: #166534; margin-top: 0;">Report Contents:</h3>
+              <ul style="color: #374151;">
+                <li><strong>Sheet 1 - Dashboard:</strong> Summary statistics, percentages, and weighted data</li>
+                <li><strong>Sheet 2 - Responses:</strong> Detailed responses organized by sections</li>
+              </ul>
+            </div>
+
+            <div style="text-align: center; margin-top: 30px; padding: 20px; border-top: 1px solid #e5e7eb;">
+              <p style="color: #6b7280; margin: 0;">
+                This is an automated report from the Form Management System<br>
+                <small>Report generated: ${new Date().toLocaleString()}</small>
+              </p>
+            </div>
+          </div>
+        `,
+        attachments: [
+          {
+            filename: fileName || 'report.xlsx',
+            content: fileData
+          }
+        ]
+      };
+
+      const result = await this.transporter.sendMail(mailOptions);
+      console.log('✅ Response report sent successfully!');
+      console.log('Message ID:', result.messageId);
+      return { success: true, messageId: result.messageId };
+    } catch (error) {
+      console.error('❌ Error sending response report:');
+      console.error('Error message:', error.message);
+      console.error('Full error:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
   // Test email configuration
   async testConnection() {
     try {

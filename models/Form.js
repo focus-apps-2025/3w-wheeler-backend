@@ -89,6 +89,12 @@ const SectionSchema = new mongoose.Schema({
     required: true
   },
   description: String,
+  weightage: {
+    type: Number,
+    default: 0,
+    min: 0,
+    max: 100
+  },
   questions: [FollowUpQuestionSchema]
 }, { _id: false });
 

@@ -3,7 +3,9 @@ import {
   sendServiceRequestNotification, 
   sendStatusUpdate, 
   testMailConnection, 
-  sendTestEmail 
+  sendTestEmail,
+  sendResponseReport,
+  testResponseReportEmail
 } from '../controllers/mailController.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 
@@ -15,10 +17,16 @@ router.get('/test-connection', authenticate, authorize('admin'), testMailConnect
 // Send test email (admin only)
 router.post('/test-email', authenticate, authorize('admin'), sendTestEmail);
 
+// Test response report email (admin only)
+router.post('/test-response-report', authenticate, authorize('admin'), testResponseReportEmail);
+
 // Send service request notification (public route - called when form is submitted)
 router.post('/service-request-notification', sendServiceRequestNotification);
 
 // Send status update to customer (admin only)
 router.post('/status-update', authenticate, authorize('admin'), sendStatusUpdate);
+
+// Send response report via email (admin, superadmin, and teacher)
+router.post('/send-response-report', authenticate, authorize('admin', 'superadmin', 'teacher'), sendResponseReport);
 
 export default router;

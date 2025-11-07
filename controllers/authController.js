@@ -5,13 +5,15 @@ import { generateToken } from '../middleware/auth.js';
 export const login = async (req, res) => {
   try {
     const { username, email, password, tenantSlug } = req.body;
+    const normalizedUsername = typeof username === 'string' ? username.trim() : '';
+    const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
 
     // Find user by username or email
     let user;
-    if (username) {
-      user = await User.findOne({ username });
-    } else if (email) {
-      user = await User.findOne({ email });
+    if (normalizedUsername) {
+      user = await User.findOne({ username: normalizedUsername });
+    } else if (normalizedEmail) {
+      user = await User.findOne({ email: normalizedEmail });
     } else {
       return res.status(400).json({
         success: false,
@@ -98,7 +100,8 @@ export const login = async (req, res) => {
         lastName: user.lastName,
         role: user.role,
         tenantId: user.tenantId,
-        lastLogin: user.lastLogin
+        lastLogin: user.lastLogin,
+        permissions: user.permissions || []
       }
     };
 
