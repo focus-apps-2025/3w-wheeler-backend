@@ -190,11 +190,9 @@ initializeSocket(httpServer);
 
 export default app;
 
-if (process.argv[1] === __filename) {
-  httpServer.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`🌐 API Base URL: http://localhost:${PORT}/api`);
-    console.log(`🔌 WebSocket server initialized for real-time updates`);
-  });
-}
+httpServer.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🌐 API Base URL: http://localhost:${PORT}/api`);
+  console.log(`🔌 WebSocket server initialized for real-time updates`);
+});
