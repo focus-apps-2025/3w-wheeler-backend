@@ -190,7 +190,7 @@ initializeSocket(httpServer);
 
 export default app;
 
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, "0.0.0.0" => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🌐 API Base URL: http://localhost:${PORT}/api`);
