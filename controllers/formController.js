@@ -3,6 +3,8 @@ import Form from '../models/Form.js';
 import Response from '../models/Response.js';
 import { v4 as uuidv4 } from 'uuid';
 
+const ALLOWED_FILE_TYPES = ['image', 'pdf', 'excel'];
+
 const applyPopulate = (query, populateOptions) => {
   if (!populateOptions) {
     return query;
@@ -189,6 +191,22 @@ export const createForm = async (req, res) => {
         }
         question.type = mappedType;
       }
+
+      if (question?.type === 'file') {
+        if (Array.isArray(question.allowedFileTypes)) {
+          question.allowedFileTypes = question.allowedFileTypes.filter((type) =>
+            ALLOWED_FILE_TYPES.includes(type)
+          );
+          if (question.allowedFileTypes.length === 0) {
+            delete question.allowedFileTypes;
+          }
+        } else if (question?.allowedFileTypes !== undefined) {
+          delete question.allowedFileTypes;
+        }
+      } else if (question?.allowedFileTypes !== undefined) {
+        delete question.allowedFileTypes;
+      }
+
       if (Array.isArray(question?.followUpQuestions)) {
         question.followUpQuestions = question.followUpQuestions.map(fq => normalizeQuestionTypes(fq));
       }
@@ -575,6 +593,21 @@ export const updateForm = async (req, res) => {
         
         question.type = typeMap[normalizedType] || typeMap[normalizedType.replace(/\s/g, '')] || question.type;
       }
+
+      if (question?.type === 'file') {
+        if (Array.isArray(question.allowedFileTypes)) {
+          question.allowedFileTypes = question.allowedFileTypes.filter((type) =>
+            ALLOWED_FILE_TYPES.includes(type)
+          );
+          if (question.allowedFileTypes.length === 0) {
+            delete question.allowedFileTypes;
+          }
+        } else if (question?.allowedFileTypes !== undefined) {
+          delete question.allowedFileTypes;
+        }
+      } else if (question?.allowedFileTypes !== undefined) {
+        delete question.allowedFileTypes;
+      }
       if (Array.isArray(question?.followUpQuestions)) {
         question.followUpQuestions = question.followUpQuestions.map(fq => normalizeQuestionTypes(fq));
       }
@@ -603,6 +636,20 @@ export const updateForm = async (req, res) => {
 
   } catch (error) {
     console.error('Update form error:', error);
+
+    if (error instanceof mongoose.Error.ValidationError) {
+      const formattedErrors = Object.values(error.errors || {}).map((err) => ({
+        field: err.path,
+        message: err.message
+      }));
+
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors: formattedErrors
+      });
+    }
+
     res.status(500).json({
       success: false,
       message: 'Internal server error'
@@ -1660,6 +1707,21 @@ export const importFormFromCSV = async (req, res) => {
           .replace(/\s*\/\s*/g, '');
         
         question.type = typeMap[normalizedType] || typeMap[normalizedType.replace(/\s/g, '')] || question.type;
+      }
+
+      if (question?.type === 'file') {
+        if (Array.isArray(question.allowedFileTypes)) {
+          question.allowedFileTypes = question.allowedFileTypes.filter((type) =>
+            ALLOWED_FILE_TYPES.includes(type)
+          );
+          if (question.allowedFileTypes.length === 0) {
+            delete question.allowedFileTypes;
+          }
+        } else if (question?.allowedFileTypes !== undefined) {
+          delete question.allowedFileTypes;
+        }
+      } else if (question?.allowedFileTypes !== undefined) {
+        delete question.allowedFileTypes;
       }
       if (Array.isArray(question?.followUpQuestions)) {
         question.followUpQuestions = question.followUpQuestions.map(fq => normalizeQuestionTypes(fq));

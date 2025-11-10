@@ -1,5 +1,7 @@
 import mongoose from 'mongoose';
 
+const ALLOWED_FILE_TYPES = ['image', 'pdf', 'excel'];
+
 const GridOptionSchema = new mongoose.Schema({
   rows: [String],
   columns: [String]
@@ -44,7 +46,13 @@ const FollowUpQuestionSchema = new mongoose.Schema({
   },
   text: {
     type: String,
-    required: true
+    trim: true,
+    required: [
+      function () {
+        return !this.imageUrl;
+      },
+      'Question must include text when no image is provided'
+    ]
   },
   type: {
     type: String,
@@ -63,6 +71,10 @@ const FollowUpQuestionSchema = new mongoose.Schema({
     default: false
   },
   options: [String],
+  allowedFileTypes: [{
+    type: String,
+    enum: ALLOWED_FILE_TYPES
+  }],
   correctAnswer: String, // For quiz evaluation (single correct answer)
   correctAnswers: [String], // For quiz evaluation (multiple correct answers)
   gridOptions: GridOptionSchema,
@@ -71,7 +83,24 @@ const FollowUpQuestionSchema = new mongoose.Schema({
   step: Number,
   showWhen: ShowWhenSchema,
   parentId: String,
-  imageUrl: String,
+  imageUrl: {
+    type: String,
+    validate: {
+      validator: function (value) {
+        if (!value) {
+          return true;
+        }
+        try {
+          const base64Data = value.includes(',') ? value.split(',')[1] : value;
+          const buffer = Buffer.from(base64Data, 'base64');
+          return buffer.length <= 50 * 1024;
+        } catch (error) {
+          return false;
+        }
+      },
+      message: 'Question image must be 50KB or smaller and valid base64'
+    }
+  },
   description: String,
   sectionId: String,
   followUpQuestions: [mongoose.Schema.Types.Mixed], // Support nested follow-up questions

@@ -139,6 +139,43 @@ describe('FormCreator API Integration Tests', () => {
       createdFormId = response.body.data.form.id;
     });
 
+    it('should create a question with image content', async () => {
+      const imageDataUrl = 'data:image/png;base64,image-only-question';
+      const formData = {
+        title: 'FormCreator Test Image Question',
+        description: 'Form with image-only question',
+        isVisible: true,
+        locationEnabled: false,
+        sections: [
+          {
+            id: 'image-section',
+            title: 'Image Section',
+            description: 'Questions with images',
+            questions: [
+              {
+                id: 'image-question',
+                text: '',
+                type: 'text',
+                required: false,
+                imageUrl: imageDataUrl
+              }
+            ]
+          }
+        ]
+      };
+
+      const response = await request(app)
+        .post('/api/forms')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send(formData)
+        .expect(201);
+
+      expect(response.body.success).to.be.true;
+      const createdQuestion = response.body.data.form.sections[0].questions[0];
+      expect(createdQuestion.imageUrl).to.equal(imageDataUrl);
+      expect(createdQuestion.text).to.equal(formData.sections[0].questions[0].text);
+    });
+
     it('should create a complex form with multiple sections and question types', async () => {
       const complexFormData = {
         title: 'FormCreator Test Complex Form',
@@ -348,6 +385,28 @@ describe('FormCreator API Integration Tests', () => {
       expect(response.body.data.form.title).to.equal(updateData.title);
       expect(response.body.data.form.isVisible).to.be.false;
       expect(response.body.data.form.sections[0].questions).to.have.length(2);
+    });
+
+    it('should persist question image updates', async () => {
+      const getResponse = await request(app)
+        .get(`/api/forms/${createdFormId}`)
+        .set('Authorization', `Bearer ${authToken}`);
+
+      const currentForm = getResponse.body.data.form;
+      const updatedForm = JSON.parse(JSON.stringify(currentForm));
+      const imageDataUrl = 'data:image/png;base64,updated-image-question';
+
+      updatedForm.sections[0].questions[0].imageUrl = imageDataUrl;
+
+      const response = await request(app)
+        .put(`/api/forms/${createdFormId}`)
+        .set('Authorization', `Bearer ${authToken}`)
+        .send(updatedForm)
+        .expect(200);
+
+      const updatedQuestion = response.body.data.form.sections[0].questions[0];
+      expect(updatedQuestion.imageUrl).to.equal(imageDataUrl);
+      expect(updatedQuestion.text).to.equal(updatedForm.sections[0].questions[0].text);
     });
 
     it('should add new sections to existing form', async () => {
