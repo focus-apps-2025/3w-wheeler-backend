@@ -1,4 +1,5 @@
 import express from 'express';
+import fileUpload from 'express-fileupload';
 import { 
   sendServiceRequestNotification, 
   sendStatusUpdate, 
@@ -10,6 +11,7 @@ import {
 import { authenticate, authorize } from '../middleware/auth.js';
 
 const router = express.Router();
+const uploadMiddleware = fileUpload({ limits: { fileSize: 50 * 1024 * 1024 } });
 
 // Test mail connection (admin only)
 router.get('/test-connection', authenticate, authorize('admin'), testMailConnection);
@@ -27,6 +29,6 @@ router.post('/service-request-notification', sendServiceRequestNotification);
 router.post('/status-update', authenticate, authorize('admin'), sendStatusUpdate);
 
 // Send response report via email (admin, superadmin, and teacher)
-router.post('/send-response-report', authenticate, authorize('admin', 'superadmin', 'teacher'), sendResponseReport);
+router.post('/send-response-report', authenticate, authorize('admin', 'superadmin', 'teacher'), uploadMiddleware, sendResponseReport);
 
 export default router;

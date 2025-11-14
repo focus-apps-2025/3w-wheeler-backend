@@ -102,6 +102,8 @@ const FollowUpQuestionSchema = new mongoose.Schema({
     }
   },
   description: String,
+  subParam1: String,
+  subParam2: String,
   sectionId: String,
   followUpQuestions: [mongoose.Schema.Types.Mixed], // Support nested follow-up questions
   followUpConfig: mongoose.Schema.Types.Mixed, // Configuration for option-based section branching

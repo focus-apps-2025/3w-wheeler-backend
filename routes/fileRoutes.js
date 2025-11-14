@@ -6,7 +6,7 @@ import {
   getFilesByUser,
   getFileInfo
 } from '../controllers/fileController.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, authenticateOptional } from '../middleware/auth.js';
 import upload from '../middleware/upload.js';
 
 const router = express.Router();
@@ -14,11 +14,12 @@ const router = express.Router();
 // Public file access
 router.get('/:filename', getFile);
 
+router.post('/upload', authenticateOptional, upload.single('file'), uploadFile);
+
 // Protected routes
 router.use(authenticate);
 
 // File management
-router.post('/upload', upload.single('file'), uploadFile);
 router.get('/', getFilesByUser);
 router.get('/info/:id', getFileInfo);
 router.delete('/:id', deleteFile);

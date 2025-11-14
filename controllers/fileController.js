@@ -15,33 +15,60 @@ export const uploadFile = async (req, res) => {
       });
     }
 
-    const { associatedType, associatedId } = req.body;
+    const { associatedType: bodyAssociatedType, associatedId: bodyAssociatedId } = req.body;
+    const { associatedType: queryAssociatedType, associatedId: queryAssociatedId } = req.query;
 
-    const fileUrl = `/uploads/${req.file.filename}`;
-    
+    const normalizeValue = (value) => {
+      if (!value) {
+        return undefined;
+      }
+      return Array.isArray(value) ? value[0] : value;
+    };
+
+    const rawAssociatedType = (normalizeValue(bodyAssociatedType) || normalizeValue(queryAssociatedType) || 'form').toString().toLowerCase();
+    const typeMap = {
+      form: 'form',
+      response: 'response',
+      profile: 'profile',
+      logo: 'logo',
+      tenant_logo: 'logo',
+      general: 'form'
+    };
+    const associatedType = typeMap[rawAssociatedType] || 'form';
+    const associatedIdentifier = normalizeValue(bodyAssociatedId) || normalizeValue(queryAssociatedId);
+
+    const destinationDir = req.file.destination || path.join(__dirname, '../uploads');
+    const storedPath = req.file.path || path.join(destinationDir, req.file.filename);
+    const relativePath = path.relative(path.join(__dirname, '..'), storedPath).replace(/\\/g, '/');
+    const fileUrl = `/${relativePath}`;
+
+    const associatedWith = { type: associatedType };
+    if (associatedIdentifier) {
+      associatedWith.id = associatedIdentifier;
+    }
+
     const fileRecord = new File({
       filename: req.file.filename,
       originalName: req.file.originalname,
       mimetype: req.file.mimetype,
       size: req.file.size,
-      path: req.file.path,
+      path: storedPath,
       url: fileUrl,
-      uploadedBy: req.user._id,
-      associatedWith: {
-        type: associatedType || 'form',
-        id: associatedId
-      },
+      uploadedBy: req.user ? req.user._id : null,
+      associatedWith,
       isPublic: true
     });
 
     await fileRecord.save();
 
+    const fileData = fileRecord.toObject();
+
     res.json({
       success: true,
       message: 'File uploaded successfully',
       data: {
-        file: fileRecord,
-        url: fileUrl
+        file: fileData,
+        url: fileData.url
       }
     });
 
@@ -105,8 +132,9 @@ export const deleteFile = async (req, res) => {
     }
 
     // Check permissions
-    if (fileRecord.uploadedBy.toString() !== req.user._id.toString() && 
-        req.user.role !== 'admin') {
+    const isOwner = fileRecord.uploadedBy && fileRecord.uploadedBy.toString() === req.user._id.toString();
+
+    if (!isOwner && req.user.role !== 'admin') {
       return res.status(403).json({
         success: false,
         message: 'Access denied. You can only delete your own files.'

@@ -22,16 +22,16 @@ const responsesDir = path.join(uploadDir, 'responses');
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     let uploadPath = uploadDir;
-    
-    // Determine upload path based on file type or route
+    const associatedType = ((req.query.associatedType || (req.body && req.body.associatedType)) || '').toString();
+
     if (req.path.includes('/avatar')) {
       uploadPath = avatarDir;
-    } else if (req.body.associatedType === 'form') {
+    } else if (associatedType === 'form') {
       uploadPath = formsDir;
-    } else if (req.body.associatedType === 'response') {
+    } else if (associatedType === 'response') {
       uploadPath = responsesDir;
     }
-    
+
     cb(null, uploadPath);
   },
   filename: function (req, file, cb) {

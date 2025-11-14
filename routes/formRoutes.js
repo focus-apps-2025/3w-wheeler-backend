@@ -7,6 +7,8 @@ import {
   updateForm,
   deleteForm,
   updateFormVisibility,
+  getFormLocationEnabled,
+  updateFormLocationEnabled,
   updateFormActiveStatus,
   duplicateForm,
   getFormAnalytics,
@@ -50,6 +52,8 @@ router.delete('/:id', deleteForm);
 
 // Form management
 router.patch('/:id/visibility', updateFormVisibility);
+router.get('/:id/location', getFormLocationEnabled);
+router.patch('/:id/location', updateFormLocationEnabled);
 router.patch('/:id/active', updateFormActiveStatus);
 router.post('/:id/duplicate', duplicateForm);
 

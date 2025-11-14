@@ -15,7 +15,7 @@ export const authenticate = async (req, res, next) => {
       });
     }
 
-    const token = authHeader.substring(7); // Remove 'Bearer ' prefix
+    const token = authHeader.substring(7);
     
     const decoded = jwt.verify(token, JWT_SECRET);
     const user = await User.findById(decoded.userId)
@@ -36,7 +36,6 @@ export const authenticate = async (req, res, next) => {
       });
     }
 
-    // Update last login
     user.lastLogin = new Date();
     await user.save();
 
@@ -47,6 +46,49 @@ export const authenticate = async (req, res, next) => {
     res.status(401).json({ 
       success: false, 
       message: 'Invalid token.' 
+    });
+  }
+};
+
+export const authenticateOptional = async (req, res, next) => {
+  const authHeader = req.header('Authorization');
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    req.user = null;
+    return next();
+  }
+
+  try {
+    const token = authHeader.substring(7);
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const user = await User.findById(decoded.userId)
+      .select('-password')
+      .populate('customRole');
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid token. User not found.'
+      });
+    }
+
+    if (!user.isActive) {
+      return res.status(401).json({
+        success: false,
+        message: 'Account has been deactivated.'
+      });
+    }
+
+    user.lastLogin = new Date();
+    await user.save();
+
+    req.user = user;
+    next();
+  } catch (error) {
+    console.error('Authentication error:', error);
+    res.status(401).json({
+      success: false,
+      message: 'Invalid token.'
     });
   }
 };

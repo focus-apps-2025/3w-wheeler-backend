@@ -527,7 +527,7 @@ export const updateForm = async (req, res) => {
     }
 
     // Check permissions
-    if (form.createdBy.toString() !== req.user._id.toString() && 
+    if (form.createdBy && req.user._id && form.createdBy.toString() !== req.user._id.toString() && 
         req.user.role !== 'admin' && req.user.role !== 'superadmin') {
       return res.status(403).json({
         success: false,
@@ -536,7 +536,7 @@ export const updateForm = async (req, res) => {
     }
 
     // For admin, ensure they can only edit forms in their tenant
-    if (req.user.role === 'admin' && form.tenantId.toString() !== req.user.tenantId.toString()) {
+    if (req.user.role === 'admin' && form.tenantId && req.user.tenantId && form.tenantId.toString() !== req.user.tenantId.toString()) {
       return res.status(403).json({
         success: false,
         message: 'Access denied. You can only edit forms in your organization.'
@@ -672,7 +672,7 @@ export const deleteForm = async (req, res) => {
     }
 
     // Check permissions
-    if (form.createdBy.toString() !== req.user._id.toString() && 
+    if (form.createdBy && req.user._id && form.createdBy.toString() !== req.user._id.toString() && 
         req.user.role !== 'admin' && req.user.role !== 'superadmin') {
       return res.status(403).json({
         success: false,
@@ -681,7 +681,7 @@ export const deleteForm = async (req, res) => {
     }
 
     // For admin, ensure they can only delete forms in their tenant
-    if (req.user.role === 'admin' && form.tenantId.toString() !== req.user.tenantId.toString()) {
+    if (req.user.role === 'admin' && form.tenantId && req.user.tenantId && form.tenantId.toString() !== req.user.tenantId.toString()) {
       return res.status(403).json({
         success: false,
         message: 'Access denied. You can only delete forms in your organization.'
@@ -724,7 +724,7 @@ export const updateFormVisibility = async (req, res) => {
     }
 
     // Check permissions
-    if (form.createdBy.toString() !== req.user._id.toString() && 
+    if (form.createdBy && req.user._id && form.createdBy.toString() !== req.user._id.toString() && 
         req.user.role !== 'admin' && req.user.role !== 'superadmin') {
       return res.status(403).json({
         success: false,
@@ -733,7 +733,7 @@ export const updateFormVisibility = async (req, res) => {
     }
 
     // For admin, ensure they can only modify forms in their tenant
-    if (req.user.role === 'admin' && form.tenantId.toString() !== req.user.tenantId.toString()) {
+    if (req.user.role === 'admin' && form.tenantId && req.user.tenantId && form.tenantId.toString() !== req.user.tenantId.toString()) {
       return res.status(403).json({
         success: false,
         message: 'Access denied. You can only modify forms in your organization.'
@@ -758,6 +758,120 @@ export const updateFormVisibility = async (req, res) => {
   }
 };
 
+export const updateFormLocationEnabled = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { locationEnabled } = req.body;
+
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required'
+      });
+    }
+
+    if (typeof locationEnabled !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid request. locationEnabled must be a boolean.'
+      });
+    }
+
+    const form = await findFormByIdentifier(id);
+
+    if (!form) {
+      return res.status(404).json({
+        success: false,
+        message: 'Form not found'
+      });
+    }
+
+    if (form.createdBy && req.user._id && form.createdBy.toString() !== req.user._id.toString() && 
+        req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. You can only modify your own forms.'
+      });
+    }
+
+    if (req.user.role === 'admin' && form.tenantId && req.user.tenantId && form.tenantId.toString() !== req.user.tenantId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. You can only modify forms in your organization.'
+      });
+    }
+
+    form.locationEnabled = locationEnabled;
+    await form.save();
+
+    res.json({
+      success: true,
+      message: `Form location ${locationEnabled ? 'enabled' : 'disabled'} successfully`,
+      data: { form }
+    });
+
+  } catch (error) {
+    console.error('Update form location toggle error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+export const getFormLocationEnabled = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required'
+      });
+    }
+
+    const form = await findFormByIdentifier(id);
+
+    if (!form) {
+      return res.status(404).json({
+        success: false,
+        message: 'Form not found'
+      });
+    }
+
+    // Check permissions
+    if (form.createdBy && req.user._id && form.createdBy.toString() !== req.user._id.toString() &&
+        req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. You can only view your own forms.'
+      });
+    }
+
+    // For admin, ensure they can only view forms in their tenant
+    if (req.user.role === 'admin' && form.tenantId && req.user.tenantId && form.tenantId.toString() !== req.user.tenantId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. You can only view forms in your organization.'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        locationEnabled: form.locationEnabled || false
+      }
+    });
+
+  } catch (error) {
+    console.error('Get form location status error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
 export const updateFormActiveStatus = async (req, res) => {
   try {
     const { id } = req.params;
@@ -774,7 +888,7 @@ export const updateFormActiveStatus = async (req, res) => {
     }
 
     // Check permissions
-    if (form.createdBy.toString() !== req.user._id.toString() &&
+    if (form.createdBy && req.user._id && form.createdBy.toString() !== req.user._id.toString() &&
         req.user.role !== 'admin' && req.user.role !== 'superadmin') {
       return res.status(403).json({
         success: false,
@@ -783,7 +897,7 @@ export const updateFormActiveStatus = async (req, res) => {
     }
 
     // For admin, ensure they can only modify forms in their tenant
-    if (req.user.role === 'admin' && form.tenantId.toString() !== req.user.tenantId.toString()) {
+    if (req.user.role === 'admin' && form.tenantId && req.user.tenantId && form.tenantId.toString() !== req.user.tenantId.toString()) {
       return res.status(403).json({
         success: false,
         message: 'Access denied. You can only modify forms in your organization.'
@@ -1060,7 +1174,7 @@ export const updateFollowUpConfig = async (req, res) => {
     }
 
     // Check permissions
-    if (form.createdBy.toString() !== req.user._id.toString() && 
+    if (form.createdBy && req.user._id && form.createdBy.toString() !== req.user._id.toString() && 
         req.user.role !== 'admin' && req.user.role !== 'superadmin') {
       return res.status(403).json({
         success: false,
@@ -1069,7 +1183,7 @@ export const updateFollowUpConfig = async (req, res) => {
     }
 
     // For admin, ensure they can only modify forms in their tenant
-    if (req.user.role === 'admin' && form.tenantId.toString() !== req.user.tenantId.toString()) {
+    if (req.user.role === 'admin' && form.tenantId && req.user.tenantId && form.tenantId.toString() !== req.user.tenantId.toString()) {
       return res.status(403).json({
         success: false,
         message: 'Access denied. You can only modify forms in your organization.'
