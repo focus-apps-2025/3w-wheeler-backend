@@ -15,6 +15,7 @@ import analyticsRoutes from "./routes/analyticsRoutes.js";
 import roleRoutes from "./routes/roleRoutes.js";
 import mailRoutes from "./routes/mailRoutes.js";
 import tenantRoutes from "./routes/tenantRoutes.js";
+import parameterRoutes from "./routes/parameterRoutes.js";
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
 import { handleUploadError } from "./middleware/upload.js";
 import { initializeSocket } from "./socket/socketHandler.js";
@@ -80,6 +81,7 @@ app.use("/api/analytics", analyticsRoutes);
 app.use("/api/roles", roleRoutes);
 app.use("/api/mail", mailRoutes);
 app.use("/api/tenants", tenantRoutes);
+app.use("/api/parameters", parameterRoutes);
 
 // API info route
 app.get("/api", (req, res) => {
@@ -157,6 +159,13 @@ app.get("/api", (req, res) => {
         sendTestEmail: "POST /api/mail/test-email",
         serviceRequestNotification: "POST /api/mail/service-request-notification",
         statusUpdate: "POST /api/mail/status-update"
+      },
+      parameters: {
+        create: "POST /api/parameters",
+        getAll: "GET /api/parameters",
+        getById: "GET /api/parameters/:id",
+        update: "PUT /api/parameters/:id",
+        delete: "DELETE /api/parameters/:id"
       }
     }
   });
