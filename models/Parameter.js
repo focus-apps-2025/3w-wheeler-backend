@@ -14,7 +14,7 @@ const ParameterSchema = new mongoose.Schema({
   formId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Form',
-    required: false // Temporarily optional for migration
+    required: true
   },
   tenantId: {
     type: mongoose.Schema.Types.ObjectId,

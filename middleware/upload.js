@@ -19,7 +19,7 @@ const responsesDir = path.join(uploadDir, 'responses');
 });
 
 // Configure storage
-const storage = multer.memoryStorage({
+const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     let uploadPath = uploadDir;
     const associatedType = ((req.query.associatedType || (req.body && req.body.associatedType)) || '').toString();

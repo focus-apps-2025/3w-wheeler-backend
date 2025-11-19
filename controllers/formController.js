@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import Form from '../models/Form.js';
 import Response from '../models/Response.js';
+import Parameter from '../models/Parameter.js';
 import { v4 as uuidv4 } from 'uuid';
 
 const ALLOWED_FILE_TYPES = ['image', 'pdf', 'excel'];
@@ -1862,6 +1863,41 @@ export const importFormFromCSV = async (req, res) => {
     await form.save();
 
     console.log('Form imported successfully from CSV with ID:', form.id);
+
+    // Extract unique parameters from questions (SubParam1, SubParam2)
+    const parametersToCreate = new Set();
+    const extractParameters = (question) => {
+      if (question.subParam1) parametersToCreate.add(question.subParam1);
+      if (question.subParam2) parametersToCreate.add(question.subParam2);
+      if (Array.isArray(question.followUpQuestions)) {
+        question.followUpQuestions.forEach(extractParameters);
+      }
+    };
+
+    if (Array.isArray(formData.sections)) {
+      formData.sections.forEach(section => {
+        if (Array.isArray(section.questions)) {
+          section.questions.forEach(extractParameters);
+        }
+      });
+    }
+
+    // Create parameters for this form
+    const parameterPromises = Array.from(parametersToCreate).map(paramName =>
+      Parameter.create({
+        name: paramName,
+        type: 'main',
+        formId: form._id,
+        tenantId: tenantId,
+        createdBy: req.user._id
+      }).catch(err => {
+        console.warn(`Failed to create parameter "${paramName}":`, err.message);
+        return null;
+      })
+    );
+
+    await Promise.all(parameterPromises);
+    console.log(`Created ${parametersToCreate.size} parameters for form`);
 
     res.status(201).json({
       success: true,
