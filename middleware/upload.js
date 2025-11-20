@@ -1,47 +1,22 @@
 import multer from 'multer';
+import mongoose from 'mongoose';
 import path from 'path';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
+import { GridFSBucket } from 'mongodb';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Ensure upload directories exist
-const uploadDir = path.join(__dirname, '../uploads');
-const avatarDir = path.join(uploadDir, 'avatars');
-const formsDir = path.join(uploadDir, 'forms');
-const responsesDir = path.join(uploadDir, 'responses');
-
-[uploadDir, avatarDir, formsDir, responsesDir].forEach(dir => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+// GridFS storage configuration
+let gfsBucket;
+const getGfsBucket = () => {
+  if (!gfsBucket) {
+    const db = mongoose.connection.db;
+    gfsBucket = new GridFSBucket(db, {
+      bucketName: 'uploads'
+    });
   }
-});
+  return gfsBucket;
+};
 
-// Configure storage
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    let uploadPath = uploadDir;
-    const associatedType = ((req.query.associatedType || (req.body && req.body.associatedType)) || '').toString();
-
-    if (req.path.includes('/avatar')) {
-      uploadPath = avatarDir;
-    } else if (associatedType === 'form') {
-      uploadPath = formsDir;
-    } else if (associatedType === 'response') {
-      uploadPath = responsesDir;
-    }
-
-    cb(null, uploadPath);
-  },
-  filename: function (req, file, cb) {
-    // Generate unique filename
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname);
-    const name = file.originalname.replace(ext, '').replace(/[^a-zA-Z0-9]/g, '_');
-    cb(null, name + '_' + uniqueSuffix + ext);
-  }
-});
+// Configure GridFS storage
+const storage = multer.memoryStorage();
 
 // File filter
 const fileFilter = (req, file, cb) => {
@@ -73,7 +48,7 @@ const upload = multer({
   storage: storage,
   fileFilter: fileFilter,
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB limit
+    fileSize: 10 * 1024 * 1024, // 10MB limit for database storage
     files: 5 // Maximum 5 files at once
   }
 });
@@ -112,3 +87,4 @@ export const handleUploadError = (error, req, res, next) => {
 };
 
 export default upload;
+export { getGfsBucket };

@@ -17,8 +17,8 @@ const FileSchema = new mongoose.Schema({
     type: Number,
     required: true
   },
-  path: {
-    type: String,
+  gridfsId: {
+    type: mongoose.Schema.Types.ObjectId,
     required: true
   },
   url: {

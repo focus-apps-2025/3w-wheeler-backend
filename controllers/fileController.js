@@ -2,6 +2,7 @@ import File from '../models/File.js';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { getGfsBucket } from '../middleware/upload.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -37,47 +38,87 @@ export const uploadFile = async (req, res) => {
     const associatedType = typeMap[rawAssociatedType] || 'form';
     const associatedIdentifier = normalizeValue(bodyAssociatedId) || normalizeValue(queryAssociatedId);
 
-    const destinationDir = req.file.destination || path.join(__dirname, '../uploads');
-    const storedPath = req.file.path || path.join(destinationDir, req.file.filename);
-    const relativePath = path.relative(path.join(__dirname, '..'), storedPath).replace(/\\/g, '/');
-    const fileUrl = `/${relativePath}`;
-
-    const associatedWith = { type: associatedType };
-    if (associatedIdentifier) {
-      associatedWith.id = associatedIdentifier;
-    }
-
-    const fileRecord = new File({
-      filename: req.file.filename,
-      originalName: req.file.originalname,
-      mimetype: req.file.mimetype,
-      size: req.file.size,
-      path: storedPath,
-      url: fileUrl,
-      uploadedBy: req.user ? req.user._id : null,
-      associatedWith,
-      isPublic: true
+    // Store file in GridFS with proper error handling
+    const gfs = getGfsBucket();
+    const uploadStream = gfs.openUploadStream(req.file.originalname, {
+      contentType: req.file.mimetype,
+      metadata: {
+        originalName: req.file.originalname,
+        uploadedBy: req.user ? req.user._id : null,
+        associatedType: associatedType,
+        associatedId: associatedIdentifier
+      }
     });
 
-    await fileRecord.save();
+    return new Promise((resolve, reject) => {
+      uploadStream.on('error', (error) => {
+        console.error('GridFS upload stream error:', error);
+        reject(new Error('Failed to upload file to storage'));
+      });
 
-    const fileData = fileRecord.toObject();
+      uploadStream.on('finish', async () => {
+        try {
+          const fileUrl = `/api/files/${uploadStream.id}`;
 
-    res.json({
-      success: true,
-      message: 'File uploaded successfully',
-      data: {
-        file: fileData,
-        url: fileData.url
+          const associatedWith = { type: associatedType };
+          if (associatedIdentifier) {
+            associatedWith.id = associatedIdentifier;
+          }
+
+          const fileRecord = new File({
+            filename: req.file.originalname,
+            originalName: req.file.originalname,
+            mimetype: req.file.mimetype,
+            size: req.file.size,
+            gridfsId: uploadStream.id,
+            url: fileUrl,
+            uploadedBy: req.user ? req.user._id : null,
+            associatedWith,
+            isPublic: true
+          });
+
+          await fileRecord.save();
+
+          const fileData = fileRecord.toObject();
+
+          res.json({
+            success: true,
+            message: 'File uploaded successfully',
+            data: {
+              file: fileData,
+              url: fileData.url
+            }
+          });
+
+          resolve();
+        } catch (error) {
+          console.error('Error saving file record:', error);
+          res.status(500).json({
+            success: false,
+            message: 'Failed to save file record'
+          });
+          reject(error);
+        }
+      });
+
+      uploadStream.end(req.file.buffer);
+    }).catch((error) => {
+      if (!res.headersSent) {
+        res.status(500).json({
+          success: false,
+          message: error.message || 'File upload failed'
+        });
       }
     });
 
   } catch (error) {
     console.error('Upload file error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error'
-    });
+    if (!res.headersSent) {
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
   }
 };
 
@@ -85,7 +126,17 @@ export const getFile = async (req, res) => {
   try {
     const { filename } = req.params;
 
-    const fileRecord = await File.findOne({ filename });
+    // Check if filename is a valid ObjectId (GridFS file ID)
+    const mongoose = (await import('mongoose')).default;
+    let fileRecord;
+
+    if (mongoose.Types.ObjectId.isValid(filename)) {
+      // If it's an ObjectId, find by gridfsId
+      fileRecord = await File.findOne({ gridfsId: filename });
+    } else {
+      // Otherwise, find by filename
+      fileRecord = await File.findOne({ filename });
+    }
 
     if (!fileRecord) {
       return res.status(404).json({
@@ -94,20 +145,24 @@ export const getFile = async (req, res) => {
       });
     }
 
-    // Check if file exists on disk
-    if (!fs.existsSync(fileRecord.path)) {
+    // Stream file from GridFS
+    const gfs = getGfsBucket();
+    const downloadStream = gfs.openDownloadStream(fileRecord.gridfsId);
+
+    downloadStream.on('error', (error) => {
+      console.error('GridFS download error:', error);
       return res.status(404).json({
         success: false,
-        message: 'File not found on disk'
+        message: 'File not found in database'
       });
-    }
+    });
 
     // Set appropriate headers
     res.setHeader('Content-Type', fileRecord.mimetype);
     res.setHeader('Content-Disposition', `inline; filename="${fileRecord.originalName}"`);
 
-    // Send file
-    res.sendFile(path.resolve(fileRecord.path));
+    // Pipe the file stream to response
+    downloadStream.pipe(res);
 
   } catch (error) {
     console.error('Get file error:', error);
@@ -141,9 +196,13 @@ export const deleteFile = async (req, res) => {
       });
     }
 
-    // Delete file from disk
-    if (fs.existsSync(fileRecord.path)) {
-      fs.unlinkSync(fileRecord.path);
+    // Delete file from GridFS
+    const gfs = getGfsBucket();
+    try {
+      await gfs.delete(fileRecord.gridfsId);
+    } catch (gridfsError) {
+      console.warn('GridFS delete warning:', gridfsError);
+      // Continue with database deletion even if GridFS delete fails
     }
 
     // Delete record from database

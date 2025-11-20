@@ -31,6 +31,9 @@ connectDB();
 
 const app = express();
 
+// Set server timeout for file uploads (10 minutes)
+app.timeout = 10 * 60 * 1000; // 10 minutes
+
 // Parse FRONTEND_URL to handle multiple origins
 const allowedOrigins = process.env.FRONTEND_URL 
   ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
@@ -51,8 +54,8 @@ app.use(cors({
   credentials: true
 }));
 
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 // Health check route
 app.get("/", (req, res) => {
@@ -64,8 +67,7 @@ app.get("/", (req, res) => {
   });
 });
 
-// Serve uploaded files
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Files are now served through GridFS via /api/files/:id endpoint
 
 // Serve frontend static files
 app.use(express.static(path.join(__dirname, '../frontend/dist')));
