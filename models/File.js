@@ -19,7 +19,15 @@ const FileSchema = new mongoose.Schema({
   },
   gridfsId: {
     type: mongoose.Schema.Types.ObjectId,
-    required: true
+    default: null
+  },
+  cloudinaryPublicId: {
+    type: String,
+    default: null
+  },
+  cloudinaryUrl: {
+    type: String,
+    default: null
   },
   url: {
     type: String,
@@ -50,6 +58,7 @@ const FileSchema = new mongoose.Schema({
 FileSchema.index({ uploadedBy: 1 });
 FileSchema.index({ 'associatedWith.type': 1, 'associatedWith.id': 1 });
 FileSchema.index({ filename: 1 });
+FileSchema.index({ cloudinaryPublicId: 1 });
 
 const File = mongoose.model('File', FileSchema);
 

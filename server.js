@@ -31,8 +31,9 @@ connectDB();
 
 const app = express();
 
-// Set server timeout for file uploads (10 minutes)
-app.timeout = 10 * 60 * 1000; // 10 minutes
+// Set server timeout for file uploads (default 10 minutes, configurable via env)
+const requestTimeout = parseInt(process.env.REQUEST_TIMEOUT || '600000');
+app.timeout = requestTimeout;
 
 // Parse FRONTEND_URL to handle multiple origins
 const allowedOrigins = process.env.FRONTEND_URL 
@@ -190,6 +191,10 @@ const PORT = process.env.PORT || 5000;
 // Create HTTP server
 const httpServer = createServer(app);
 
+// Set socket and request timeout
+httpServer.setTimeout(requestTimeout);
+httpServer.keepAliveTimeout = requestTimeout + 30000;
+
 // Initialize Socket.IO
 initializeSocket(httpServer);
 
@@ -199,5 +204,6 @@ httpServer.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🌐 API Base URL: http://localhost:${PORT}/api`);
+  console.log(`⏱️  Request timeout: ${requestTimeout}ms (${Math.round(requestTimeout / 1000 / 60)} minutes)`);
   console.log(`🔌 WebSocket server initialized for real-time updates`);
 });
