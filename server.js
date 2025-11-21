@@ -36,17 +36,30 @@ const requestTimeout = parseInt(process.env.REQUEST_TIMEOUT || '600000');
 app.timeout = requestTimeout;
 
 // Parse FRONTEND_URL to handle multiple origins
-const allowedOrigins = process.env.FRONTEND_URL 
+const allowedOrigins = process.env.FRONTEND_URL
   ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
   : ["http://localhost:3000"];
+
+// Add localhost origins for development
+const developmentOrigins = [
+  "http://localhost:3000",
+  "http://localhost:3001",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:3001",
+  "http://localhost:5173", // Vite default
+  "http://localhost:8080", // Some dev servers
+];
+
+// Combine production and development origins
+const allAllowedOrigins = [...allowedOrigins, ...developmentOrigins];
 
 // Middleware
 app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) !== -1) {
+
+    if (allAllowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
