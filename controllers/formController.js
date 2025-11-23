@@ -493,9 +493,20 @@ export const getFormById = async (req, res) => {
         console.log(`Section ${idx}: ${section.title}, Questions: ${section.questions?.length || 0}`);
         if (section.questions) {
           section.questions.forEach((q, qIdx) => {
-            console.log(`  Q${qIdx}: ${q.text}, showWhen:`, q.showWhen ? `${q.showWhen.questionId} = ${q.showWhen.value}` : 'none');
+            console.log(`  Q${qIdx}: ${q.text}, subParam1: ${q.subParam1 || 'none'}, followUpQuestions: ${q.followUpQuestions?.length || 0}, showWhen:`, q.showWhen ? `${q.showWhen.questionId} = ${q.showWhen.value}` : 'none');
+            if (q.followUpQuestions && q.followUpQuestions.length > 0) {
+              q.followUpQuestions.forEach((fq, fqIdx) => {
+                console.log(`    FQ${fqIdx}: ${fq.text}, subParam1: ${fq.subParam1 || 'none'}, subParam2: ${fq.subParam2 || 'none'}`);
+              });
+            }
           });
         }
+      });
+    }
+    if (form.followUpQuestions && form.followUpQuestions.length > 0) {
+      console.log('Form-level followUpQuestions:', form.followUpQuestions.length);
+      form.followUpQuestions.forEach((fq, idx) => {
+        console.log(`  FQ${idx}: ${fq.text}, parentId: ${fq.parentId || 'none'}, subParam1: ${fq.subParam1 || 'none'}`);
       });
     }
 

@@ -143,6 +143,9 @@ export const parseSimplifiedCSVForm = (csvData, formMetadata = {}) => {
     const questionMap = new Map(); // Map question text to ID for linking follow-ups
     const followUpQuestions = []; // Collect follow-up questions for processing after main questions
 
+    // Track all parameters for returning in preview
+    const allParameters = new Set();
+
     rows.forEach((row, rowIndex) => {
       const sectionNum = parseInt(row['Section Number']);
       const sectionTitle = row['Section Title'];
@@ -159,6 +162,8 @@ export const parseSimplifiedCSVForm = (csvData, formMetadata = {}) => {
       const followUpOption = row['Follow up Option'] ? row['Follow up Option'].toUpperCase() === 'YES' : false;
       const parentQuestion = row['Parent Question'] || '';
       const followUpTrigger = row['Follow Up Trigger'] || ''; // Which option triggers this follow-up
+      const mainParameter = row['Main Parameter'] || ''; // Main parameter name
+      const followupParameter = row['Followup Parameter'] || ''; // Followup parameter name
 
       if (!sectionNum || !question || !questionType) {
         throw new Error(`Row ${rowIndex + 2}: Missing Section Number, Question, or Question Type`);
@@ -203,6 +208,16 @@ export const parseSimplifiedCSVForm = (csvData, formMetadata = {}) => {
         followUpQuestions: [],
         followUpConfig: {}
       };
+
+      // Add parameters if present
+      if (mainParameter) {
+        questionObj.subParam1 = mainParameter;
+        allParameters.add({ name: mainParameter, type: 'main' });
+      }
+      if (followupParameter) {
+        questionObj.subParam2 = followupParameter;
+        allParameters.add({ name: followupParameter, type: 'followup' });
+      }
 
       // Initialize followUpConfig for options
       if (options.length > 0) {
@@ -357,6 +372,7 @@ export const parseSimplifiedCSVForm = (csvData, formMetadata = {}) => {
       description: formDescription,
       sections: sections,
       sectionBranching: branchingRules,
+      parameters: Array.from(allParameters), // Include parameters in form data
       ...formMetadata
     };
 
