@@ -6,7 +6,9 @@ import {
   updateTenant,
   toggleTenantStatus,
   deleteTenant,
-  getTenantStats
+  getTenantStats,
+  addAdminToTenant,
+  removeAdminFromTenant
 } from '../controllers/tenantController.js';
 import { authenticate, superAdminOnly } from '../middleware/auth.js';
 import { addTenantFilter } from '../middleware/tenantIsolation.js';
@@ -26,5 +28,8 @@ router.get('/:id/stats', getTenantStats);
 router.put('/:id', updateTenant);
 router.patch('/:id/toggle-status', toggleTenantStatus);
 router.delete('/:id', deleteTenant);
+router.post('/:tenantId/add-admin', addAdminToTenant);
+router.delete('/:tenantId/remove-admin/:adminId', removeAdminFromTenant);
+
 
 export default router;

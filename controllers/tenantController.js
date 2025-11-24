@@ -59,7 +59,7 @@ export const createTenant = async (req, res) => {
       name,
       slug,
       companyName,
-      adminId: adminUser._id,
+      adminId:[adminUser._id],
       isActive: true,
       settings: settings || {},
       subscription: subscription || {},
@@ -126,18 +126,33 @@ export const getAllTenants = async (req, res) => {
 
     const [tenants, total] = await Promise.all([
       Tenant.find(query)
-        .populate('adminId', 'firstName lastName email isActive lastLogin')
         .populate('createdBy', 'firstName lastName email')
         .sort({ createdAt: -1 })
         .skip(skip)
-        .limit(parseInt(limit)),
+        .limit(parseInt(limit))
+        .lean(),
       Tenant.countDocuments(query)
     ]);
+
+    // ONLY use User collection as source of truth for admins
+    const tenantsWithAllAdmins = await Promise.all(
+      tenants.map(async (tenant) => {
+        const allAdmins = await User.find({
+          tenantId: tenant._id,
+          role: 'admin'
+        }).select('firstName lastName email isActive lastLogin role createdAt').lean();
+        
+        return {
+          ...tenant,
+          adminId: allAdmins // This will always show all admins
+        };
+      })
+    );
 
     res.json({
       success: true,
       data: {
-        tenants,
+        tenants: tenantsWithAllAdmins,
         pagination: {
           total,
           page: parseInt(page),
@@ -162,7 +177,8 @@ export const getTenantBySlug = async (req, res) => {
     const { slug } = req.params;
 
     const tenant = await Tenant.findOne({ slug })
-      .populate('adminId', 'firstName lastName email isActive lastLogin');
+      .populate('adminId', 'firstName lastName email isActive lastLogin role')
+      .lean();
 
     if (!tenant) {
       return res.status(404).json({
@@ -225,6 +241,7 @@ export const updateTenant = async (req, res) => {
 };
 
 // Toggle tenant active status
+// Toggle tenant active status
 export const toggleTenantStatus = async (req, res) => {
   try {
     const { id } = req.params;
@@ -240,10 +257,13 @@ export const toggleTenantStatus = async (req, res) => {
     tenant.isActive = !tenant.isActive;
     await tenant.save();
 
-    // Also update admin user status
-    await User.findByIdAndUpdate(tenant.adminId, {
-      isActive: tenant.isActive
-    });
+    // Update ALL admin users status (since adminId is now an array)
+    if (tenant.adminId && tenant.adminId.length > 0) {
+      await User.updateMany(
+        { _id: { $in: tenant.adminId } },
+        { isActive: tenant.isActive }
+      );
+    }
 
     res.json({
       success: true,
@@ -259,6 +279,9 @@ export const toggleTenantStatus = async (req, res) => {
     });
   }
 };
+
+// Delete tenant (soft delete - deactivate)
+
 
 // Delete tenant (soft delete - deactivate)
 export const deleteTenant = async (req, res) => {
@@ -336,6 +359,174 @@ export const getTenantStats = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Internal server error'
+    });
+  }
+};
+
+export const addAdminToTenant = async (req, res) => {
+  try {
+    const { tenantId } = req.params;
+    const { email, password, firstName, lastName } = req.body;
+
+    console.log("📥 Adding admin to tenant:", { tenantId, email, firstName, lastName });
+
+    if (!tenantId || !email || !password || !firstName || !lastName) {
+      return res.status(400).json({ success: false, message: "All fields are required" });
+    }
+
+    const tenant = await Tenant.findById(tenantId);
+    if (!tenant) {
+      return res.status(404).json({ success: false, message: "Tenant not found" });
+    }
+
+    // Check duplicate email
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
+    if (existingUser) {
+      return res.status(400).json({ success: false, message: "Email already exists" });
+    }
+
+    // Create admin user
+    const adminUser = new User({
+      username: email.split("@")[0] + "-" + tenant.slug,
+      email: email.toLowerCase(),
+      password: password,
+      firstName: firstName,
+      lastName: lastName,
+      role: "admin",
+      tenantId: tenantId,
+      isActive: true,
+      createdBy: req.user._id
+    });
+
+    await adminUser.save();
+    console.log(" Admin user created:", adminUser._id);
+
+    // ROBUST APPROACH: Handle schema mismatch gracefully
+    try {
+      // First try the normal approach
+      await Tenant.findByIdAndUpdate(
+        tenantId,
+        { $push: { adminId: adminUser._id } }
+      );
+    } catch (schemaError) {
+      console.log(" Schema mismatch detected, fixing...");
+      
+      // If schema error, fix the document first
+      const currentTenant = await Tenant.findById(tenantId).lean();
+      
+      let fixedAdminIds = [];
+      if (currentTenant.adminId) {
+        if (Array.isArray(currentTenant.adminId)) {
+          fixedAdminIds = [...currentTenant.adminId];
+        } else {
+          // Convert single ObjectId to array
+          fixedAdminIds = [currentTenant.adminId];
+        }
+      }
+      
+      // Add the new admin
+      fixedAdminIds.push(adminUser._id);
+      
+      // Update with fixed array
+      await Tenant.findByIdAndUpdate(
+        tenantId,
+        { $set: { adminId: fixedAdminIds } }
+      );
+      
+      //console.log(" Schema fixed and admin added");
+    }
+
+    //console.log(" Admin added to tenant successfully");
+
+    // Fetch updated admin list
+    const allAdmins = await User.find({
+      tenantId: tenantId,
+      role: 'admin'
+    }).select('firstName lastName email isActive lastLogin role createdAt').lean();
+
+    //console.log(`Tenant now has ${allAdmins.length} admins`);
+
+    return res.status(201).json({
+      success: true,
+      message: "Admin added successfully",
+      data: {
+        admin: {
+          _id: adminUser._id,
+          firstName: adminUser.firstName,
+          lastName: adminUser.lastName,
+          email: adminUser.email,
+          role: adminUser.role,
+          isActive: adminUser.isActive
+        },
+        adminCount: allAdmins.length
+      }
+    });
+
+  } catch (error) {
+    console.error(" Add admin error:", error);
+    
+    res.status(500).json({ 
+      success: false, 
+      message: "Failed to add admin. Please try again.",
+      error: error.message 
+    });
+  }
+};
+
+// Remove admin from tenant
+export const removeAdminFromTenant = async (req, res) => {
+  try {
+    const { tenantId, adminId } = req.params;
+
+    //console.log("🗑️ Removing admin from tenant:", { tenantId, adminId });
+
+    if (!tenantId || !adminId) {
+      return res.status(400).json({ success: false, message: "Tenant ID and Admin ID are required" });
+    }
+
+    const tenant = await Tenant.findById(tenantId);
+    if (!tenant) {
+      return res.status(404).json({ success: false, message: "Tenant not found" });
+    }
+
+    // Check if this is the last admin
+    const adminCount = await User.countDocuments({ 
+      tenantId: tenantId, 
+      role: 'admin',
+      isActive: true
+    });
+
+    if (adminCount <= 1) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Cannot remove the last admin from a tenant" 
+      });
+    }
+
+    // Remove admin ID from tenant's adminId array
+    await Tenant.findByIdAndUpdate(
+      tenantId,
+      { $pull: { adminId: adminId } }
+    );
+
+    // Deactivate the admin user (soft delete)
+    await User.findByIdAndUpdate(adminId, {
+      isActive: false
+    });
+
+    //console.log("✅ Admin removed from tenant");
+
+    return res.json({
+      success: true,
+      message: "Admin removed successfully"
+    });
+
+  } catch (error) {
+    console.error("❌ Remove admin error:", error);
+    res.status(500).json({ 
+      success: false, 
+      message: "Internal server error",
+      error: error.message 
     });
   }
 };

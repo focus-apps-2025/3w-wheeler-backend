@@ -21,11 +21,11 @@ const tenantSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
-  adminId: {
+  adminId: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true
-  },
+  }],
   isActive: {
     type: Boolean,
     default: true
