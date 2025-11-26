@@ -53,14 +53,18 @@ export const createResponse = async (req, res) => {
     });
 
     if (form.locationEnabled !== false && req.body.location && typeof req.body.location === 'object') {
-      const { latitude, longitude, accuracy, source, capturedAt } = req.body.location;
+      const { latitude, longitude, accuracy, source, capturedAt, city, region, country } = req.body.location;
       submissionMetadata.capturedLocation = {
         latitude: typeof latitude === 'number' ? latitude : null,
         longitude: typeof longitude === 'number' ? longitude : null,
         accuracy: typeof accuracy === 'number' ? accuracy : null,
         source: typeof source === 'string' ? source : 'browser',
+        city: typeof city === 'string' ? city : null,
+        region: typeof region === 'string' ? region : null,
+        country: typeof country === 'string' ? country : null,
         capturedAt: capturedAt ? new Date(capturedAt) : new Date()
       };
+      console.log('[DEBUG] Captured location stored:', submissionMetadata.capturedLocation);
     }
 
     // Calculate score for quiz forms
@@ -269,6 +273,7 @@ export const getAllResponses = async (req, res) => {
     // Convert Map to Object for JSON serialization
     const formattedResponses = responses.map(response => {
       const responseObj = response.toObject();
+      console.log('[DEBUG] Response metadata from DB in getAllResponses:', responseObj.submissionMetadata);
       return {
         ...responseObj,
         answers: Object.fromEntries(response.answers),

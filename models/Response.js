@@ -74,6 +74,9 @@ const ResponseSchema = new mongoose.Schema({
         enum: ['browser', 'ip', 'manual', 'unknown'],
         default: 'unknown'
       },
+      city: String,
+      region: String,
+      country: String,
       capturedAt: {
         type: Date,
         default: Date.now
