@@ -474,6 +474,14 @@ export const getFormById = async (req, res) => {
           message: 'Form not found'
         });
       }
+    } else if (req.user && req.user.role !== 'superadmin') {
+      // For authenticated user (non-superadmin), enforce tenant isolation
+      if (form.tenantId.toString() !== req.user.tenantId.toString()) {
+        return res.status(404).json({
+          success: false,
+          message: 'Form not found'
+        });
+      }
     }
     
     // For public access (no req.user and no tenantSlug), check if form is visible
