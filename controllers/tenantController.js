@@ -140,11 +140,11 @@ export const getAllTenants = async (req, res) => {
         const allAdmins = await User.find({
           tenantId: tenant._id,
           role: 'admin'
-        }).select('firstName lastName email isActive lastLogin role createdAt').lean();
+        }).select('_id firstName lastName email isActive lastLogin role createdAt').lean();
         
         return {
           ...tenant,
-          adminId: allAdmins // This will always show all admins
+          adminId: allAdmins || [] // This will always show all admins, default to empty array
         };
       })
     );
