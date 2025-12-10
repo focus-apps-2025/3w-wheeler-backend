@@ -60,7 +60,7 @@ const FollowUpQuestionSchema = new mongoose.Schema({
       'text', 'radio', 'checkbox', 'email', 'url', 'tel', 'date', 'time',
       'file', 'range', 'rating', 'scale', 'radio-grid', 'checkbox-grid',
       'radio-image', 'paragraph', 'search-select', 'number', 'location', 'boolean',
-      'yesNoNA', 'slider-feedback', 'emoji-star-feedback', 'emoji-reaction-feedback',
+      'yesNoNA',
       // Legacy types for backward compatibility (will be migrated)
       'select', 'textarea'
     ],
@@ -102,6 +102,7 @@ const FollowUpQuestionSchema = new mongoose.Schema({
     }
   },
   description: String,
+  suggestion: String,
   subParam1: String,
   subParam2: String,
   sectionId: String,
@@ -247,13 +248,7 @@ const normalizeQuestionType = (type) => {
     'number': 'number',
     'location': 'location',
     'boolean': 'boolean',
-    'textarea': 'textarea',
-    'slider-feedback': 'slider-feedback',
-    'sliderfeedback': 'slider-feedback',
-    'emoji-star-feedback': 'emoji-star-feedback',
-    'emojistarfeedback': 'emoji-star-feedback',
-    'emoji-reaction-feedback': 'emoji-reaction-feedback',
-    'emojireactionfeedback': 'emoji-reaction-feedback'
+    'textarea': 'textarea'
   };
   
   // First try exact match after normalization
