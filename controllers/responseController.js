@@ -3,7 +3,8 @@ import Form from '../models/Form.js';
 import Tenant from '../models/Tenant.js';
 import { v4 as uuidv4 } from 'uuid';
 import { collectSubmissionMetadata } from '../services/locationService.js';
-import { emitResponseCreated, emitResponseUpdated, emitResponseDeleted } from '../socket/socketHandler.js';
+import { emitResponseCreated, emitResponseUpdated, emitResponseDeleted, emitImageProgress } from '../socket/socketHandler.js';
+import { processResponseImages } from '../services/googleDriveService.js';
 
 export const createResponse = async (req, res) => {
   try {
@@ -151,10 +152,18 @@ export const createResponse = async (req, res) => {
       }
     });
 
+    let processedAnswers = answers;
+    try {
+      processedAnswers = await processResponseImages(answers);
+      console.log('[DEBUG] Processed answers with Google Drive images:', Object.keys(processedAnswers));
+    } catch (error) {
+      console.error('[ERROR] Failed to process Google Drive images:', error);
+    }
+
     const responseData = {
       id: uuidv4(),
       questionId,
-      answers: new Map(Object.entries(answers)),
+      answers: new Map(Object.entries(processedAnswers)),
       parentResponseId,
       submittedBy,
       submitterContact,
@@ -167,6 +176,8 @@ export const createResponse = async (req, res) => {
     const response = new Response(responseData);
     await response.save();
 
+    const answersObj = response.answers instanceof Map ? Object.fromEntries(response.answers) : response.answers;
+
     // Emit real-time event for new response
     emitResponseCreated(questionId, {
       id: response.id,
@@ -174,14 +185,24 @@ export const createResponse = async (req, res) => {
       status: response.status,
       submittedBy: response.submittedBy,
       createdAt: response.createdAt,
-      answers: response.answers instanceof Map ? Object.fromEntries(response.answers) : response.answers
+      answers: answersObj
     });
 
     res.status(201).json({
       success: true,
       message: 'Response submitted successfully',
       data: { 
-        response,
+        response: {
+          id: response.id,
+          questionId: response.questionId,
+          answers: answersObj,
+          parentResponseId: response.parentResponseId,
+          submittedBy: response.submittedBy,
+          submitterContact: response.submitterContact,
+          status: response.status,
+          createdAt: response.createdAt,
+          updatedAt: response.updatedAt
+        },
         score: {
           correct,
           total,
@@ -195,6 +216,156 @@ export const createResponse = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Internal server error'
+    });
+  }
+};
+
+export const batchImportResponses = async (req, res) => {
+  try {
+    const { questionId, responses } = req.body;
+    
+    if (!questionId || !Array.isArray(responses) || responses.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid request: questionId and non-empty responses array required'
+      });
+    }
+
+    let form;
+    const { tenantSlug } = req.params;
+
+    if (tenantSlug) {
+      const tenant = await Tenant.findOne({ slug: tenantSlug, isActive: true });
+      if (!tenant) {
+        return res.status(404).json({
+          success: false,
+          message: 'Business not found or inactive'
+        });
+      }
+      form = await Form.findOne({ id: questionId, tenantId: tenant._id, isVisible: true });
+    } else if (req.user) {
+      // Authenticated request - use tenant filter
+      form = await Form.findOne({ id: questionId, ...req.tenantFilter });
+    } else {
+      // Public request - find any public form with this ID
+      form = await Form.findOne({ id: questionId, isVisible: true });
+    }
+
+    if (!form) {
+      return res.status(404).json({
+        success: false,
+        message: 'Form not found'
+      });
+    }
+
+    const createdResponses = [];
+    const errors = [];
+
+    for (let index = 0; index < responses.length; index++) {
+      try {
+        const { answers, submittedBy, submitterContact, parentResponseId } = responses[index];
+        const submissionId = uuidv4();
+
+        const submissionMetadata = await collectSubmissionMetadata(req, {
+          includeLocation: form.locationEnabled !== false,
+        });
+
+        let processedAnswers = answers;
+        try {
+          const onProgressCallback = (status) => {
+            emitImageProgress(submissionId, status);
+          };
+          processedAnswers = await processResponseImages(answers, onProgressCallback);
+          console.log(`[BATCH IMPORT] ${index + 1}/${responses.length} - Processed images for submission by ${submittedBy}`);
+        } catch (error) {
+          console.error(`[BATCH IMPORT] ${index + 1}/${responses.length} - Failed to process images:`, error.message);
+        }
+
+        const allQuestions = [];
+        if (form.sections) {
+          form.sections.forEach(section => {
+            if (section.questions) {
+              allQuestions.push(...section.questions);
+            }
+          });
+        }
+        if (form.followUpQuestions) {
+          allQuestions.push(...form.followUpQuestions);
+        }
+
+        let correct = 0;
+        let total = 0;
+        
+        allQuestions.forEach(question => {
+          if (question.type === 'yesNoNA') {
+            total++;
+            const answer = processedAnswers[question.id];
+            if (answer && String(answer).toLowerCase() === 'yes') {
+              correct++;
+            }
+          }
+        });
+
+        const responseData = {
+          id: uuidv4(),
+          questionId,
+          answers: new Map(Object.entries(processedAnswers)),
+          parentResponseId,
+          submittedBy,
+          submitterContact,
+          submissionMetadata,
+          status: 'pending',
+          tenantId: form.tenantId,
+          score: { correct, total }
+        };
+
+        const response = new Response(responseData);
+        await response.save();
+
+        const answersObj = response.answers instanceof Map ? Object.fromEntries(response.answers) : response.answers;
+
+        emitResponseCreated(questionId, {
+          id: response.id,
+          questionId: response.questionId,
+          status: response.status,
+          submittedBy: response.submittedBy,
+          createdAt: response.createdAt,
+          answers: answersObj
+        });
+
+        createdResponses.push({
+          id: response.id,
+          submittedBy: response.submittedBy,
+          status: 'success'
+        });
+
+      } catch (error) {
+        console.error(`[BATCH IMPORT] ${index + 1}/${responses.length} - Error:`, error.message);
+        errors.push({
+          index,
+          submittedBy: responses[index].submittedBy,
+          error: error.message
+        });
+      }
+    }
+
+    res.status(201).json({
+      success: true,
+      message: `Batch import completed: ${createdResponses.length} responses imported successfully`,
+      data: {
+        imported: createdResponses.length,
+        total: responses.length,
+        failed: errors.length,
+        createdResponses,
+        errors: errors.length > 0 ? errors : undefined
+      }
+    });
+
+  } catch (error) {
+    console.error('Batch import error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error during batch import'
     });
   }
 };
@@ -357,7 +528,14 @@ export const updateResponse = async (req, res) => {
 
     // Update fields
     if (answers) {
-      response.answers = new Map(Object.entries(answers));
+      let processedAnswers = answers;
+      try {
+        processedAnswers = await processResponseImages(answers);
+        console.log('[DEBUG] Updated answers with Google Drive image processing:', Object.keys(processedAnswers));
+      } catch (error) {
+        console.error('[ERROR] Failed to process Google Drive images on update:', error);
+      }
+      response.answers = new Map(Object.entries(processedAnswers));
     }
     if (notes !== undefined) {
       response.notes = notes;

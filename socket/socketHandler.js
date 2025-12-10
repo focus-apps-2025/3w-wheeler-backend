@@ -40,6 +40,18 @@ export const initializeSocket = (server) => {
       console.log(`📊 Client ${socket.id} left dashboard analytics room`);
     });
 
+    // Join submission progress room
+    socket.on('join-submission', (submissionId) => {
+      socket.join(`submission-${submissionId}`);
+      console.log(`📤 Client ${socket.id} joined submission room: ${submissionId}`);
+    });
+
+    // Leave submission progress room
+    socket.on('leave-submission', (submissionId) => {
+      socket.leave(`submission-${submissionId}`);
+      console.log(`📤 Client ${socket.id} left submission room: ${submissionId}`);
+    });
+
     socket.on('disconnect', () => {
       console.log('❌ Client disconnected:', socket.id);
     });
@@ -113,5 +125,16 @@ export const emitResponseDeleted = (formId, responseId) => {
     });
 
     console.log(`🔔 Emitted response-deleted event for form: ${formId}`);
+  }
+};
+
+export const emitImageProgress = (submissionId, status) => {
+  if (io) {
+    io.to(`submission-${submissionId}`).emit('image-progress', {
+      submissionId,
+      status,
+      timestamp: new Date()
+    });
+    console.log(`🖼️ Image progress: ${submissionId} - ${status.message}`);
   }
 };

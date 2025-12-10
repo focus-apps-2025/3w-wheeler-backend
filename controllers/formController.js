@@ -123,6 +123,15 @@ export const createForm = async (req, res) => {
         message: 'Invalid tenantId format. Must be a valid MongoDB ObjectId.'
       });
     }
+    console.log('=== DEBUG: Checking suggestion in request ===');
+    if (req.body.sections && req.body.sections[0] && req.body.sections[0].questions) {
+      req.body.sections[0].questions.forEach((q, idx) => {
+        console.log(`Question ${idx}: "${q.text}"`);
+        console.log(`  Has suggestion?`, 'suggestion' in q);
+        console.log(`  Suggestion value:`, q.suggestion);
+      });
+    }
+
 
     const formData = {
       ...req.body,
@@ -130,6 +139,16 @@ export const createForm = async (req, res) => {
       createdBy: req.user._id,
       tenantId: tenantId
     };
+    
+    // DEBUG: Check formData before creating form
+    console.log('=== DEBUG: formData before Form creation ===');
+    console.log('First question suggestion:', formData.sections?.[0]?.questions?.[0]?.suggestion);
+
+    const form = new Form(formData);
+
+    // DEBUG: Check form document before save
+    console.log('=== DEBUG: Form document before save ===');
+    console.log('First question suggestion in mongoose doc:', form.sections?.[0]?.questions?.[0]?.suggestion);
 
     try {
       normalizeSectionWeightage(formData.sections);
@@ -228,16 +247,18 @@ export const createForm = async (req, res) => {
       formData.followUpQuestions = formData.followUpQuestions.map(q => normalizeQuestionTypes(q));
     }
 
-    const form = new Form(formData);
+    
     await form.save();
 
     console.log('Form created successfully with ID:', form.id);
+   
 
     res.status(201).json({
       success: true,
       message: 'Form created successfully',
       data: { form }
     });
+   
 
   } catch (error) {
     console.error('=== Create form error ===');
@@ -279,7 +300,7 @@ export const createForm = async (req, res) => {
 
 export const getAllForms = async (req, res) => {
   try {
-    const { page = 1, limit = 10, search, isVisible, isActive, createdBy } = req.query;
+    const { page = 1, limit = 1000, search, isVisible, isActive, createdBy } = req.query;
 
     const query = { ...req.tenantFilter };
 
@@ -438,7 +459,12 @@ export const getFormById = async (req, res) => {
       select: 'username firstName lastName email'
     };
 
-    let form = await findFormByIdentifier(id, populateOptions);
+    // Use .lean() directly
+    let form = await Form.findOne({ id: id }).populate(populateOptions.path, populateOptions.select).lean();
+
+    if (!form && mongoose.Types.ObjectId.isValid(id)) {
+      form = await Form.findById(id).populate(populateOptions.path, populateOptions.select).lean();
+    }
 
     if (!form) {
       return res.status(404).json({
@@ -474,14 +500,6 @@ export const getFormById = async (req, res) => {
           message: 'Form not found'
         });
       }
-    } else if (req.user && req.user.role !== 'superadmin') {
-      // For authenticated user (non-superadmin), enforce tenant isolation
-      if (form.tenantId.toString() !== req.user.tenantId.toString()) {
-        return res.status(404).json({
-          success: false,
-          message: 'Form not found'
-        });
-      }
     }
     
     // For public access (no req.user and no tenantSlug), check if form is visible
@@ -492,29 +510,22 @@ export const getFormById = async (req, res) => {
       });
     }
 
-    // Debug logging
-    console.log('=== Returning form ===');
+    // Debug logging - ADD THIS TO CHECK SUGGESTION
+    console.log('=== DEBUG: Checking suggestions in form ===');
     console.log('Form ID:', form.id);
-    console.log('Sections:', form.sections?.length || 0);
+    console.log('Form type:', typeof form);
+    
     if (form.sections && form.sections.length > 0) {
       form.sections.forEach((section, idx) => {
         console.log(`Section ${idx}: ${section.title}, Questions: ${section.questions?.length || 0}`);
         if (section.questions) {
           section.questions.forEach((q, qIdx) => {
-            console.log(`  Q${qIdx}: ${q.text}, subParam1: ${q.subParam1 || 'none'}, followUpQuestions: ${q.followUpQuestions?.length || 0}, showWhen:`, q.showWhen ? `${q.showWhen.questionId} = ${q.showWhen.value}` : 'none');
-            if (q.followUpQuestions && q.followUpQuestions.length > 0) {
-              q.followUpQuestions.forEach((fq, fqIdx) => {
-                console.log(`    FQ${fqIdx}: ${fq.text}, subParam1: ${fq.subParam1 || 'none'}, subParam2: ${fq.subParam2 || 'none'}`);
-              });
-            }
+            console.log(`  Q${qIdx}: "${q.text}"`);
+            console.log(`    Has suggestion field?`, 'suggestion' in q);
+            console.log(`    Suggestion value:`, q.suggestion);
+            console.log(`    All keys:`, Object.keys(q));
           });
         }
-      });
-    }
-    if (form.followUpQuestions && form.followUpQuestions.length > 0) {
-      console.log('Form-level followUpQuestions:', form.followUpQuestions.length);
-      form.followUpQuestions.forEach((fq, idx) => {
-        console.log(`  FQ${idx}: ${fq.text}, parentId: ${fq.parentId || 'none'}, subParam1: ${fq.subParam1 || 'none'}`);
       });
     }
 
