@@ -61,6 +61,8 @@ const FollowUpQuestionSchema = new mongoose.Schema({
       'file', 'range', 'rating', 'scale', 'radio-grid', 'checkbox-grid',
       'radio-image', 'paragraph', 'search-select', 'number', 'location', 'boolean',
       'yesNoNA',
+      // Feedback types
+      'slider-feedback', 'emoji-star-feedback', 'emoji-reaction-feedback',
       // Legacy types for backward compatibility (will be migrated)
       'select', 'textarea'
     ],
@@ -248,7 +250,15 @@ const normalizeQuestionType = (type) => {
     'number': 'number',
     'location': 'location',
     'boolean': 'boolean',
-    'textarea': 'textarea'
+    'textarea': 'textarea',
+    
+    // Feedback types
+    'slider-feedback': 'slider-feedback',
+    'sliderfeedback': 'slider-feedback',
+    'emoji-star-feedback': 'emoji-star-feedback',
+    'emojistarfeedback': 'emoji-star-feedback',
+    'emoji-reaction-feedback': 'emoji-reaction-feedback',
+    'emojireactionfeedback': 'emoji-reaction-feedback'
   };
   
   // First try exact match after normalization
