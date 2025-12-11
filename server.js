@@ -211,7 +211,8 @@ httpServer.setTimeout(requestTimeout);
 httpServer.keepAliveTimeout = requestTimeout + 30000;
 
 // Initialize Socket.IO
-initializeSocket(httpServer);
+const io = initializeSocket(httpServer);
+app.set('io', io);
 
 export default app;
 

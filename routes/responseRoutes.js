@@ -23,7 +23,7 @@ router.post('/batch/import', batchImportResponses);
 
 router.post('/process-images', async (req, res) => {
   try {
-    const { answers } = req.body;
+    const { answers, submissionId } = req.body;
 
     if (!answers || typeof answers !== 'object') {
       return res.status(400).json({
@@ -36,7 +36,18 @@ router.post('/process-images', async (req, res) => {
 
     let processedAnswers = answers;
     try {
-      processedAnswers = await processResponseImages(answers);
+      const onProgress = submissionId ? (progressData) => {
+        const io = req.app.get('io');
+        if (io) {
+          io.to(submissionId).emit('image-progress', {
+            submissionId,
+            status: progressData
+          });
+          console.log(`[PROGRESS] ${progressData.currentImage}/${progressData.totalImages}`);
+        }
+      } : null;
+
+      processedAnswers = await processResponseImages(answers, onProgress);
       console.log('[PROCESS IMAGES] Successfully processed all images');
     } catch (error) {
       console.error('[PROCESS IMAGES] Failed to process images:', error.message);

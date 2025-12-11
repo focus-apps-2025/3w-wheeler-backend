@@ -115,6 +115,37 @@ export const processGoogleDriveImage = async (imageUrl, questionId, onProgress =
   }
 };
 
+const processWithConcurrency = async (tasks, concurrency = 15, onProgress = null) => {
+  const results = new Array(tasks.length);
+  let completed = 0;
+
+  const processTask = async (index) => {
+    const task = tasks[index];
+    try {
+      results[index] = await task();
+      completed++;
+      if (onProgress) {
+        onProgress(completed, tasks.length);
+      }
+    } catch (error) {
+      results[index] = error;
+    }
+  };
+
+  const queue = Array.from({ length: Math.min(concurrency, tasks.length) }, (_, i) => 
+    (async () => {
+      let index = i;
+      while (index < tasks.length) {
+        await processTask(index);
+        index += concurrency;
+      }
+    })()
+  );
+
+  await Promise.all(queue);
+  return results;
+};
+
 export const processResponseImages = async (answers, onProgress = null) => {
   if (!answers) {
     return answers;
@@ -131,77 +162,107 @@ export const processResponseImages = async (answers, onProgress = null) => {
   }
 
   const processedAnswers = answers instanceof Map ? new Map() : { ...answers };
-  let imageCount = 0;
-  let processedCount = 0;
-
+  const imageTasks = [];
+  const imageMap = new Map();
+  
   for (const [questionId, answer] of entries) {
-    if (!answer) {
-      if (answers instanceof Map) {
-        processedAnswers.set(questionId, answer);
-      } else {
-        processedAnswers[questionId] = answer;
-      }
-      continue;
-    }
+    if (!answer) continue;
 
     if (typeof answer === 'string' && isGoogleDriveUrl(answer)) {
-      imageCount++;
+      const taskIndex = imageTasks.length;
+      imageMap.set(taskIndex, { questionId, answer, type: 'single' });
+      imageTasks.push(async () => {
+        return await processGoogleDriveImage(answer, questionId);
+      });
+    } else if (Array.isArray(answer)) {
+      const arrayTasks = answer.map((item, itemIndex) => {
+        if (typeof item === 'string' && isGoogleDriveUrl(item)) {
+          const taskIndex = imageTasks.length;
+          imageMap.set(taskIndex, { questionId, itemIndex, type: 'array' });
+          imageTasks.push(async () => {
+            return await processGoogleDriveImage(item, questionId);
+          });
+          return taskIndex;
+        }
+        return null;
+      });
+      
+      if (!arrayTasks.every(t => t === null)) {
+        imageMap.set(`array_${questionId}`, { questionId, answer, arrayTasks });
+      }
     }
   }
 
-  for (const [questionId, answer] of entries) {
-    if (!answer) {
-      if (answers instanceof Map) {
-        processedAnswers.set(questionId, answer);
-      } else {
-        processedAnswers[questionId] = answer;
+  const totalImages = imageTasks.length;
+  
+  if (totalImages > 0) {
+    console.log(`[BATCH PROCESS] Processing ${totalImages} images concurrently...`);
+    const concurrencyLevel = Math.min(50, Math.max(15, Math.ceil(totalImages / 10)));
+    console.log(`[BATCH PROCESS] Concurrency level: ${concurrencyLevel}`);
+    const results = await processWithConcurrency(imageTasks, concurrencyLevel, (completed) => {
+      if (onProgress) {
+        onProgress({
+          currentImage: completed,
+          totalImages: totalImages,
+          status: 'converting',
+          message: `Converting image ${completed}/${totalImages}...`
+        });
       }
-      continue;
-    }
+    });
 
-    if (typeof answer === 'string' && isGoogleDriveUrl(answer)) {
-      try {
-        processedCount++;
-        const processed = await processGoogleDriveImage(answer, questionId, onProgress ? (status) => {
-          onProgress({
-            ...status,
-            currentImage: processedCount,
-            totalImages: imageCount
-          });
-        } : null);
+    let resultIndex = 0;
+    for (const [questionId, answer] of entries) {
+      if (!answer) continue;
+
+      if (typeof answer === 'string' && isGoogleDriveUrl(answer)) {
+        const taskInfo = imageMap.get(resultIndex);
+        if (taskInfo && taskInfo.type === 'single') {
+          const result = results[resultIndex];
+          if (result instanceof Error) {
+            if (answers instanceof Map) {
+              processedAnswers.set(questionId, answer);
+            } else {
+              processedAnswers[questionId] = answer;
+            }
+          } else {
+            if (answers instanceof Map) {
+              processedAnswers.set(questionId, result);
+            } else {
+              processedAnswers[questionId] = result;
+            }
+          }
+        }
+        resultIndex++;
+      } else if (Array.isArray(answer)) {
+        const processed = answer.map((item, itemIndex) => {
+          if (typeof item === 'string' && isGoogleDriveUrl(item)) {
+            const taskInfo = imageMap.get(resultIndex);
+            if (taskInfo && taskInfo.type === 'array') {
+              const result = results[resultIndex];
+              resultIndex++;
+              return result instanceof Error ? item : result;
+            }
+            resultIndex++;
+            return item;
+          }
+          return item;
+        });
+        
         if (answers instanceof Map) {
           processedAnswers.set(questionId, processed);
         } else {
           processedAnswers[questionId] = processed;
         }
-      } catch (error) {
-        console.error(`Failed to process image for question ${questionId}:`, error);
+      } else {
         if (answers instanceof Map) {
           processedAnswers.set(questionId, answer);
         } else {
           processedAnswers[questionId] = answer;
         }
       }
-    } else if (Array.isArray(answer)) {
-      const processed = await Promise.all(
-        answer.map(async (item) => {
-          if (typeof item === 'string' && isGoogleDriveUrl(item)) {
-            try {
-              return await processGoogleDriveImage(item, questionId);
-            } catch (error) {
-              console.error(`Failed to process array image for question ${questionId}:`, error);
-              return item;
-            }
-          }
-          return item;
-        })
-      );
-      if (answers instanceof Map) {
-        processedAnswers.set(questionId, processed);
-      } else {
-        processedAnswers[questionId] = processed;
-      }
-    } else {
+    }
+  } else {
+    for (const [questionId, answer] of entries) {
       if (answers instanceof Map) {
         processedAnswers.set(questionId, answer);
       } else {

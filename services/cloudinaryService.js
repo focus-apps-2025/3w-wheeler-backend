@@ -19,9 +19,15 @@ export const uploadToCloudinary = async (fileBuffer, filename, folder = 'focus_f
         folder: folder,
         public_id: filename.replace(/\.[^/.]+$/, ''),
         overwrite: true,
-        quality: 'auto',
+        quality: 80,
         fetch_format: 'auto',
-        timeout: 60000 // 60 seconds timeout
+        transformation: [
+          {
+            quality: 'auto',
+            fetch_format: 'auto'
+          }
+        ],
+        timeout: 60000
       },
       (error, result) => {
         if (error) {
