@@ -9,7 +9,8 @@ import {
   deleteResponse,
   deleteMultipleResponses,
   getResponsesByForm,
-  exportResponses
+  exportResponses,
+  processBulkImages,
 } from '../controllers/responseController.js';
 import { authenticate, adminOnly, teacherOrAdmin } from '../middleware/auth.js';
 import { addTenantFilter } from '../middleware/tenantIsolation.js';
@@ -17,11 +18,23 @@ import { processResponseImages, processGoogleDriveImage } from '../services/goog
 
 const router = express.Router();
 
-// Public routes for form submissions (no auth required)
-router.post('/', createResponse);
-router.post('/:tenantSlug', createResponse);
-router.post('/batch/import', batchImportResponses);
+// DEBUG: Log when this router is loaded
+console.log('Response router loaded');
 
+// ========== PUBLIC ROUTES (No Auth) ==========
+
+// 1. Add a test route first
+router.get('/test-route', (req, res) => {
+  console.log('Test route hit!');
+  res.json({ success: true, message: 'Test route works!' });
+});
+
+// 2. BATCH IMPORT route - define it clearly
+
+// 3. BULK IMAGE PROCESSING
+router.post('/process-bulk-images', processBulkImages);
+
+// 4. SINGLE IMAGE PROCESSING
 router.post('/process-images', async (req, res) => {
   try {
     const { answers, submissionId } = req.body;
@@ -72,6 +85,7 @@ router.post('/process-images', async (req, res) => {
   }
 });
 
+// 5. SINGLE IMAGE CONVERSION
 router.post('/convert-image', async (req, res) => {
   try {
     const { imageUrl } = req.body;
@@ -103,11 +117,16 @@ router.post('/convert-image', async (req, res) => {
   }
 });
 
-// Protected routes
+// 6. SINGLE RESPONSE CREATION
+router.post('/:tenantSlug', createResponse);
+
+// ========== PROTECTED ROUTES (Require Auth) ==========
 router.use(authenticate);
 router.use(addTenantFilter);
 
-// Form-specific responses (must come before generic /:id routes)
+router.post('/batch/import', batchImportResponses);
+
+// Form-specific responses
 router.get('/form/:formId', getResponsesByForm);
 router.get('/form/:formId/export', exportResponses);
 
@@ -118,5 +137,18 @@ router.put('/:id', updateResponse);
 router.patch('/:id/assign', assignResponse);
 router.delete('/:id', deleteResponse);
 router.delete('/', deleteMultipleResponses);
+
+// DEBUG: Log all registered routes
+console.log('\n=== Registered Response Routes ===');
+router.stack.forEach((layer) => {
+  if (layer.route) {
+    const methods = Object.keys(layer.route.methods).join(', ').toUpperCase();
+    console.log(`${methods} ${layer.route.path}`);
+  } else if (layer.name === 'router') {
+    // This is a nested router
+    console.log(`Nested router at: ${layer.regexp}`);
+  }
+});
+console.log('=== End Registered Routes ===\n');
 
 export default router;

@@ -2,7 +2,6 @@ import { v2 as cloudinary } from 'cloudinary';
 
 
 export const uploadToCloudinary = async (fileBuffer, filename, folder = 'focus_forms') => {
-  // IMPORTANT: Configure Cloudinary each time to ensure credentials are loaded
   cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
@@ -10,24 +9,18 @@ export const uploadToCloudinary = async (fileBuffer, filename, folder = 'focus_f
     secure: true
   });
 
- 
-
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
       {
-        resource_type: 'image',
+        resource_type: 'auto', // Changed from 'image' to 'auto'
         folder: folder,
         public_id: filename.replace(/\.[^/.]+$/, ''),
         overwrite: true,
-        quality: 80,
+        quality: 'auto:good', // Lower quality for large files
         fetch_format: 'auto',
-        transformation: [
-          {
-            quality: 'auto',
-            fetch_format: 'auto'
-          }
-        ],
-        timeout: 60000
+        timeout: 180000, // 3 MINUTES timeout (increased from 60000)
+        chunk_size: 6000000, // 6MB chunks for large files
+        eager_async: true // Process asynchronously
       },
       (error, result) => {
         if (error) {

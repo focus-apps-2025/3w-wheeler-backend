@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { collectSubmissionMetadata } from '../services/locationService.js';
 import { emitResponseCreated, emitResponseUpdated, emitResponseDeleted, emitImageProgress } from '../socket/socketHandler.js';
 import { processResponseImages } from '../services/googleDriveService.js';
+import { isGoogleDriveUrl } from '../services/googleDriveService.js';
 
 export const createResponse = async (req, res) => {
   try {
@@ -221,151 +222,566 @@ export const createResponse = async (req, res) => {
 };
 
 export const batchImportResponses = async (req, res) => {
+  // Declare batchId at the function scope
+  let batchId;
+  
   try {
-    const { questionId, responses } = req.body;
+    console.log('=== BATCH IMPORT ===');
     
-    if (!questionId || !Array.isArray(responses) || responses.length === 0) {
+    const { questionId, questionID, responses } = req.body;
+    const actualQuestionId = questionId || questionID;
+    
+    // Set batchId at function scope
+    batchId = req.body.batchId || `batch-${Date.now()}`;
+    
+    console.log('Batch ID:', batchId);
+    console.log('Searching for form ID:', actualQuestionId);
+    
+    if (!actualQuestionId || !Array.isArray(responses) || responses.length === 0) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid request: questionId and non-empty responses array required'
+        message: 'Invalid request'
       });
     }
-
-    let form;
-    const { tenantSlug } = req.params;
-
-    if (tenantSlug) {
-      const tenant = await Tenant.findOne({ slug: tenantSlug, isActive: true });
-      if (!tenant) {
-        return res.status(404).json({
-          success: false,
-          message: 'Business not found or inactive'
-        });
-      }
-      form = await Form.findOne({ id: questionId, tenantId: tenant._id, isVisible: true });
-    } else if (req.user) {
-      // Authenticated request - use tenant filter
-      form = await Form.findOne({ id: questionId, ...req.tenantFilter });
-    } else {
-      // Public request - find any public form with this ID
-      form = await Form.findOne({ id: questionId, isVisible: true });
-    }
-
-    if (!form) {
-      return res.status(404).json({
-        success: false,
-        message: 'Form not found'
-      });
-    }
-
-    const createdResponses = [];
-    const errors = [];
-
-    for (let index = 0; index < responses.length; index++) {
-      try {
-        const { answers, submittedBy, submitterContact, parentResponseId } = responses[index];
-        const submissionId = uuidv4();
-
-        const submissionMetadata = await collectSubmissionMetadata(req, {
-          includeLocation: form.locationEnabled !== false,
-        });
-
-        let processedAnswers = answers;
-        try {
-          const onProgressCallback = (status) => {
-            emitImageProgress(submissionId, status);
-          };
-          processedAnswers = await processResponseImages(answers, onProgressCallback);
-          console.log(`[BATCH IMPORT] ${index + 1}/${responses.length} - Processed images for submission by ${submittedBy}`);
-        } catch (error) {
-          console.error(`[BATCH IMPORT] ${index + 1}/${responses.length} - Failed to process images:`, error.message);
-        }
-
-        const allQuestions = [];
-        if (form.sections) {
-          form.sections.forEach(section => {
-            if (section.questions) {
-              allQuestions.push(...section.questions);
+    
+    // Find form (without isVisible check for now)
+    const form = await Form.findOne({ id: actualQuestionId });
+   
+    // STEP 1: Collect ALL Google Drive URLs from ALL responses FIRST
+    console.log(`[BATCH ${batchId}] Collecting all Google Drive URLs from ${responses.length} responses`);
+    
+    const allGoogleDriveUrls = [];
+    const urlToResponseMap = new Map();
+    
+    responses.forEach((response, responseIndex) => {
+      const { answers } = response;
+      
+      if (!answers || typeof answers !== 'object') return;
+      
+      Object.entries(answers).forEach(([questionId, answer]) => {
+        if (!answer) return;
+        
+        if (typeof answer === 'string' && isGoogleDriveUrl(answer)) {
+          const urlKey = `${responseIndex}_${questionId}`;
+          allGoogleDriveUrls.push({
+            url: answer,
+            questionId,
+            responseIndex,
+            type: 'single'
+          });
+          urlToResponseMap.set(urlKey, answer);
+        } else if (Array.isArray(answer)) {
+          answer.forEach((item, itemIndex) => {
+            if (typeof item === 'string' && isGoogleDriveUrl(item)) {
+              const urlKey = `${responseIndex}_${questionId}_${itemIndex}`;
+              allGoogleDriveUrls.push({
+                url: item,
+                questionId,
+                responseIndex,
+                arrayIndex: itemIndex,
+                type: 'array'
+              });
+              urlToResponseMap.set(urlKey, item);
             }
           });
         }
-        if (form.followUpQuestions) {
-          allQuestions.push(...form.followUpQuestions);
-        }
-
-        let correct = 0;
-        let total = 0;
+      });
+    });
+    
+    console.log(`[BATCH ${batchId}] Found ${allGoogleDriveUrls.length} Google Drive URLs to process`);
+    
+    // STEP 2: Process ALL images in BATCH using optimized service
+    const createdResponses = [];
+    const errors = [];
+    
+    if (allGoogleDriveUrls.length > 0) {
+      try {
+        // Emit initial progress
+        emitImageProgress(batchId, {
+          processed: 0,
+          total: allGoogleDriveUrls.length,
+          status: 'processing',
+          message: `Starting batch processing of ${allGoogleDriveUrls.length} images...`
+        });
         
-        allQuestions.forEach(question => {
-          if (question.type === 'yesNoNA') {
-            total++;
-            const answer = processedAnswers[question.id];
-            if (answer && String(answer).toLowerCase() === 'yes') {
-              correct++;
-            }
+        // Create a single answers object with ALL URLs for batch processing
+        const batchAnswers = {};
+        const urlMapping = {};
+        
+        allGoogleDriveUrls.forEach((item, index) => {
+          const uniqueKey = `batch_${index}`;
+          batchAnswers[uniqueKey] = item.url;
+          urlMapping[uniqueKey] = item;
+        });
+        
+        // Process ALL images at once with optimized function
+        const onProgressCallback = (progress) => {
+          emitImageProgress(batchId, {
+            processed: progress.currentImage,
+            total: progress.totalImages,
+            status: progress.status,
+            message: progress.message || `Processing images...`,
+            percentage: progress.percentage
+          });
+        };
+        
+        const processedBatch = await processResponseImages(
+          batchAnswers, 
+          onProgressCallback, 
+          batchId
+        );
+        
+        // Create mapping of original URL -> Cloudinary URL
+        const processedUrlMap = new Map();
+        Object.entries(processedBatch).forEach(([uniqueKey, cloudinaryUrl]) => {
+          const item = urlMapping[uniqueKey];
+          if (item && cloudinaryUrl !== item.url) {
+            processedUrlMap.set(item.url, cloudinaryUrl);
           }
         });
-
+        
+        console.log(`[BATCH ${batchId}] Successfully processed ${processedUrlMap.size}/${allGoogleDriveUrls.length} URLs`);
+        
+        // STEP 3: Process each response with already converted URLs
+        for (let index = 0; index < responses.length; index++) {
+          try {
+            const { answers, submittedBy, submitterContact, parentResponseId } = responses[index];
+            
+            // Replace Google Drive URLs with Cloudinary URLs in this response
+            const processedAnswers = {};
+            Object.entries(answers).forEach(([questionId, answer]) => {
+              if (!answer) {
+                processedAnswers[questionId] = answer;
+                return;
+              }
+              
+              if (typeof answer === 'string' && isGoogleDriveUrl(answer)) {
+                // Replace with processed URL if available
+                processedAnswers[questionId] = processedUrlMap.get(answer) || answer;
+              } else if (Array.isArray(answer)) {
+                // Process array answers
+                processedAnswers[questionId] = answer.map(item => 
+                  (typeof item === 'string' && isGoogleDriveUrl(item)) 
+                    ? (processedUrlMap.get(item) || item) 
+                    : item
+                );
+              } else {
+                processedAnswers[questionId] = answer;
+              }
+            });
+            
+            const submissionMetadata = await collectSubmissionMetadata(req, {
+              includeLocation: form.locationEnabled !== false,
+            });
+            
+            const allQuestions = [];
+            if (form.sections) {
+              form.sections.forEach(section => {
+                if (section.questions) {
+                  allQuestions.push(...section.questions);
+                }
+              });
+            }
+            if (form.followUpQuestions) {
+              allQuestions.push(...form.followUpQuestions);
+            }
+            
+            let correct = 0;
+            let total = 0;
+            
+            allQuestions.forEach(question => {
+              if (question.type === 'yesNoNA') {
+                total++;
+                const answer = processedAnswers[question.id];
+                if (answer && String(answer).toLowerCase() === 'yes') {
+                  correct++;
+                }
+              }
+            });
+            
+            const responseData = {
+              id: uuidv4(),
+              questionId: actualQuestionId,
+              answers: new Map(Object.entries(processedAnswers)),
+              parentResponseId,
+              submittedBy,
+              submitterContact,
+              submissionMetadata,
+              status: 'pending',
+              tenantId: form.tenantId,
+              score: { correct, total }
+            };
+            
+            const response = new Response(responseData);
+            await response.save();
+            
+            const answersObj = response.answers instanceof Map ? 
+              Object.fromEntries(response.answers) : response.answers;
+            
+            emitResponseCreated(actualQuestionId, {
+              id: response.id,
+              questionId: response.questionId,
+              status: response.status,
+              submittedBy: response.submittedBy,
+              createdAt: response.createdAt,
+              answers: answersObj
+            });
+            
+            createdResponses.push({
+              id: response.id,
+              submittedBy: response.submittedBy,
+              status: 'success'
+            });
+            
+            console.log(`[BATCH ${batchId}] Response ${index + 1}/${responses.length} saved successfully`);
+            
+          } catch (error) {
+            console.error(`[BATCH ${batchId}] Response ${index + 1} error:`, error.message);
+            errors.push({
+              index,
+              submittedBy: responses[index].submittedBy,
+              error: error.message
+            });
+          }
+        }
+        
+        // Emit completion progress
+        emitImageProgress(batchId, {
+          processed: allGoogleDriveUrls.length,
+          total: allGoogleDriveUrls.length,
+          status: 'complete',
+          message: `✓ Batch processing complete: ${createdResponses.length}/${responses.length} responses saved`
+        });
+        
+      } catch (error) {
+        console.error(`[BATCH ${batchId}] Batch processing error:`, error);
+        errors.push({
+          index: 'batch',
+          submittedBy: 'batch',
+          error: error.message
+        });
+      }
+      
+      // SEND RESPONSE FOR IMAGES PATH
+      console.log(`[BATCH ${batchId}] Sending success response (with images)`);
+      return res.status(201).json({
+        success: true,
+        message: `Batch import completed: ${createdResponses.length} responses imported successfully`,
+        data: {
+          imported: createdResponses.length,
+          total: responses.length,
+          failed: errors.length,
+          createdResponses,
+           imageConversion: {
+            total: allGoogleDriveUrls.length,
+            converted: allGoogleDriveUrls.length,
+            status: allGoogleDriveUrls.length > 0 ? "completed" : "not_required",
+            batchId
+          },
+          errors: errors.length > 0 ? errors : undefined
+        }
+      });
+      
+    } else {
+      // No images to process, just save responses directly
+      console.log(`[BATCH ${batchId}] No images to process, saving ${responses.length} responses directly`);
+      
+      // Initialize arrays here too (in case they weren't initialized above)
+      const createdResponses = [];
+      const errors = [];
+      
+      for (let index = 0; index < responses.length; index++) {
+        try {
+          const { answers, submittedBy, submitterContact, parentResponseId } = responses[index];
+          
+          // Process answers (convert to proper format)
+          const processedAnswers = {};
+          if (answers && typeof answers === 'object') {
+            Object.entries(answers).forEach(([questionId, answer]) => {
+              processedAnswers[questionId] = answer;
+            });
+          }
+          
+          const submissionMetadata = await collectSubmissionMetadata(req, {
+            includeLocation: form.locationEnabled !== false,
+          });
+          
+          // Get all questions from form for scoring
+          const allQuestions = [];
+          if (form.sections) {
+            form.sections.forEach(section => {
+              if (section.questions) {
+                allQuestions.push(...section.questions);
+              }
+            });
+          }
+          if (form.followUpQuestions) {
+            allQuestions.push(...form.followUpQuestions);
+          }
+          
+          // Calculate score for yesNoNA questions
+          let correct = 0;
+          let total = 0;
+          allQuestions.forEach(question => {
+            if (question.type === 'yesNoNA') {
+              total++;
+              const answer = processedAnswers[question.id];
+              if (answer && String(answer).toLowerCase() === 'yes') {
+                correct++;
+              }
+            }
+          });
+          
+          // Create response data
+          const responseData = {
+            id: uuidv4(),
+            questionId: actualQuestionId,
+            answers: new Map(Object.entries(processedAnswers)),
+            parentResponseId,
+            submittedBy: submittedBy || 'Excel Import',
+            submitterContact,
+            submissionMetadata,
+            status: 'pending',
+            tenantId: form.tenantId,
+            score: { correct, total }
+          };
+          
+          // Save to database
+          const response = new Response(responseData);
+          await response.save();
+          
+          // Convert Map to Object for emitting
+          const answersObj = response.answers instanceof Map ? 
+            Object.fromEntries(response.answers) : response.answers;
+          
+          // Emit event if function exists
+          if (typeof emitResponseCreated === 'function') {
+            emitResponseCreated(actualQuestionId, {
+              id: response.id,
+              questionId: response.questionId,
+              status: response.status,
+              submittedBy: response.submittedBy,
+              createdAt: response.createdAt,
+              answers: answersObj
+            });
+          }
+          
+          // Track created response
+          createdResponses.push({
+            id: response.id,
+            submittedBy: response.submittedBy,
+            status: 'success'
+          });
+          
+          console.log(`[BATCH ${batchId}] Response ${index + 1}/${responses.length} saved successfully`);
+          
+        } catch (error) {
+          console.error(`[BATCH ${batchId}] Response ${index + 1} error:`, error.message);
+          errors.push({
+            index,
+            submittedBy: responses[index]?.submittedBy || 'Unknown',
+            error: error.message
+          });
+        }
+      }
+      
+      // Send success response
+      console.log(`[BATCH ${batchId}] Sending success response (no images)`);
+      return res.status(201).json({
+        success: true,
+        message: `Batch import completed: ${createdResponses.length} responses imported successfully`,
+        data: {
+          imported: createdResponses.length,
+          total: responses.length,
+          failed: errors.length,
+          createdResponses,
+          errors: errors.length > 0 ? errors : undefined
+        }
+      });
+    }
+    
+  } catch (error) {
+    console.error('Batch import error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error during batch import'
+    });
+  }
+};
+/*export const batchImportResponses = async (req, res) => {
+  // Declare batchId at the function scope
+  let batchId;
+  
+  try {
+    console.log('=== BATCH IMPORT ===');
+    
+    const { questionId, questionID, responses } = req.body;
+    const actualQuestionId = questionId || questionID;
+    
+    // Set batchId at function scope
+    batchId = req.body.batchId || `batch-${Date.now()}`;
+    
+    console.log('Batch ID:', batchId);
+    console.log('Searching for form ID:', actualQuestionId);
+    
+    if (!actualQuestionId || !Array.isArray(responses) || responses.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid request'
+      });
+    }
+    
+    // Find form (without isVisible check for now)
+    const form = await Form.findOne({ id: actualQuestionId });
+    
+    if (!form) {
+      return res.status(404).json({
+        success: false,
+        message: `Form not found with ID: ${actualQuestionId}`
+      });
+    }
+    
+    console.log(`✅ Form found: "${form.title}"`);
+    
+    // Skip image checking for now - just save responses
+    console.log('=== Saving responses ===');
+    
+    const createdResponses = [];
+    const errors = [];
+    
+    // Save each response
+    for (let index = 0; index < responses.length; index++) {
+      try {
+        const { answers, submittedBy, submitterContact } = responses[index];
+        
+        console.log(`Saving response ${index + 1}/${responses.length}`);
+        
+        // Create response data
         const responseData = {
           id: uuidv4(),
-          questionId,
-          answers: new Map(Object.entries(processedAnswers)),
-          parentResponseId,
-          submittedBy,
-          submitterContact,
-          submissionMetadata,
+          questionId: actualQuestionId,
+          answers: new Map(Object.entries(answers || {})),
+          submittedBy: submittedBy || 'Excel Import',
+          submitterContact: submitterContact || {},
           status: 'pending',
-          tenantId: form.tenantId,
-          score: { correct, total }
+          tenantId: form.tenantId || null,
+          createdAt: new Date()
         };
-
+        
+        // Save to database
         const response = new Response(responseData);
         await response.save();
-
-        const answersObj = response.answers instanceof Map ? Object.fromEntries(response.answers) : response.answers;
-
-        emitResponseCreated(questionId, {
-          id: response.id,
-          questionId: response.questionId,
-          status: response.status,
-          submittedBy: response.submittedBy,
-          createdAt: response.createdAt,
-          answers: answersObj
-        });
-
+        
         createdResponses.push({
           id: response.id,
           submittedBy: response.submittedBy,
           status: 'success'
         });
-
+        
+        console.log(`✅ Response ${index + 1} saved`);
+        
       } catch (error) {
-        console.error(`[BATCH IMPORT] ${index + 1}/${responses.length} - Error:`, error.message);
+        console.error(`❌ Response ${index + 1} error:`, error.message);
         errors.push({
           index,
-          submittedBy: responses[index].submittedBy,
           error: error.message
         });
       }
     }
-
-    res.status(201).json({
+    
+    // Send success response
+    console.log('=== SENDING SUCCESS RESPONSE ===');
+    return res.status(201).json({
       success: true,
       message: `Batch import completed: ${createdResponses.length} responses imported successfully`,
       data: {
+        batchId,
         imported: createdResponses.length,
         total: responses.length,
         failed: errors.length,
-        createdResponses,
+        createdResponses: createdResponses.slice(0, 10), // Return first 10 only
         errors: errors.length > 0 ? errors : undefined
       }
     });
-
+    
   } catch (error) {
-    console.error('Batch import error:', error);
+    console.error('=== ERROR CATCH BLOCK ===');
+    console.error('Error:', error.message);
+    console.error('Batch ID during error:', batchId); // Now batchId is accessible
+    
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error during batch import',
+      batchId: batchId || 'unknown',
+      error: error.message
+    });
+  }
+}; */
+
+
+export const processBulkImages = async (req, res) => {
+  try {
+    const { answers, batchId = `bulk-${Date.now()}` } = req.body;
+    
+    if (!answers || typeof answers !== 'object') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid request: answers object required'
+      });
+    }
+    
+    console.log(`[BULK PROCESS] Starting bulk image processing for batch ${batchId}`);
+    
+    // Initialize WebSocket progress
+    emitImageProgress(batchId, {
+      status: 'starting',
+      message: 'Initializing bulk image processing...',
+      currentImage: 0,
+      totalImages: 0
+    });
+    
+    // Process images with progress tracking
+    const onProgress = (progress) => {
+      emitImageProgress(batchId, {
+        status: progress.status,
+        message: progress.message,
+        currentImage: progress.currentImage,
+        totalImages: progress.totalImages,
+        percentage: progress.percentage
+      });
+    };
+    
+    const processedAnswers = await processResponseImages(answers, onProgress, batchId);
+    
+    // Final success message
+    emitImageProgress(batchId, {
+      status: 'complete',
+      message: '✓ Bulk image processing completed successfully',
+      currentImage: 100,
+      totalImages: 100,
+      percentage: 100
+    });
+    
+    res.json({
+      success: true,
+      message: 'Bulk image processing completed',
+      batchId,
+      processedAnswers
+    });
+    
+  } catch (error) {
+    console.error('Bulk image processing error:', error);
+    
+    emitImageProgress(batchId, {
+      status: 'error',
+      message: `Processing failed: ${error.message}`,
+      error: error.message
+    });
+    
     res.status(500).json({
       success: false,
-      message: 'Internal server error during batch import'
+      message: 'Bulk image processing failed',
+      error: error.message
     });
   }
 };
@@ -437,18 +853,18 @@ export const getAllResponses = async (req, res) => {
       .populate(options.populate[1].path, options.populate[1].select)
       .sort(options.sort)
       .limit(options.limit * 1)
-      .skip((options.page - 1) * options.limit)
-      .lean();
+      .skip((options.page - 1) * options.limit);
 
     const total = await Response.countDocuments(query);
 
     // Convert Map to Object for JSON serialization
     const formattedResponses = responses.map(response => {
-      console.log('[DEBUG] Response metadata from DB in getAllResponses:', response.submissionMetadata);
+      const responseObj = response.toObject();
+      console.log('[DEBUG] Response metadata from DB in getAllResponses:', responseObj.submissionMetadata);
       return {
-        ...response,
-        answers: response.answers || {},
-        submissionMetadata: response.submissionMetadata || null
+        ...responseObj,
+        answers: Object.fromEntries(response.answers),
+        submissionMetadata: responseObj.submissionMetadata || null
       };
     });
 
@@ -686,7 +1102,7 @@ export const deleteMultipleResponses = async (req, res) => {
 export const getResponsesByForm = async (req, res) => {
   try {
     const { formId } = req.params;
-    const { page = 1, limit = 10000, status, analytics } = req.query;
+    const { page = 1, limit = 10000, status } = req.query;
 
     // Verify form exists
     const form = await Form.findOne({ id: formId, ...req.tenantFilter });
@@ -702,32 +1118,6 @@ export const getResponsesByForm = async (req, res) => {
       query.status = status;
     }
 
-    // Optimized query for analytics
-    if (analytics === 'true') {
-      const responses = await Response.find(query)
-        .select('id questionId answers status createdAt submissionMetadata.location')
-        .sort({ createdAt: -1 })
-        .lean();
-
-      // Convert Map to Object for JSON serialization
-      const formattedResponses = responses.map(response => ({
-        ...response,
-        answers: response.answers || {},
-        submissionMetadata: response.submissionMetadata || null
-      }));
-
-      return res.json({
-        success: true,
-        data: {
-          responses: formattedResponses,
-          form: {
-            id: form.id,
-            title: form.title
-          }
-        }
-      });
-    }
-
     const options = {
       page: parseInt(page),
       limit: parseInt(limit),
@@ -739,17 +1129,17 @@ export const getResponsesByForm = async (req, res) => {
       .populate('verifiedBy', 'username firstName lastName email')
       .sort(options.sort)
       .limit(options.limit * 1)
-      .skip((options.page - 1) * options.limit)
-      .lean();
+      .skip((options.page - 1) * options.limit);
 
     const total = await Response.countDocuments(query);
 
     // Convert Map to Object for JSON serialization
     const formattedResponses = responses.map(response => {
+      const responseObj = response.toObject();
       return {
-        ...response,
-        answers: response.answers || {},
-        submissionMetadata: response.submissionMetadata || null
+        ...responseObj,
+        answers: Object.fromEntries(response.answers),
+        submissionMetadata: responseObj.submissionMetadata || null
       };
     });
 
@@ -802,13 +1192,12 @@ export const exportResponses = async (req, res) => {
     const responses = await Response.find(query)
       .populate('assignedTo', 'username firstName lastName email')
       .populate('verifiedBy', 'username firstName lastName email')
-      .sort({ createdAt: -1 })
-      .lean();
+      .sort({ createdAt: -1 });
 
     // Convert Map to Object for JSON serialization
     const formattedResponses = responses.map(response => ({
-      ...response,
-      answers: response.answers || {}
+      ...response.toObject(),
+      answers: Object.fromEntries(response.answers)
     }));
 
     if (format === 'json') {
