@@ -212,7 +212,8 @@ export const getFormAnalytics = async (req, res) => {
       $or: [{ questionId: formId }, { questionId: form._id?.toString() }]
     })
       .sort({ createdAt: -1 })
-      .populate('assignedTo', 'firstName lastName email');
+      .populate('assignedTo', 'firstName lastName email')
+      .lean();
 
     // Filter responses for timeline (within period)
     const periodResponses = allResponses.filter(r => new Date(r.createdAt) >= startDate);

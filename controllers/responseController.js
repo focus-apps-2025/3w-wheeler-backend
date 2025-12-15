@@ -437,18 +437,18 @@ export const getAllResponses = async (req, res) => {
       .populate(options.populate[1].path, options.populate[1].select)
       .sort(options.sort)
       .limit(options.limit * 1)
-      .skip((options.page - 1) * options.limit);
+      .skip((options.page - 1) * options.limit)
+      .lean();
 
     const total = await Response.countDocuments(query);
 
     // Convert Map to Object for JSON serialization
     const formattedResponses = responses.map(response => {
-      const responseObj = response.toObject();
-      console.log('[DEBUG] Response metadata from DB in getAllResponses:', responseObj.submissionMetadata);
+      console.log('[DEBUG] Response metadata from DB in getAllResponses:', response.submissionMetadata);
       return {
-        ...responseObj,
-        answers: Object.fromEntries(response.answers),
-        submissionMetadata: responseObj.submissionMetadata || null
+        ...response,
+        answers: response.answers || {},
+        submissionMetadata: response.submissionMetadata || null
       };
     });
 
@@ -686,7 +686,7 @@ export const deleteMultipleResponses = async (req, res) => {
 export const getResponsesByForm = async (req, res) => {
   try {
     const { formId } = req.params;
-    const { page = 1, limit = 10000, status } = req.query;
+    const { page = 1, limit = 10000, status, analytics } = req.query;
 
     // Verify form exists
     const form = await Form.findOne({ id: formId, ...req.tenantFilter });
@@ -702,6 +702,32 @@ export const getResponsesByForm = async (req, res) => {
       query.status = status;
     }
 
+    // Optimized query for analytics
+    if (analytics === 'true') {
+      const responses = await Response.find(query)
+        .select('id questionId answers status createdAt submissionMetadata.location')
+        .sort({ createdAt: -1 })
+        .lean();
+
+      // Convert Map to Object for JSON serialization
+      const formattedResponses = responses.map(response => ({
+        ...response,
+        answers: response.answers || {},
+        submissionMetadata: response.submissionMetadata || null
+      }));
+
+      return res.json({
+        success: true,
+        data: {
+          responses: formattedResponses,
+          form: {
+            id: form.id,
+            title: form.title
+          }
+        }
+      });
+    }
+
     const options = {
       page: parseInt(page),
       limit: parseInt(limit),
@@ -713,17 +739,17 @@ export const getResponsesByForm = async (req, res) => {
       .populate('verifiedBy', 'username firstName lastName email')
       .sort(options.sort)
       .limit(options.limit * 1)
-      .skip((options.page - 1) * options.limit);
+      .skip((options.page - 1) * options.limit)
+      .lean();
 
     const total = await Response.countDocuments(query);
 
     // Convert Map to Object for JSON serialization
     const formattedResponses = responses.map(response => {
-      const responseObj = response.toObject();
       return {
-        ...responseObj,
-        answers: Object.fromEntries(response.answers),
-        submissionMetadata: responseObj.submissionMetadata || null
+        ...response,
+        answers: response.answers || {},
+        submissionMetadata: response.submissionMetadata || null
       };
     });
 
@@ -776,12 +802,13 @@ export const exportResponses = async (req, res) => {
     const responses = await Response.find(query)
       .populate('assignedTo', 'username firstName lastName email')
       .populate('verifiedBy', 'username firstName lastName email')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
 
     // Convert Map to Object for JSON serialization
     const formattedResponses = responses.map(response => ({
-      ...response.toObject(),
-      answers: Object.fromEntries(response.answers)
+      ...response,
+      answers: response.answers || {}
     }));
 
     if (format === 'json') {

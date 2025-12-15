@@ -19,6 +19,7 @@ const router = express.Router();
 
 // Public routes for form submissions (no auth required)
 router.post('/', createResponse);
+router.post('/:tenantSlug', createResponse);
 router.post('/batch/import', batchImportResponses);
 
 router.post('/process-images', async (req, res) => {
