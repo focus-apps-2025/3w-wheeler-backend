@@ -135,11 +135,12 @@ export const getAllTenants = async (req, res) => {
     ]);
 
     // ONLY use User collection as source of truth for admins
+    // Fetch both 'admin' and 'subadmin' roles for complete admin list
     const tenantsWithAllAdmins = await Promise.all(
       tenants.map(async (tenant) => {
         const allAdmins = await User.find({
           tenantId: tenant._id,
-          role: 'admin'
+          role: { $in: ['admin', 'subadmin'] }
         }).select('_id firstName lastName email isActive lastLogin role createdAt').lean();
         
         return {
@@ -257,13 +258,11 @@ export const toggleTenantStatus = async (req, res) => {
     tenant.isActive = !tenant.isActive;
     await tenant.save();
 
-    // Update ALL admin users status (since adminId is now an array)
-    if (tenant.adminId && tenant.adminId.length > 0) {
-      await User.updateMany(
-        { _id: { $in: tenant.adminId } },
-        { isActive: tenant.isActive }
-      );
-    }
+    // Update ALL admin/subadmin users status for this tenant
+    await User.updateMany(
+      { tenantId: tenant._id, role: { $in: ['admin', 'subadmin'] } },
+      { isActive: tenant.isActive }
+    );
 
     res.json({
       success: true,
@@ -489,17 +488,17 @@ export const removeAdminFromTenant = async (req, res) => {
       return res.status(404).json({ success: false, message: "Tenant not found" });
     }
 
-    // Check if this is the last admin
+    // Check if this is the last admin/subadmin
     const adminCount = await User.countDocuments({ 
       tenantId: tenantId, 
-      role: 'admin',
+      role: { $in: ['admin', 'subadmin'] },
       isActive: true
     });
 
     if (adminCount <= 1) {
       return res.status(400).json({ 
         success: false, 
-        message: "Cannot remove the last admin from a tenant" 
+        message: "Cannot remove the last administrator from a tenant" 
       });
     }
 
