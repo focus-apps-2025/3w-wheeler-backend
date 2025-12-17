@@ -85,6 +85,10 @@ const ResponseSchema = new mongoose.Schema({
     submittedAt: {
       type: Date,
       default: Date.now
+    },
+    source: {
+      type: String,
+      default: 'external'
     }
   },
   tenantId: {

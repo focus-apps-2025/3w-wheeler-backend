@@ -9,7 +9,7 @@ import { isGoogleDriveUrl } from '../services/googleDriveService.js';
 
 export const createResponse = async (req, res) => {
   try {
-    const { questionId, answers, parentResponseId, submittedBy, submitterContact } = req.body;
+    const { questionId, answers, parentResponseId, submittedBy, submitterContact, submissionMetadata: bodyMetadata } = req.body;
     const { tenantSlug } = req.params;
 
     let form;
@@ -53,6 +53,10 @@ export const createResponse = async (req, res) => {
     const submissionMetadata = await collectSubmissionMetadata(req, {
       includeLocation: form.locationEnabled !== false,
     });
+
+    if (bodyMetadata && bodyMetadata.source) {
+      submissionMetadata.source = bodyMetadata.source;
+    }
 
     if (form.locationEnabled !== false && req.body.location && typeof req.body.location === 'object') {
       const { latitude, longitude, accuracy, source, capturedAt, city, region, country } = req.body.location;

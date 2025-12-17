@@ -132,6 +132,7 @@ router.get('/form/:formId/export', exportResponses);
 
 // Response management
 router.get('/', getAllResponses);
+router.post('/', createResponse);
 router.get('/:id', getResponseById);
 router.put('/:id', updateResponse);
 router.patch('/:id/assign', assignResponse);

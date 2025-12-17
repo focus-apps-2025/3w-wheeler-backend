@@ -19,6 +19,8 @@ import parameterRoutes from "./routes/parameterRoutes.js";
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
 import { handleUploadError } from "./middleware/upload.js";
 import { initializeSocket } from "./socket/socketHandler.js";
+import pdfService from './services/pdfService.js';  // Add this for cleanup
+import pdfRoutes from './routes/pdfRoutes.js'; 
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -72,6 +74,22 @@ app.use(cors({
 
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+
+
+app.use('/api/pdf', pdfRoutes);
+
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received. Cleaning up...');
+  await pdfService.cleanup();  // ✅ FIXED: lowercase
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('SIGINT received. Cleaning up...');
+  await pdfService.cleanup();  // ✅ FIXED: lowercase
+  process.exit(0);
+});
+
 
 // Health check route
 app.get("/", (req, res) => {

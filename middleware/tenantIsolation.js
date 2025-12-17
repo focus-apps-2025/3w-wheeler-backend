@@ -1,3 +1,5 @@
+import mongoose from 'mongoose';
+
 // Middleware to ensure tenant data isolation
 export const ensureTenantIsolation = (req, res, next) => {
   const user = req.user;
@@ -29,7 +31,12 @@ export const addTenantFilter = (req, res, next) => {
     req.tenantFilter = {};
   } else {
     // All other users (including admin) are filtered by their tenantId
-    req.tenantFilter = { tenantId: user.tenantId };
+    // Ensure tenantId is an ObjectId for aggregation pipelines
+    req.tenantFilter = { 
+      tenantId: user.tenantId instanceof mongoose.Types.ObjectId 
+        ? user.tenantId 
+        : new mongoose.Types.ObjectId(user.tenantId) 
+    };
   }
 
   next();
