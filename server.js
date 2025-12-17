@@ -38,9 +38,12 @@ const requestTimeout = parseInt(process.env.REQUEST_TIMEOUT || '600000');
 app.timeout = requestTimeout;
 
 // Parse FRONTEND_URL to handle multiple origins
-const allowedOrigins = process.env.FRONTEND_URL
-  ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
-  : ["http://localhost:3000"];
+const allowedOrigins = [
+  "https://servicerequests.netlify.app",
+  "https://formsadmin.netlify.app",
+  "https://formsuperadmin.focusengineeringapp.com",
+  ...(process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',').map(url => url.trim()) : [])
+];
 
 // Add localhost origins for development
 const developmentOrigins = [

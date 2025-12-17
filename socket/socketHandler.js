@@ -3,9 +3,12 @@ import { Server } from 'socket.io';
 let io;
 
 export const initializeSocket = (server) => {
-  const allowedOrigins = process.env.FRONTEND_URL
-    ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
-    : [];
+  const allowedOrigins = [
+    "https://servicerequests.netlify.app",
+    "https://formsadmin.netlify.app",
+    "https://formsuperadmin.focusengineeringapp.com",
+    ...(process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',').map(url => url.trim()) : [])
+  ];
 
   const developmentOrigins = [
     "http://localhost:3000",
