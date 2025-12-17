@@ -76,7 +76,19 @@ app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 
+app.use('/api/pdf', pdfRoutes);
 
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received. Cleaning up...');
+  await pdfService.cleanup();  // ✅ FIXED: lowercase
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('SIGINT received. Cleaning up...');
+  await pdfService.cleanup();  // ✅ FIXED: lowercase
+  process.exit(0);
+});
 
 
 // Health check route
@@ -106,20 +118,6 @@ app.use("/api/roles", roleRoutes);
 app.use("/api/mail", mailRoutes);
 app.use("/api/tenants", tenantRoutes);
 app.use("/api/parameters", parameterRoutes);
-
-app.use('/api/pdf', pdfRoutes);
-
-process.on('SIGTERM', async () => {
-  console.log('SIGTERM received. Cleaning up...');
-  await pdfService.cleanup();  // ✅ FIXED: lowercase
-  process.exit(0);
-});
-
-process.on('SIGINT', async () => {
-  console.log('SIGINT received. Cleaning up...');
-  await pdfService.cleanup();  // ✅ FIXED: lowercase
-  process.exit(0);
-});
 
 // API info route
 app.get("/api", (req, res) => {
@@ -204,10 +202,7 @@ app.get("/api", (req, res) => {
         getById: "GET /api/parameters/:id",
         update: "PUT /api/parameters/:id",
         delete: "DELETE /api/parameters/:id"
-      },
-      pdf: {
-        generate: "POST /api/pdf/generate",
-      },
+      }
     }
   });
 });
