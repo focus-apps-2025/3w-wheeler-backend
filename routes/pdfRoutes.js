@@ -1,6 +1,9 @@
 import express from 'express';
 import pdfService from '../services/pdfService.js';
+import zlib from 'zlib';
+import { promisify } from 'util';
 
+const gunzip = promisify(zlib.gunzip);
 const router = express.Router();
 
 // Generate PDF with format option
@@ -8,16 +11,26 @@ router.post('/generate', async (req, res) => {
   const startTime = Date.now();
   
   try {
-    const { 
+    let { 
       htmlContent, 
       filename = 'report.pdf',
-      format = 'custom' // 'custom' or 'a4'
+      format = 'custom', // 'custom' or 'a4'
+      compressed = false
     } = req.body;
 
     if (!htmlContent) {
       return res.status(400).json({ 
         error: 'HTML content is required' 
       });
+    }
+
+    // Decompress if needed
+    if (compressed) {
+      console.log('📦 Decompressing content...');
+      const buffer = Buffer.from(htmlContent, 'base64');
+      const decompressed = await gunzip(buffer);
+      htmlContent = decompressed.toString('utf-8');
+      console.log(`📦 Decompressed: ${(htmlContent.length / 1024).toFixed(2)} KB`);
     }
 
     console.log('📊 Starting PDF generation...');
