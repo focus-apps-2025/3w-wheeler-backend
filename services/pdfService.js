@@ -9,30 +9,53 @@ class PDFService {
   }
 
   async initBrowser() {
-  if (this.initializationPromise) return this.initializationPromise;
+    if (this.initializationPromise) return this.initializationPromise;
 
-  this.initializationPromise = (async () => {
-    this.browser = await puppeteer.launch({
-      headless: 'new',
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage'
-      ],
-      defaultViewport: { width: 1920, height: 1080 }
-    });
+    this.initializationPromise = (async () => {
+      try {
+        console.log('🚀 Launching Puppeteer...');
+        this.browser = await puppeteer.launch({
+          headless: true,
+          executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+          args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--no-first-run',
+            '--no-zygote',
+            '--single-process',
+            '--disable-extensions'
+          ],
+          defaultViewport: { width: 1920, height: 1080 },
+          timeout: 60000 // 60 seconds timeout for launch
+        });
 
-    this.initialized = true;
-    console.log('✅ Puppeteer ready');
-  })();
+        this.initialized = true;
+        console.log('✅ Puppeteer ready');
+        
+        // Handle browser disconnect
+        this.browser.on('disconnected', () => {
+          console.log('⚠️ Browser disconnected');
+          this.initialized = false;
+          this.browser = null;
+          this.initializationPromise = null;
+        });
 
-  return this.initializationPromise;
-}
+      } catch (error) {
+        console.error('❌ Failed to launch Puppeteer:', error);
+        this.initializationPromise = null;
+        this.initialized = false;
+        throw error;
+      }
+    })();
 
+    return this.initializationPromise;
+  }
 
   async ensureInitialized() {
-    if (!this.initialized && !this.initializationPromise) {
+    if (!this.initialized || !this.browser || !this.browser.isConnected()) {
+      this.initializationPromise = null; // Reset promise if browser is not connected
       await this.initBrowser();
     } else if (this.initializationPromise) {
       await this.initializationPromise;

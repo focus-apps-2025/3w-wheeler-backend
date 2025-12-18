@@ -33,7 +33,8 @@ router.post('/generate', async (req, res) => {
       console.log(`📦 Decompressed: ${(htmlContent.length / 1024).toFixed(2)} KB`);
     }
 
-    console.log('📊 Starting PDF generation...');
+    const used = process.memoryUsage().heapUsed / 1024 / 1024;
+    console.log(`📊 Starting PDF generation... (Memory usage: ${Math.round(used * 100) / 100} MB)`);
     console.log(`📄 Content length: ${htmlContent.length} characters`);
     console.log(`📐 Format: ${format}`);
     
@@ -56,7 +57,8 @@ router.post('/generate', async (req, res) => {
     }
     
     const duration = (Date.now() - startTime) / 1000;
-    console.log(`✅ PDF generated in ${duration.toFixed(2)}s`);
+    const usedAfter = process.memoryUsage().heapUsed / 1024 / 1024;
+    console.log(`✅ PDF generated in ${duration.toFixed(2)}s (Memory usage: ${Math.round(usedAfter * 100) / 100} MB)`);
     
     res.set({
       'Content-Type': 'application/pdf',
