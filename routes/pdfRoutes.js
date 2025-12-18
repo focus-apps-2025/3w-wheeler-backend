@@ -24,13 +24,25 @@ router.post('/generate', async (req, res) => {
       });
     }
 
+    console.log('📥 Received PDF request');
+    console.log(`📦 Compressed: ${compressed}, Initial size: ${htmlContent.length} bytes`);
+
     // Decompress if needed
     if (compressed) {
-      console.log('📦 Decompressing content...');
-      const buffer = Buffer.from(htmlContent, 'base64');
-      const decompressed = await gunzip(buffer);
-      htmlContent = decompressed.toString('utf-8');
-      console.log(`📦 Decompressed: ${(htmlContent.length / 1024).toFixed(2)} KB`);
+      try {
+        console.log('📦 Decompressing content...');
+        const buffer = Buffer.from(htmlContent, 'base64');
+        console.log(`📦 Buffer size: ${buffer.length} bytes`);
+        const decompressed = await gunzip(buffer);
+        htmlContent = decompressed.toString('utf-8');
+        console.log(`✅ Decompressed: ${(htmlContent.length / 1024).toFixed(2)} KB`);
+      } catch (decompressError) {
+        console.error('❌ Decompression failed:', decompressError.message);
+        return res.status(400).json({ 
+          error: 'Failed to decompress content',
+          details: decompressError.message
+        });
+      }
     }
 
     const used = process.memoryUsage().heapUsed / 1024 / 1024;
@@ -73,22 +85,28 @@ router.post('/generate', async (req, res) => {
   } catch (error) {
     const duration = (Date.now() - startTime) / 1000;
     console.error(`❌ PDF generation failed after ${duration}s:`, error.message);
+    console.error('Stack trace:', error.stack);
     
     // Provide more helpful error messages
     let errorMessage = error.message;
     let suggestion = '';
     
-    if (error.message.includes('Timeout')) {
+    if (error.message.includes('ENOENT') || error.message.includes('not found')) {
+      suggestion = 'Chrome/Chromium binary not found. Make sure Puppeteer is properly installed.';
+    } else if (error.message.includes('Timeout')) {
       suggestion = 'The document is too large. Try reducing the content or contact support.';
-    } else if (error.message.includes('ensureInitialized')) {
-      suggestion = 'PDF service initialization failed. Check Chrome installation.';
+    } else if (error.message.includes('ensureInitialized') || error.message.includes('disconnected')) {
+      suggestion = 'PDF service initialization failed. Browser may have crashed.';
+    } else if (error.message.includes('ENOMEM') || error.message.includes('memory')) {
+      suggestion = 'Out of memory. Please try with smaller content.';
     }
     
     res.status(500).json({ 
       error: 'Failed to generate PDF',
       details: errorMessage,
       suggestion: suggestion,
-      duration: `${duration}s`
+      duration: `${duration}s`,
+      stack: error.stack
     });
   }
 });

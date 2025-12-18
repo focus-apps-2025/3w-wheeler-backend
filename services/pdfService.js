@@ -14,9 +14,9 @@ class PDFService {
     this.initializationPromise = (async () => {
       try {
         console.log('🚀 Launching Puppeteer...');
-        this.browser = await puppeteer.launch({
-          headless: true,
-          executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+        
+        const launchOptions = {
+          headless: 'new',
           args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -24,12 +24,19 @@ class PDFService {
             '--disable-gpu',
             '--no-first-run',
             '--no-zygote',
-            '--single-process',
-            '--disable-extensions'
+            '--disable-extensions',
+            '--disable-web-resources'
           ],
           defaultViewport: { width: 1920, height: 1080 },
-          timeout: 60000 // 60 seconds timeout for launch
-        });
+          timeout: 60000
+        };
+
+        // Try with explicit path first if provided
+        if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+          launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+        }
+
+        this.browser = await puppeteer.launch(launchOptions);
 
         this.initialized = true;
         console.log('✅ Puppeteer ready');
@@ -43,7 +50,8 @@ class PDFService {
         });
 
       } catch (error) {
-        console.error('❌ Failed to launch Puppeteer:', error);
+        console.error('❌ Failed to launch Puppeteer:', error.message);
+        console.error('Stack:', error.stack);
         this.initializationPromise = null;
         this.initialized = false;
         throw error;
@@ -77,13 +85,19 @@ class PDFService {
     
     try {
       // Get or create browser
+      console.log('📋 Getting browser instance...');
       browser = await this.getBrowser();
+      console.log('✅ Browser acquired');
       
       // Create a fresh page for each request
+      console.log('📄 Creating new page...');
       page = await browser.newPage();
+      console.log('✅ Page created');
       
       // Prepare HTML (removes problematic elements)
+      console.log('🧹 Preparing HTML...');
       const processedHTML = this.prepareHTMLForPDF(htmlContent);
+      console.log(`✅ HTML prepared: ${processedHTML.length} chars`);
       
       console.log('📝 Setting HTML content...');
       
@@ -96,7 +110,9 @@ class PDFService {
       console.log('✅ HTML content loaded');
       
       // Wait for rendering
+      console.log('⏳ Waiting for page render...');
       await new Promise(resolve => setTimeout(resolve, 1000));
+      console.log('✅ Page rendered');
       
       // Set page format based on options
       const format = options.format || 'custom'; // custom or a4
@@ -125,6 +141,7 @@ class PDFService {
       }
       
       console.log('📄 Generating PDF buffer...');
+      console.log('PDF Options:', JSON.stringify(pdfOptions, null, 2));
       const pdfBuffer = await page.pdf(pdfOptions);
       
       console.log(`✅ PDF generated: ${(pdfBuffer.length / 1024).toFixed(2)} KB`);
@@ -132,6 +149,8 @@ class PDFService {
       
     } catch (error) {
       console.error('❌ PDF generation error:', error.message);
+      console.error('❌ Full error:', error);
+      console.error('❌ Stack:', error.stack);
       
       // Try with fresh browser instance
       if (browser) {
@@ -148,7 +167,9 @@ class PDFService {
       if (page) {
         try {
           await page.close();
-        } catch (e) {}
+        } catch (e) {
+          console.error('Error closing page:', e.message);
+        }
       }
     }
   }
