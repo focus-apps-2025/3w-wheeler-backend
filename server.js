@@ -21,6 +21,8 @@ import { handleUploadError } from "./middleware/upload.js";
 import { initializeSocket } from "./socket/socketHandler.js";
 import pdfService from './services/pdfService.js';  // Add this for cleanup
 import pdfRoutes from './routes/pdfRoutes.js'; 
+import githubWebhookRoutes from "./routes/githubWebhook.js";
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -75,23 +77,17 @@ app.use(cors({
   credentials: true
 }));
 
+app.use(
+  "/api/github-webhook",
+  express.json({
+    verify: (req, res, buf) => { req.rawBody = buf; }
+  })
+);
+
 app.use(express.json({ limit: "200mb" }));
 app.use(express.urlencoded({ extended: true, limit: "200mb" }));
 
 
-app.use('/api/pdf', pdfRoutes);
-
-process.on('SIGTERM', async () => {
-  console.log('SIGTERM received. Cleaning up...');
-  await pdfService.cleanup();  // ✅ FIXED: lowercase
-  process.exit(0);
-});
-
-process.on('SIGINT', async () => {
-  console.log('SIGINT received. Cleaning up...');
-  await pdfService.cleanup();  // ✅ FIXED: lowercase
-  process.exit(0);
-});
 
 
 // Health check route
@@ -121,6 +117,22 @@ app.use("/api/roles", roleRoutes);
 app.use("/api/mail", mailRoutes);
 app.use("/api/tenants", tenantRoutes);
 app.use("/api/parameters", parameterRoutes);
+app.use('/api/pdf', pdfRoutes);
+
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received. Cleaning up...');
+  await pdfService.cleanup();  // ✅ FIXED: lowercase
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('SIGINT received. Cleaning up...');
+  await pdfService.cleanup();  // ✅ FIXED: lowercase
+  process.exit(0);
+});
+
+
+app.use("/api/github-webhook", githubWebhookRoutes);
 
 // API info route
 app.get("/api", (req, res) => {
@@ -205,6 +217,9 @@ app.get("/api", (req, res) => {
         getById: "GET /api/parameters/:id",
         update: "PUT /api/parameters/:id",
         delete: "DELETE /api/parameters/:id"
+      },
+      pdf:{
+        generate: "POST /api/pdf/generate"
       }
     }
   });
