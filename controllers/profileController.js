@@ -57,7 +57,7 @@ export const getProfile = async (req, res) => {
 export const updateProfile = async (req, res) => {
   try {
     const userId = req.params.userId || req.user._id;
-    const { name, phone, avatar, bio, department, position, settings, username } = req.body;
+    const { firstName, lastName, email, mobile, name, phone, avatar, bio, department, position, settings, username } = req.body;
 
     // Check if user can update this profile
     if (userId !== req.user._id.toString() && req.user.role !== 'admin') {
@@ -67,7 +67,29 @@ export const updateProfile = async (req, res) => {
       });
     }
 
-    // If username is provided, check if it already exists
+    // Prepare user update data
+    const userUpdateData = {};
+    if (firstName) userUpdateData.firstName = firstName;
+    if (lastName) userUpdateData.lastName = lastName;
+    if (email) userUpdateData.email = email;
+    if (mobile) userUpdateData.mobile = mobile;
+    if (username) userUpdateData.username = username;
+
+    // Check if email is already taken
+    if (email) {
+      const existingEmail = await User.findOne({
+        _id: { $ne: userId },
+        email: email
+      });
+      if (existingEmail) {
+        return res.status(400).json({
+          success: false,
+          message: 'Email already exists. Please use a different email.'
+        });
+      }
+    }
+
+    // Check if username is already taken
     if (username) {
       const existingUser = await User.findOne({
         _id: { $ne: userId },
@@ -82,23 +104,29 @@ export const updateProfile = async (req, res) => {
       }
     }
 
+    // Update User model with identity fields
+    let updatedUser = await User.findByIdAndUpdate(
+      userId,
+      userUpdateData,
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedUser) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
     let profile = await Profile.findOne({ userId });
 
     if (!profile) {
       // Create profile if it doesn't exist
-      const user = await User.findById(userId);
-      if (!user) {
-        return res.status(404).json({
-          success: false,
-          message: 'User not found'
-        });
-      }
-
       profile = new Profile({
-        userId: user._id,
-        name: name || `${user.firstName} ${user.lastName}`,
-        email: user.email,
-        phone: phone || user.mobile || '',
+        userId: updatedUser._id,
+        name: (firstName && lastName) ? `${firstName} ${lastName}` : name || `${updatedUser.firstName} ${updatedUser.lastName}`,
+        email: email || updatedUser.email,
+        phone: mobile || phone || updatedUser.mobile || '',
         avatar,
         bio,
         department,
@@ -112,8 +140,13 @@ export const updateProfile = async (req, res) => {
       });
     } else {
       // Update existing profile
-      if (name) profile.name = name;
-      if (phone !== undefined) profile.phone = phone;
+      if (firstName && lastName) profile.name = `${firstName} ${lastName}`;
+      else if (name) profile.name = name;
+      
+      if (email) profile.email = email;
+      if (mobile) profile.phone = mobile;
+      else if (phone !== undefined) profile.phone = phone;
+      
       if (avatar !== undefined) profile.avatar = avatar;
       if (bio !== undefined) profile.bio = bio;
       if (department !== undefined) profile.department = department;
@@ -123,24 +156,12 @@ export const updateProfile = async (req, res) => {
       }
     }
 
-    // Update username in User model if provided
-    if (username) {
-      await User.findByIdAndUpdate(userId, { username: username });
-    }
-
     await profile.save();
-    await profile.populate('userId', 'username email firstName lastName role');
-
-    // Include username from the populated user data
-    const profileData = profile.toObject();
-    if (profile.userId && profile.userId.username) {
-      profileData.username = profile.userId.username;
-    }
 
     res.json({
       success: true,
       message: 'Profile updated successfully',
-      data: { profile: profileData }
+      data: { user: updatedUser.toObject() }
     });
 
   } catch (error) {
