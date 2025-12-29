@@ -34,7 +34,8 @@
     "puppeteer": "^24.33.1",
     "sharp": "^0.34.5",
     "socket.io": "^4.8.1",
-    "uuid": "^13.0.0"
+    "uuid": "^13.0.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "chai": "^5.3.3",

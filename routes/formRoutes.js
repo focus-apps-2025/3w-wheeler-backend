@@ -26,6 +26,7 @@ import {
 } from '../controllers/formController.js';
 import { authenticate, adminOnly, teacherOrAdmin } from '../middleware/auth.js';
 import { addTenantFilter } from '../middleware/tenantIsolation.js';
+import formInviteRoutes from './formInviteRoutes.js';
 import multer from 'multer';
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -75,5 +76,7 @@ router.put('/:id/child-forms/reorder', reorderChildForms);
 router.post('/:id/section-branching', setSectionBranching);
 router.get('/:id/section-branching', getSectionBranching);
 router.get('/:id/section-branching/public/:tenantSlug', getSectionBranchingPublic);
+// Form invite routes
+router.use('/:formId/invites', formInviteRoutes);
 
 export default router;

@@ -6,10 +6,11 @@ import { collectSubmissionMetadata } from '../services/locationService.js';
 import { emitResponseCreated, emitResponseUpdated, emitResponseDeleted, emitImageProgress } from '../socket/socketHandler.js';
 import { processResponseImages } from '../services/googleDriveService.js';
 import { isGoogleDriveUrl } from '../services/googleDriveService.js';
+import FormInvite from '../models/FormInvite.js';
 
 export const createResponse = async (req, res) => {
   try {
-    const { questionId, answers, parentResponseId, submittedBy, submitterContact, submissionMetadata: bodyMetadata } = req.body;
+const { questionId, answers, parentResponseId, submittedBy, submitterContact, submissionMetadata: bodyMetadata,inviteId } = req.body;    
     const { tenantSlug } = req.params;
 
     let form;
@@ -48,6 +49,40 @@ export const createResponse = async (req, res) => {
           message: 'Form is not publicly available'
         });
       }
+    }
+
+    let inviteStatus = null;
+    if (inviteId) {
+      console.log(`[INVITE] Processing response with inviteId: ${inviteId}`);
+      
+      // Find the invite
+      const invite = await FormInvite.findOne({ 
+        formId: questionId,  // questionId is actually your formId
+        inviteId: inviteId
+      });
+      
+      if (!invite) {
+        return res.status(403).json({
+          success: false,
+          message: 'Invalid or expired invite link'
+        });
+      }
+      
+      // Check if already responded
+      if (invite.status === 'responded') {
+        return res.status(403).json({
+          success: false,
+          message: 'This invite link has already been used'
+        });
+      }
+      
+      // Mark as responded
+      invite.status = 'responded';
+      invite.respondedAt = new Date();
+      await invite.save();
+      
+      inviteStatus = 'responded';
+      console.log(`[INVITE] Updated invite ${inviteId} to responded status`);
     }
 
     const submissionMetadata = await collectSubmissionMetadata(req, {
@@ -175,7 +210,8 @@ export const createResponse = async (req, res) => {
       submissionMetadata,
       status: 'pending',
       tenantId: form.tenantId,
-      score: { correct, total }
+      score: { correct, total },
+      inviteId: inviteId || null
     };
 
     const response = new Response(responseData);
@@ -190,7 +226,8 @@ export const createResponse = async (req, res) => {
       status: response.status,
       submittedBy: response.submittedBy,
       createdAt: response.createdAt,
-      answers: answersObj
+      answers: answersObj,
+      inviteId: inviteId || null
     });
 
     res.status(201).json({
@@ -206,13 +243,16 @@ export const createResponse = async (req, res) => {
           submitterContact: response.submitterContact,
           status: response.status,
           createdAt: response.createdAt,
-          updatedAt: response.updatedAt
+          updatedAt: response.updatedAt,
+          inviteId: inviteId || null
         },
         score: {
           correct,
           total,
           percentage: total > 0 ? Math.round((correct / total) * 100) : 0
-        }
+        },
+          inviteStatus: inviteStatus
+          
       }
     });
 

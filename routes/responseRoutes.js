@@ -118,7 +118,7 @@ router.post('/convert-image', async (req, res) => {
 });
 
 // 6. SINGLE RESPONSE CREATION
-router.post('/:tenantSlug', createResponse);
+router.post('/:tenantSlug/forms/:formId/responses', createResponse);
 
 // ========== PROTECTED ROUTES (Require Auth) ==========
 router.use(authenticate);

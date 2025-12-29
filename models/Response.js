@@ -48,6 +48,12 @@ const ResponseSchema = new mongoose.Schema({
     email: String,
     phone: String
   },
+  inviteId: {
+  type: String,
+  ref: 'FormInvite',
+  index: true,
+  default: null
+},
   // Location and metadata tracking
   submissionMetadata: {
     ipAddress: String,

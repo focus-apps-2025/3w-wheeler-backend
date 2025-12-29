@@ -22,6 +22,7 @@ import { initializeSocket } from "./socket/socketHandler.js";
 import pdfService from './services/pdfService.js';  // Add this for cleanup
 import pdfRoutes from './routes/pdfRoutes.js'; 
 import githubWebhookRoutes from "./routes/githubWebhook.js";
+import formInviteRoutes from './routes/formInviteRoutes.js';
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -118,6 +119,7 @@ app.use("/api/mail", mailRoutes);
 app.use("/api/tenants", tenantRoutes);
 app.use("/api/parameters", parameterRoutes);
 app.use('/api/pdf', pdfRoutes);
+app.use('/api/forms', formInviteRoutes);
 
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received. Cleaning up...');

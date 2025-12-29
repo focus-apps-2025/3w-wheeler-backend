@@ -3,75 +3,165 @@ import Parameter from '../models/Parameter.js';
 // @desc    Create a new parameter
 // @route   POST /api/parameters
 // @access  Private
-export const createParameter = async (req, res) => {
+/*export const createParameter = async (req, res) => {
   try {
     const { name, type, formId } = req.body;
 
-    // Validate required fields
     if (!name || !name.trim()) {
-      return res.status(400).json({
-        success: false,
-        message: 'Parameter name is required'
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Parameter name is required' 
       });
     }
 
     if (!type || !['main', 'followup'].includes(type)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Parameter type must be either "main" or "followup"'
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid parameter type' 
       });
     }
 
     if (!formId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Form ID is required'
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Form ID is required' 
       });
     }
 
-    // Check if parameter already exists for this form, tenant and type
+    const tenantId = req.user.role === 'superadmin' 
+      ? req.body.tenantId 
+      : req.user.tenantId;
+
+    // Check if parameter already exists
     const existingParameter = await Parameter.findOne({
       name: name.trim(),
       type,
-      formId,
-      ...req.tenantFilter
+      tenantId
     });
 
     if (existingParameter) {
-      return res.status(400).json({
-        success: false,
-        message: `A ${type} parameter with this name already exists for this form`
-      });
+      // Check if it's for the same form
+      if (existingParameter.formId.toString() === formId) {
+        return res.status(200).json({
+          success: true,
+          message: 'Parameter already exists',
+          data: { parameter: existingParameter }
+        });
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: `A ${type} parameter with name "${name.trim()}" already exists for another form`
+        });
+      }
     }
 
     // Create new parameter
-    const parameter = new Parameter({
+    const parameter = await Parameter.create({
       name: name.trim(),
       type,
       formId,
-      tenantId: req.user.role === 'superadmin' ? req.body.tenantId : req.user.tenantId,
+      tenantId,
       createdBy: req.user._id
     });
-
-    await parameter.save();
 
     res.status(201).json({
       success: true,
       message: 'Parameter created successfully',
-      data: {
-        parameter: {
-          id: parameter._id,
-          name: parameter.name,
-          type: parameter.type,
-          formId: parameter.formId,
-          tenantId: parameter.tenantId,
-          createdBy: parameter.createdBy,
-          createdAt: parameter.createdAt
-        }
-      }
+      data: { parameter }
     });
+
+  } catch (error) {
+    console.error(error);
+    
+    // Handle duplicate key error specifically
+    if (error.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: 'A parameter with this name and type already exists'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Server error while creating parameter'
+    });
+  }
+};*/
+
+
+export const createParameter = async (req, res) => {
+  try {
+    const { name, type, formId } = req.body;
+
+    // Validation
+    if (!name || !name.trim()) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Parameter name is required' 
+      });
+    }
+
+    if (!type || !['main', 'followup'].includes(type)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid parameter type' 
+      });
+    }
+
+    if (!formId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Form ID is required' 
+      });
+    }
+
+    const tenantId = req.user.role === 'superadmin' 
+      ? req.body.tenantId 
+      : req.user.tenantId;
+
+    // Try to find existing parameter
+    let parameter = await Parameter.findOne({
+      name: name.trim(),
+      type,
+      formId,
+      tenantId
+    });
+
+    if (parameter) {
+      // Parameter already exists, return it
+      return res.status(200).json({
+        success: true,
+        message: 'Parameter already exists',
+        data: { parameter }
+      });
+    }
+
+    // Create new parameter
+    parameter = await Parameter.create({
+      name: name.trim(),
+      type,
+      formId,
+      tenantId,
+      createdBy: req.user._id
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Parameter created successfully',
+      data: { parameter }
+    });
+
   } catch (error) {
     console.error('Error creating parameter:', error);
+    
+    // Handle duplicate key error
+    if (error.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: 'A parameter with this name, type, and form already exists'
+      });
+    }
+    
     res.status(500).json({
       success: false,
       message: 'Server error while creating parameter'

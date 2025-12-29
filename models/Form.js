@@ -180,6 +180,10 @@ const FormSchema = new mongoose.Schema({
     type: Boolean,
     default: true // Default to true for backward compatibility
   },
+  inviteOnlyTracking: {
+    type: Boolean,
+    default: true
+  },
   permissions: {
     canRespond: [String], // Array of role names
     canViewResponses: [String],
