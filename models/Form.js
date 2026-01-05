@@ -61,6 +61,8 @@ const FollowUpQuestionSchema = new mongoose.Schema({
       'file', 'range', 'rating', 'scale', 'radio-grid', 'checkbox-grid',
       'radio-image', 'paragraph', 'search-select', 'number', 'location', 'boolean',
       'yesNoNA',
+      // Hierarchy types
+      'productNPSTGWBuckets',
       // Feedback types
       'slider-feedback', 'emoji-star-feedback', 'emoji-reaction-feedback',
       // Legacy types for backward compatibility (will be migrated)
@@ -262,7 +264,9 @@ const normalizeQuestionType = (type) => {
     'emoji-star-feedback': 'emoji-star-feedback',
     'emojistarfeedback': 'emoji-star-feedback',
     'emoji-reaction-feedback': 'emoji-reaction-feedback',
-    'emojireactionfeedback': 'emoji-reaction-feedback'
+    'emojireactionfeedback': 'emoji-reaction-feedback',
+    'productnpstgwbuckets': 'productNPSTGWBuckets',
+    'product-nps-tgw-buckets': 'productNPSTGWBuckets'
   };
   
   // First try exact match after normalization

@@ -194,8 +194,9 @@ export const createForm = async (req, res) => {
         'number': 'number', 'location': 'location',
         'boolean': 'boolean', 'textarea': 'textarea', 
         'text': 'text', 'radio': 'radio', 'paragraph': 'paragraph', 
-        'select': 'select', 'checkbox': 'checkbox',
-        'yesnona': 'yesNoNA'  // Pass-through for already-correct yesNoNA
+        'select': 'select', 'checkbox': 'checkbox', 'productnpstgwbuckets': 'productNPSTGWBuckets',
+        'yesnona': 'yesNoNA',
+        'productnpstgwbuckets': 'productNPSTGWBuckets'
       };
       
       if (question?.type) {
@@ -612,7 +613,7 @@ export const updateForm = async (req, res) => {
         'number': 'number', 'location': 'location',
         'boolean': 'boolean', 'textarea': 'textarea', 
         'text': 'text', 'radio': 'radio', 'paragraph': 'paragraph', 
-        'select': 'select', 'checkbox': 'checkbox'
+        'select': 'select', 'checkbox': 'checkbox', 'productnpstgwbuckets': 'productNPSTGWBuckets'
       };
       
       if (question?.type) {
@@ -1841,7 +1842,7 @@ export const importFormFromCSV = async (req, res) => {
         'number': 'number', 'location': 'location',
         'boolean': 'boolean', 'textarea': 'textarea', 
         'text': 'text', 'radio': 'radio', 'paragraph': 'paragraph', 
-        'select': 'select', 'checkbox': 'checkbox'
+        'select': 'select', 'checkbox': 'checkbox', 'productnpstgwbuckets': 'productNPSTGWBuckets'
       };
       
       if (question?.type) {
