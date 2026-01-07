@@ -29,14 +29,29 @@ export const getDashboardStats = async (req, res) => {
     }
 
     // Get basic counts with tenant filter
-    const totalForms = await Form.countDocuments(req.tenantFilter);
+    // For forms, we also include global forms shared with this tenant
+    let effectiveFormFilter = { ...req.tenantFilter };
+    if (req.user.role !== 'superadmin' && req.user.tenantId) {
+      const tenantId = req.user.tenantId instanceof mongoose.Types.ObjectId 
+        ? req.user.tenantId 
+        : new mongoose.Types.ObjectId(req.user.tenantId);
+        
+      effectiveFormFilter = {
+        $or: [
+          { tenantId: tenantId },
+          { sharedWithTenants: tenantId }
+        ]
+      };
+    }
+
+    const totalForms = await Form.countDocuments(effectiveFormFilter);
     const totalResponses = await Response.countDocuments(req.tenantFilter);
     const totalUsers = await User.countDocuments({ ...req.tenantFilter, role: { $ne: 'admin' } });
-    const publicForms = await Form.countDocuments({ ...req.tenantFilter, isVisible: true });
+    const publicForms = await Form.countDocuments({ ...effectiveFormFilter, isVisible: true });
 
     // Get period-specific data
     const formsInPeriod = await Form.countDocuments({
-      ...req.tenantFilter,
+      ...effectiveFormFilter,
       createdAt: { $gte: startDate }
     });
     
@@ -47,7 +62,7 @@ export const getDashboardStats = async (req, res) => {
 
     // Get response status distribution
     const statusDistribution = await Response.aggregate([
-      ...(req.tenantFilter.tenantId ? [{ $match: req.tenantFilter }] : []),
+      { $match: req.tenantFilter },
       {
         $group: {
           _id: '$status',
@@ -58,7 +73,7 @@ export const getDashboardStats = async (req, res) => {
 
     // Get top forms by responses
     const topForms = await Response.aggregate([
-      ...(req.tenantFilter.tenantId ? [{ $match: req.tenantFilter }] : []),
+      { $match: req.tenantFilter },
       {
         $group: {
           _id: '$questionId',
@@ -116,7 +131,7 @@ export const getDashboardStats = async (req, res) => {
     ]);
 
     // Get recent activity
-    const recentForms = await Form.find(req.tenantFilter)
+    const recentForms = await Form.find(effectiveFormFilter)
       .sort({ createdAt: -1 })
       .limit(5)
       .populate('createdBy', 'username firstName lastName')
@@ -186,6 +201,23 @@ export const getFormAnalytics = async (req, res) => {
         success: false,
         message: 'Form not found'
       });
+    }
+
+    // Tenant check: Ensure user has access to this form
+    if (req.user.role !== 'superadmin') {
+      const userTenantId = req.user.tenantId instanceof mongoose.Types.ObjectId 
+        ? req.user.tenantId 
+        : new mongoose.Types.ObjectId(req.user.tenantId);
+        
+      const isOwner = form.tenantId && form.tenantId.toString() === userTenantId.toString();
+      const isShared = form.sharedWithTenants && form.sharedWithTenants.some(t => t.toString() === userTenantId.toString());
+      
+      if (!isOwner && !isShared) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. You do not have permission to view analytics for this form.'
+        });
+      }
     }
 
     // Calculate date range
@@ -407,9 +439,9 @@ export const exportAnalytics = async (req, res) => {
     switch (type) {
       case 'dashboard':
         // Get dashboard analytics
-        const dashboardReq = { query: { period } };
-        const dashboardRes = { json: (result) => { data = result.data; } };
-        await getDashboardStats(dashboardReq, dashboardRes);
+        await getDashboardStats(req, {
+          json: (result) => { data = result.data; }
+        });
         break;
         
       case 'form':
@@ -420,16 +452,20 @@ export const exportAnalytics = async (req, res) => {
           });
         }
         // Get form analytics
-        const formReq = { params: { formId }, query: { period } };
-        const formRes = { json: (result) => { data = result.data; } };
-        await getFormAnalytics(formReq, formRes);
+        // We need to merge query formId into params for getFormAnalytics
+        const originalParams = req.params;
+        req.params = { ...req.params, formId };
+        await getFormAnalytics(req, {
+          json: (result) => { data = result.data; }
+        });
+        req.params = originalParams; // Restore params
         break;
         
       case 'users':
         // Get user analytics
-        const userReq = { query: { period } };
-        const userRes = { json: (result) => { data = result.data; } };
-        await getUserAnalytics(userReq, userRes);
+        await getUserAnalytics(req, {
+          json: (result) => { data = result.data; }
+        });
         break;
         
       default:

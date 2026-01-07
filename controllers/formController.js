@@ -93,14 +93,16 @@ export const createForm = async (req, res) => {
     
     // Determine tenantId based on user role
     let tenantId;
+    const isGlobal = req.body.isGlobal === true || req.body.isGlobal === 'true';
+
     if (req.user.role === 'superadmin') {
-      // SuperAdmin must provide tenantId in request body
+      // SuperAdmin can create global forms or forms for a specific tenant
       tenantId = req.body.tenantId;
       console.log('SuperAdmin - tenantId from body:', tenantId);
-      if (!tenantId) {
+      if (!tenantId && !isGlobal) {
         return res.status(400).json({
           success: false,
-          message: 'tenantId is required for superadmin to create forms'
+          message: 'tenantId is required for superadmin to create tenant-specific forms'
         });
       }
     } else {
@@ -115,8 +117,8 @@ export const createForm = async (req, res) => {
       }
     }
 
-    // Validate tenantId is a valid ObjectId
-    if (!mongoose.Types.ObjectId.isValid(tenantId)) {
+    // Validate tenantId is a valid ObjectId (only if tenantId is provided)
+    if (tenantId && !mongoose.Types.ObjectId.isValid(tenantId)) {
       console.error('Invalid tenantId format:', tenantId);
       return res.status(400).json({
         success: false,
@@ -137,7 +139,9 @@ export const createForm = async (req, res) => {
       ...req.body,
       id: req.body.id || uuidv4(),
       createdBy: req.user._id,
-      tenantId: tenantId
+      tenantId: tenantId,
+      isGlobal: isGlobal,
+      sharedWithTenants: req.body.sharedWithTenants || []
     };
     
     // DEBUG: Check formData before creating form
@@ -301,16 +305,57 @@ export const createForm = async (req, res) => {
 
 export const getAllForms = async (req, res) => {
   try {
-    const { page = 1, limit = 1000, search, isVisible, isActive, createdBy } = req.query;
+    const { page = 1, limit = 1000, search, isVisible, isActive, createdBy, isGlobal } = req.query;
 
-    const query = { ...req.tenantFilter };
+    let query = { ...req.tenantFilter };
+
+    // If not superadmin, also include global forms shared with this tenant
+    if (req.user.role !== 'superadmin' && req.user.tenantId) {
+      const tenantId = req.user.tenantId instanceof mongoose.Types.ObjectId 
+        ? req.user.tenantId 
+        : new mongoose.Types.ObjectId(req.user.tenantId);
+        
+      query = {
+        $or: [
+          { tenantId: tenantId },
+          { sharedWithTenants: tenantId }
+        ]
+      };
+    }
+
+    // Filter by global status
+    if (isGlobal !== undefined) {
+      const isGlobalValue = isGlobal === 'true';
+      if (query.$or) {
+        // If we already have a tenant filter $or, we need to $and it with isGlobal
+        query = {
+          $and: [
+            { $or: query.$or },
+            { isGlobal: isGlobalValue }
+          ]
+        };
+      } else {
+        query.isGlobal = isGlobalValue;
+      }
+    }
 
     // Search by title or description
     if (search) {
-      query.$or = [
+      const searchOr = [
         { title: { $regex: search, $options: 'i' } },
         { description: { $regex: search, $options: 'i' } }
       ];
+      
+      if (query.$or) {
+        query = {
+          $and: [
+            { $or: query.$or },
+            { $or: searchOr }
+          ]
+        };
+      } else {
+        query.$or = searchOr;
+      }
     }
 
     // Filter by visibility
@@ -423,10 +468,26 @@ export const getPublicForms = async (req, res) => {
         });
       }
       
-      query.tenantId = tenant._id;
-    } else if (req.tenantFilter) {
-      // Authenticated user - apply tenant filter
-      query = { ...query, ...req.tenantFilter };
+      query = {
+        ...query,
+        $or: [
+          { tenantId: tenant._id },
+          { sharedWithTenants: tenant._id }
+        ]
+      };
+    } else if (req.tenantFilter && req.user && req.user.role !== 'superadmin') {
+      // Authenticated user - include shared global forms
+      const tenantId = req.user.tenantId instanceof mongoose.Types.ObjectId 
+        ? req.user.tenantId 
+        : new mongoose.Types.ObjectId(req.user.tenantId);
+        
+      query = {
+        ...query,
+        $or: [
+          { tenantId: tenantId },
+          { sharedWithTenants: tenantId }
+        ]
+      };
     }
     
     const forms = await Form.find(query)
@@ -474,6 +535,20 @@ export const getFormById = async (req, res) => {
       });
     }
 
+    // Permission check for authenticated users (not public slug access)
+    if (!tenantSlug && req.user && req.user.role !== 'superadmin') {
+      const userTenantId = req.user.tenantId.toString();
+      const isOwnedByTenant = form.tenantId && form.tenantId.toString() === userTenantId;
+      const isSharedWithTenant = form.sharedWithTenants && form.sharedWithTenants.some(tId => tId && tId.toString() === userTenantId);
+      
+      if (!isOwnedByTenant && !isSharedWithTenant) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. This form is not available for your organization.'
+        });
+      }
+    }
+
     // For public access with tenant slug, verify tenant and form visibility
     if (tenantSlug) {
       const Tenant = mongoose.model('Tenant');
@@ -486,8 +561,11 @@ export const getFormById = async (req, res) => {
         });
       }
       
-      // Verify form belongs to this tenant
-      if (form.tenantId.toString() !== tenant._id.toString()) {
+      // Verify form belongs to this tenant or is shared with it
+      const isOwnedByTenant = form.tenantId && form.tenantId.toString() === tenant._id.toString();
+      const isSharedWithTenant = form.sharedWithTenants && form.sharedWithTenants.some(tId => tId && tId.toString() === tenant._id.toString());
+      
+      if (!isOwnedByTenant && !isSharedWithTenant) {
         return res.status(404).json({
           success: false,
           message: 'Form not found'
@@ -576,7 +654,16 @@ export const updateForm = async (req, res) => {
     }
 
     // Update form
-    Object.assign(form, req.body);
+    const updateData = { ...req.body };
+    
+    // Only superadmin can change isGlobal and sharedWithTenants
+    if (req.user.role !== 'superadmin') {
+      delete updateData.isGlobal;
+      delete updateData.sharedWithTenants;
+      delete updateData.tenantId;
+    }
+
+    Object.assign(form, updateData);
 
     try {
       normalizeSectionWeightage(form.sections);
@@ -1941,6 +2028,62 @@ export const importFormFromCSV = async (req, res) => {
     res.status(400).json({
       success: false,
       message: error.message || 'CSV import failed'
+    });
+  }
+};
+
+export const getGlobalFormStats = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const form = await findFormByIdentifier(id);
+
+    if (!form) {
+      return res.status(404).json({
+        success: false,
+        message: 'Form not found'
+      });
+    }
+
+    const stats = await Response.aggregate([
+      { $match: { questionId: form.id || form._id.toString() } },
+      {
+        $group: {
+          _id: "$tenantId",
+          responseCount: { $sum: 1 },
+          lastResponse: { $max: "$createdAt" }
+        }
+      },
+      {
+        $lookup: {
+          from: "tenants",
+          localField: "_id",
+          foreignField: "_id",
+          as: "tenantInfo"
+        }
+      },
+      { $unwind: "$tenantInfo" },
+      {
+        $project: {
+          tenantId: "$_id",
+          tenantName: "$tenantInfo.name",
+          companyName: "$tenantInfo.companyName",
+          responseCount: 1,
+          lastResponse: 1,
+          _id: 0
+        }
+      },
+      { $sort: { responseCount: -1 } }
+    ]);
+
+    res.json({
+      success: true,
+      data: { stats }
+    });
+  } catch (error) {
+    console.error('Get global form stats error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };

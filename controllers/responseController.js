@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import Response from '../models/Response.js';
 import Form from '../models/Form.js';
 import Tenant from '../models/Tenant.js';
@@ -14,9 +15,10 @@ const { questionId, answers, parentResponseId, submittedBy, submitterContact, su
     const { tenantSlug } = req.params;
 
     let form;
+    let tenant = null;
 
     if (tenantSlug) {
-      const tenant = await Tenant.findOne({ slug: tenantSlug, isActive: true });
+      tenant = await Tenant.findOne({ slug: tenantSlug, isActive: true });
 
       if (!tenant) {
         return res.status(404).json({
@@ -25,7 +27,14 @@ const { questionId, answers, parentResponseId, submittedBy, submitterContact, su
         });
       }
 
-      form = await Form.findOne({ id: questionId, tenantId: tenant._id, isVisible: true });
+      form = await Form.findOne({ 
+        id: questionId, 
+        $or: [
+          { tenantId: tenant._id },
+          { sharedWithTenants: tenant._id }
+        ],
+        isVisible: true 
+      });
 
       if (!form) {
         return res.status(404).json({
@@ -34,7 +43,14 @@ const { questionId, answers, parentResponseId, submittedBy, submitterContact, su
         });
       }
     } else {
-      form = await Form.findOne({ id: questionId, ...req.tenantFilter });
+      const userTenantId = req.user.tenantId;
+      form = await Form.findOne({ 
+        id: questionId, 
+        $or: [
+          { tenantId: userTenantId },
+          { sharedWithTenants: userTenantId }
+        ]
+      });
 
       if (!form) {
         return res.status(404).json({
@@ -200,6 +216,10 @@ const { questionId, answers, parentResponseId, submittedBy, submitterContact, su
       console.error('[ERROR] Failed to process Google Drive images:', error);
     }
 
+    const responseTenantId = tenant 
+      ? tenant._id 
+      : (req.user ? req.user.tenantId : form.tenantId);
+
     const responseData = {
       id: uuidv4(),
       questionId,
@@ -209,7 +229,7 @@ const { questionId, answers, parentResponseId, submittedBy, submitterContact, su
       submitterContact,
       submissionMetadata,
       status: 'pending',
-      tenantId: form.tenantId,
+      tenantId: responseTenantId,
       score: { correct, total },
       inviteId: inviteId || null
     };
@@ -1149,7 +1169,21 @@ export const getResponsesByForm = async (req, res) => {
     const { page = 1, limit = 10000, status } = req.query;
 
     // Verify form exists
-    const form = await Form.findOne({ id: formId, ...req.tenantFilter });
+    let formSearchQuery = { id: formId };
+    
+    // If not superadmin, check if form belongs to or is shared with this tenant
+    if (req.user.role !== 'superadmin' && req.user.tenantId) {
+      const tenantId = req.user.tenantId instanceof mongoose.Types.ObjectId 
+        ? req.user.tenantId 
+        : new mongoose.Types.ObjectId(req.user.tenantId);
+        
+      formSearchQuery.$or = [
+        { tenantId: tenantId },
+        { sharedWithTenants: tenantId }
+      ];
+    }
+
+    const form = await Form.findOne(formSearchQuery);
     if (!form) {
       return res.status(404).json({
         success: false,
@@ -1182,7 +1216,7 @@ export const getResponsesByForm = async (req, res) => {
       const responseObj = response.toObject();
       return {
         ...responseObj,
-        answers: Object.fromEntries(response.answers),
+        answers: response.answers ? Object.fromEntries(response.answers) : {},
         submissionMetadata: responseObj.submissionMetadata || null
       };
     });
@@ -1220,7 +1254,21 @@ export const exportResponses = async (req, res) => {
     const { format = 'json', status } = req.query;
 
     // Verify form exists
-    const form = await Form.findOne({ id: formId, ...req.tenantFilter });
+    let formSearchQuery = { id: formId };
+    
+    // If not superadmin, check if form belongs to or is shared with this tenant
+    if (req.user.role !== 'superadmin' && req.user.tenantId) {
+      const tenantId = req.user.tenantId instanceof mongoose.Types.ObjectId 
+        ? req.user.tenantId 
+        : new mongoose.Types.ObjectId(req.user.tenantId);
+        
+      formSearchQuery.$or = [
+        { tenantId: tenantId },
+        { sharedWithTenants: tenantId }
+      ];
+    }
+
+    const form = await Form.findOne(formSearchQuery);
     if (!form) {
       return res.status(404).json({
         success: false,
@@ -1241,7 +1289,7 @@ export const exportResponses = async (req, res) => {
     // Convert Map to Object for JSON serialization
     const formattedResponses = responses.map(response => ({
       ...response.toObject(),
-      answers: Object.fromEntries(response.answers)
+      answers: response.answers ? Object.fromEntries(response.answers) : {}
     }));
 
     if (format === 'json') {

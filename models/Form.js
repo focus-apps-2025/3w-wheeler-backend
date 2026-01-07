@@ -172,8 +172,16 @@ const FormSchema = new mongoose.Schema({
   tenantId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Tenant',
-    required: true
+    required: false
   },
+  isGlobal: {
+    type: Boolean,
+    default: false
+  },
+  sharedWithTenants: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Tenant'
+  }],
   isActive: {
     type: Boolean,
     default: true

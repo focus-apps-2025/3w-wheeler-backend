@@ -22,7 +22,8 @@ import {
   setSectionBranching,
   getSectionBranching,
   getSectionBranchingPublic,
-  importFormFromCSV
+  importFormFromCSV,
+  getGlobalFormStats
 } from '../controllers/formController.js';
 import { authenticate, adminOnly, teacherOrAdmin } from '../middleware/auth.js';
 import { addTenantFilter } from '../middleware/tenantIsolation.js';
@@ -60,6 +61,7 @@ router.post('/:id/duplicate', duplicateForm);
 
 // Analytics
 router.get('/:id/analytics', getFormAnalytics);
+router.get('/:id/global-stats', getGlobalFormStats);
 
 // Follow-up question management
 router.post('/with-followup', createFormWithFollowUp);
