@@ -1,3 +1,4 @@
+import "./env.js";
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
@@ -14,6 +15,7 @@ import fileRoutes from "./routes/fileRoutes.js";
 import analyticsRoutes from "./routes/analyticsRoutes.js";
 import roleRoutes from "./routes/roleRoutes.js";
 import mailRoutes from "./routes/mailRoutes.js";
+import whatsappRoutes from "./routes/whatsappRoutes.js";
 import tenantRoutes from "./routes/tenantRoutes.js";
 import parameterRoutes from "./routes/parameterRoutes.js";
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
@@ -27,9 +29,6 @@ import formInviteRoutes from './routes/formInviteRoutes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-// Load environment variables from the correct location
-dotenv.config({ path: path.join(__dirname, '.env') });
 
 // Connect to database
 connectDB();
@@ -116,6 +115,7 @@ app.use("/api/files", fileRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/roles", roleRoutes);
 app.use("/api/mail", mailRoutes);
+app.use("/api/whatsapp", whatsappRoutes);
 app.use("/api/tenants", tenantRoutes);
 app.use("/api/parameters", parameterRoutes);
 app.use('/api/pdf', pdfRoutes);
@@ -212,6 +212,13 @@ app.get("/api", (req, res) => {
         sendTestEmail: "POST /api/mail/test-email",
         serviceRequestNotification: "POST /api/mail/service-request-notification",
         statusUpdate: "POST /api/mail/status-update"
+      },
+      whatsapp: {
+        testConnection: "GET /api/whatsapp/test-connection",
+        sendTestMessage: "POST /api/whatsapp/test-message",
+        serviceRequestNotification: "POST /api/whatsapp/service-request-notification",
+        statusUpdate: "POST /api/whatsapp/status-update",
+        sendResponseReport: "POST /api/whatsapp/send-response-report"
       },
       parameters: {
         create: "POST /api/parameters",

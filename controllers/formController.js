@@ -2035,17 +2035,40 @@ export const importFormFromCSV = async (req, res) => {
 export const getGlobalFormStats = async (req, res) => {
   try {
     const { id } = req.params;
+    console.log('[DEBUG] getGlobalFormStats - formId:', id);
+    
     const form = await findFormByIdentifier(id);
 
     if (!form) {
+      console.log('[DEBUG] getGlobalFormStats - Form not found');
       return res.status(404).json({
         success: false,
         message: 'Form not found'
       });
     }
 
+    const formMongoId = form._id;
+    const formCustomId = form.id;
+    console.log('[DEBUG] getGlobalFormStats - Form found:', { 
+      mongoId: formMongoId.toString(), 
+      customId: formCustomId 
+    });
+
+    const matchOrConditions = [];
+    if (formCustomId) matchOrConditions.push({ questionId: formCustomId });
+    if (formMongoId) {
+      matchOrConditions.push({ questionId: formMongoId.toString() });
+      matchOrConditions.push({ questionId: formMongoId });
+    }
+
+    console.log('[DEBUG] getGlobalFormStats - matchOrConditions:', JSON.stringify(matchOrConditions));
+
     const stats = await Response.aggregate([
-      { $match: { questionId: form.id || form._id.toString() } },
+      { 
+        $match: { 
+          $or: matchOrConditions
+        } 
+      },
       {
         $group: {
           _id: "$tenantId",
@@ -2061,12 +2084,12 @@ export const getGlobalFormStats = async (req, res) => {
           as: "tenantInfo"
         }
       },
-      { $unwind: "$tenantInfo" },
+      { $unwind: { path: "$tenantInfo", preserveNullAndEmptyArrays: true } },
       {
         $project: {
           tenantId: "$_id",
-          tenantName: "$tenantInfo.name",
-          companyName: "$tenantInfo.companyName",
+          tenantName: { $ifNull: ["$tenantInfo.name", "Unknown"] },
+          companyName: { $ifNull: ["$tenantInfo.companyName", "Unknown"] },
           responseCount: 1,
           lastResponse: 1,
           _id: 0
@@ -2075,15 +2098,19 @@ export const getGlobalFormStats = async (req, res) => {
       { $sort: { responseCount: -1 } }
     ]);
 
+    console.log(`[DEBUG] getGlobalFormStats - Aggregation complete, found ${stats.length} stats`);
+
     res.json({
       success: true,
-      data: { stats }
+      data: { 
+        stats: stats || [] 
+      }
     });
   } catch (error) {
-    console.error('Get global form stats error:', error);
+    console.error('[ERROR] getGlobalFormStats:', error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: error.message || 'Internal server error'
     });
   }
 };

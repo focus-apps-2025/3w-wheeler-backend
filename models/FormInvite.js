@@ -14,13 +14,14 @@ const formInviteSchema = new mongoose.Schema({
   },
   email: {
     type: String,
-    required: true,
+    required: false,
     lowercase: true,
     trim: true
   },
   phone: {
     type: String,
-    default: ''
+    default: '',
+    trim: true
   },
   inviteId: {
     type: String,
@@ -52,6 +53,15 @@ const formInviteSchema = new mongoose.Schema({
 });
 
 // Compound index for formId + email uniqueness
-formInviteSchema.index({ formId: 1, email: 1 }, { unique: true });
+formInviteSchema.index({ formId: 1, email: 1 }, { 
+  unique: true, 
+  partialFilterExpression: { email: { $type: "string" } } 
+});
+
+// Compound index for formId + phone uniqueness
+formInviteSchema.index({ formId: 1, phone: 1 }, { 
+  unique: true, 
+  partialFilterExpression: { phone: { $type: "string", $ne: "" } } 
+});
 
 export default mongoose.model('FormInvite', formInviteSchema);

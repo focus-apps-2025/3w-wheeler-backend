@@ -6,6 +6,10 @@ import {
   getInviteStats,
   getInviteList
 } from '../controllers/formInviteController.js';
+import {
+  uploadWhatsAppInvites,
+  sendWhatsAppInvites
+} from '../controllers/whatsappController.js';
 import { authenticate, teacherOrAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -43,20 +47,33 @@ const adminOnly = (req, res, next) => {
 
 // Routes
 router.post('/:formId/invites/upload', 
-  
+  authenticate,
   adminOnly, 
   upload.single('file'), 
   uploadInvites
 );
 
 router.post('/:formId/invites/send', 
-  
+  authenticate,
   adminOnly, 
   sendInvites
 );
 
+router.post('/:formId/invites/whatsapp/upload', 
+  authenticate,
+  adminOnly, 
+  upload.single('file'), 
+  uploadWhatsAppInvites
+);
+
+router.post('/:formId/invites/whatsapp/send', 
+  authenticate,
+  adminOnly, 
+  sendWhatsAppInvites
+);
+
 router.get('/:formId/invites/stats', 
-   
+  authenticate,
   adminOnly, 
   getInviteStats
 );
