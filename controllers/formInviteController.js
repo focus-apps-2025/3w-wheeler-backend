@@ -372,13 +372,21 @@ export const sendInvites = async (req, res) => {
           }
           
           // Resend existing invite
-          await sendInviteEmail({
+          const emailResult = await sendInviteEmail({
             email,
             inviteId: existingInvite.inviteId,
             formId,
             formTitle: form.title,
             tenantSlug: tenant.slug
           });
+
+          if (!emailResult.success) {
+            failed.push({
+              email,
+              reason: emailResult.error || 'Email sending failed'
+            });
+            continue;
+          }
           
           // Update sentAt
           existingInvite.sentAt = new Date();
@@ -404,16 +412,24 @@ export const sendInvites = async (req, res) => {
             createdBy: req.user._id
           });
           
-          await newInvite.save();
-          
-          // Send email
-          await sendInviteEmail({
+          // Send email first
+          const emailResult = await sendInviteEmail({
             email,
             inviteId,
             formId,
             formTitle: form.title,
             tenantSlug: tenant.slug
           });
+
+          if (!emailResult.success) {
+            failed.push({
+              email,
+              reason: emailResult.error || 'Email sending failed'
+            });
+            continue;
+          }
+
+          await newInvite.save();
           
           results.push({
             email,
@@ -875,11 +891,12 @@ const sendInviteEmail = async ({ email, inviteId, formId, formTitle, tenantSlug 
     console.error(`❌ Failed to send email to ${email}:`, error);
     
     let errorMessage = 'Email sending failed';
+    const message = error.message || '';
     if (error.response?.data?.message) {
       errorMessage = error.response.data.message;
-    } else if (error.message.includes('API key')) {
+    } else if (message.includes('API key')) {
       errorMessage = 'Invalid MailerSend API key. Check your .env file.';
-    } else if (error.message.includes('domain')) {
+    } else if (message.includes('domain')) {
       errorMessage = 'Sender domain not verified in MailerSend. Use your trial domain.';
     }
     
