@@ -2,7 +2,13 @@ import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
 import Role from '../models/Permission.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+const getJwtSecret = () => {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    console.warn('⚠️ JWT_SECRET not found in process.env, using default');
+  }
+  return secret || 'your-secret-key-change-in-production';
+};
 
 export const authenticate = async (req, res, next) => {
   try {
@@ -17,7 +23,7 @@ export const authenticate = async (req, res, next) => {
 
     const token = authHeader.substring(7);
     
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, getJwtSecret());
     const user = await User.findById(decoded.userId)
       .select('-password')
       .populate('customRole');
@@ -60,7 +66,7 @@ export const authenticateOptional = async (req, res, next) => {
 
   try {
     const token = authHeader.substring(7);
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, getJwtSecret());
     const user = await User.findById(decoded.userId)
       .select('-password')
       .populate('customRole');
@@ -119,7 +125,7 @@ export const teacherOrAdmin = authorize('teacher', 'admin', 'superadmin');
 export const staffOrAdmin = authorize('staff', 'admin', 'superadmin');
 
 export const generateToken = (userId) => {
-  return jwt.sign({ userId }, JWT_SECRET, { 
+  return jwt.sign({ userId }, getJwtSecret(), { 
     expiresIn: process.env.JWT_EXPIRES_IN || '7d' 
   });
 };

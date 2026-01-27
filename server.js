@@ -1,9 +1,12 @@
-import "./env.js";
+import "./config/env.js";
 import express from "express";
-import dotenv from "dotenv";
-import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+import cors from "cors";
 import { createServer } from "http";
 import connectDB from "./config/database.js";
 import authRoutes from "./routes/authRoutes.js";
@@ -26,9 +29,7 @@ import pdfRoutes from './routes/pdfRoutes.js';
 import githubWebhookRoutes from "./routes/githubWebhook.js";
 import formInviteRoutes from './routes/formInviteRoutes.js';
 
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import uploadRoutes from './routes/upload.js';
 
 // Connect to database
 connectDB();
@@ -88,6 +89,8 @@ app.use(express.json({ limit: "200mb" }));
 app.use(express.urlencoded({ extended: true, limit: "200mb" }));
 
 
+app.use('/api/upload', uploadRoutes);
+
 
 
 // Health check route
@@ -120,6 +123,7 @@ app.use("/api/tenants", tenantRoutes);
 app.use("/api/parameters", parameterRoutes);
 app.use('/api/pdf', pdfRoutes);
 app.use('/api/forms', formInviteRoutes);
+
 
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received. Cleaning up...');

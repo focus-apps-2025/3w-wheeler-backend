@@ -11,14 +11,13 @@ import FormInvite from '../models/FormInvite.js';
 
 export const createResponse = async (req, res) => {
   try {
-const { questionId, answers, parentResponseId, submittedBy, submitterContact, submissionMetadata: bodyMetadata,inviteId } = req.body;    
+    const { questionId, answers, parentResponseId, submittedBy, submitterContact, submissionMetadata: bodyMetadata, inviteId } = req.body;    
     const { tenantSlug } = req.params;
 
     let form;
-    let tenant = null;
 
     if (tenantSlug) {
-      tenant = await Tenant.findOne({ slug: tenantSlug, isActive: true });
+      const tenant = await Tenant.findOne({ slug: tenantSlug, isActive: true });
 
       if (!tenant) {
         return res.status(404).json({
@@ -27,14 +26,7 @@ const { questionId, answers, parentResponseId, submittedBy, submitterContact, su
         });
       }
 
-      form = await Form.findOne({ 
-        id: questionId, 
-        $or: [
-          { tenantId: tenant._id },
-          { sharedWithTenants: tenant._id }
-        ],
-        isVisible: true 
-      });
+      form = await Form.findOne({ id: questionId, tenantId: tenant._id, isVisible: true });
 
       if (!form) {
         return res.status(404).json({
@@ -43,14 +35,7 @@ const { questionId, answers, parentResponseId, submittedBy, submitterContact, su
         });
       }
     } else {
-      const userTenantId = req.user.tenantId;
-      form = await Form.findOne({ 
-        id: questionId, 
-        $or: [
-          { tenantId: userTenantId },
-          { sharedWithTenants: userTenantId }
-        ]
-      });
+      form = await Form.findOne({ id: questionId, ...req.tenantFilter });
 
       if (!form) {
         return res.status(404).json({
@@ -73,7 +58,7 @@ const { questionId, answers, parentResponseId, submittedBy, submitterContact, su
       
       // Find the invite
       const invite = await FormInvite.findOne({ 
-        formId: questionId,  // questionId is actually your formId
+        formId: questionId,
         inviteId: inviteId
       });
       
@@ -124,7 +109,7 @@ const { questionId, answers, parentResponseId, submittedBy, submitterContact, su
       console.log('[DEBUG] Captured location stored:', submissionMetadata.capturedLocation);
     }
 
-    // Calculate score for quiz forms
+    //Calculate score for quiz forms
     const allQuestions = [];
     if (form.sections) {
       form.sections.forEach(section => {
@@ -139,16 +124,14 @@ const { questionId, answers, parentResponseId, submittedBy, submitterContact, su
 
     let correct = 0;
     let total = 0;
-    const questionResults = {}; // Store individual question results
+    const questionResults = {};
     
     allQuestions.forEach(question => {
-      // Handle yesNoNA type questions (auto-scoring)
       if (question.type === 'yesNoNA') {
         total++;
         const answer = answers[question.id];
         let isCorrect = false;
         
-        // Yes = 1 point, No and N/A = 0 points
         if (answer && String(answer).toLowerCase() === 'yes') {
           isCorrect = true;
           correct++;
@@ -160,9 +143,7 @@ const { questionId, answers, parentResponseId, submittedBy, submitterContact, su
           questionType: 'yesNoNA',
           scoring: { yes: 1, no: 0, nOrNA: 0 }
         };
-      } 
-      // Check if question has correct answer(s)
-      else {
+      } else {
         const hasCorrectAnswer = question.correctAnswer || (question.correctAnswers && question.correctAnswers.length > 0);
         
         if (hasCorrectAnswer) {
@@ -170,25 +151,19 @@ const { questionId, answers, parentResponseId, submittedBy, submitterContact, su
           const answer = answers[question.id];
           let isCorrect = false;
 
-          // Handle multiple correct answers
           if (question.correctAnswers && question.correctAnswers.length > 0) {
             if (Array.isArray(answer)) {
-              // For checkbox questions - check if all selected answers are correct
               const normalizedAnswer = answer.map(a => String(a).toLowerCase());
               const normalizedCorrect = question.correctAnswers.map(a => String(a).toLowerCase());
               isCorrect = normalizedAnswer.length === normalizedCorrect.length &&
                          normalizedAnswer.every(a => normalizedCorrect.includes(a));
             } else {
-              // Single answer - check if it's in the correct answers array
               const normalizedAnswer = String(answer).toLowerCase();
               const normalizedCorrect = question.correctAnswers.map(a => String(a).toLowerCase());
               isCorrect = normalizedCorrect.includes(normalizedAnswer);
             }
-          } 
-          // Handle single correct answer (backward compatibility)
-          else if (question.correctAnswer) {
+          } else if (question.correctAnswer) {
             if (Array.isArray(answer)) {
-              // If answer is array but only one correct answer, check if array contains it
               isCorrect = answer.some(a => String(a).toLowerCase() === String(question.correctAnswer).toLowerCase());
             } else {
               isCorrect = String(answer).toLowerCase() === String(question.correctAnswer).toLowerCase();
@@ -208,28 +183,105 @@ const { questionId, answers, parentResponseId, submittedBy, submitterContact, su
       }
     });
 
-    let processedAnswers = answers;
-    try {
-      processedAnswers = await processResponseImages(answers);
-      console.log('[DEBUG] Processed answers with Google Drive images:', Object.keys(processedAnswers));
-    } catch (error) {
-      console.error('[ERROR] Failed to process Google Drive images:', error);
+    // ======== UPDATED : Process images with Google Drive backup ==========
+// ========== UPDATED: Process ALL images with OAuth 2.0 Google Drive backup ==========
+console.log('[IMAGE PROCESS] Starting image processing for ALL images...');
+
+// Check OAuth configuration
+const driveConfigured = !!(process.env.GOOGLE_DRIVE_CLIENT_ID && 
+                          process.env.GOOGLE_DRIVE_CLIENT_SECRET && 
+                          process.env.GOOGLE_DRIVE_REFRESH_TOKEN);
+console.log(`[IMAGE PROCESS] Google Drive OAuth configured: ${driveConfigured ? '✅' : '❌'}`);
+if (!driveConfigured) {
+  console.log('[IMAGE PROCESS] Google Drive backup disabled. Configure OAuth 2.0 for backups.');
+}
+
+// Create metadata for Google Drive
+const metadata = {
+  tenantId: form.tenantId,
+  formId: questionId,
+  submissionId: `resp-${Date.now()}`,
+  submissionTimestamp: Date.now(),
+  driveEnabled: driveConfigured
+};
+
+let processingResult = {
+  processedAnswers: answers,
+  driveBackupUrls: {},
+  folderStructure: null,
+  stats: {
+    totalImages: 0,
+    processedImages: 0,
+    successfulDriveBackups: 0,
+    startTime: Date.now()
+  }
+};
+
+try {
+  // Process images with progress tracking
+  const onProgress = (progress) => {
+    console.log(`Image processing progress: ${progress.message}`);
+    if (typeof emitImageProgress === 'function') {
+      emitImageProgress(`response-${Date.now()}`, {
+        status: progress.status,
+        message: progress.message,
+        currentImage: progress.currentImage,
+        totalImages: progress.totalImages,
+        percentage: progress.percentage,
+        driveEnabled: driveConfigured
+      });
     }
+  };
 
-    const responseTenantId = tenant 
-      ? tenant._id 
-      : (req.user ? req.user.tenantId : form.tenantId);
+  // Process ALL images with OAuth 2.0 Google Drive backup
+  processingResult = await processResponseImages(
+    answers,      // All answers including any image URLs
+    metadata,     // Metadata for folder creation
+    onProgress,
+    `response-${Date.now()}`
+  );
 
+  console.log('[IMAGE PROCESS] Processing complete:', {
+    totalImages: processingResult.stats.totalImages,
+    driveBackups: processingResult.stats.successfulDriveBackups,
+    folderPath: processingResult.folderStructure?.fullPath,
+    storageType: 'Google Drive (OAuth 2.0)'
+  });
+
+} catch (error) {
+  console.error('[IMAGE PROCESS] Failed to process images:', error);
+  
+  // Check if it's an OAuth error
+  if (error.message.includes('invalid_grant') || 
+      error.message.includes('invalid_credentials') ||
+      error.message.includes('Refresh token expired')) {
+    console.error('[IMAGE PROCESS] ❌ OAuth token invalid or expired.');
+    console.error('[IMAGE PROCESS] 🔗 Visit /api/drive/setup to get new tokens');
+    console.error('[IMAGE PROCESS] ℹ️ Continuing without Google Drive backup...');
+  }
+}
+    // Create response with both URLs
     const responseData = {
       id: uuidv4(),
       questionId,
-      answers: new Map(Object.entries(processedAnswers)),
+      answers: new Map(Object.entries(processingResult.processedAnswers)),
+      // NEW: Store Google Drive backup URLs
+      driveBackupUrls: processingResult.driveBackupUrls || {},
+      // NEW: Store image processing metadata
+      imageProcessing: {
+        totalImages: processingResult.stats.totalImages || 0,
+        processedImages: processingResult.stats.processedImages || 0,
+        driveBackups: processingResult.stats.successfulDriveBackups || 0,
+        folderStructure: processingResult.folderStructure || null,
+        processingTime: Date.now() - (processingResult.stats.startTime || Date.now()),
+        status: processingResult.error ? 'partial' : 'completed'
+      },
       parentResponseId,
       submittedBy,
       submitterContact,
       submissionMetadata,
       status: 'pending',
-      tenantId: responseTenantId,
+      tenantId: form.tenantId,
       score: { correct, total },
       inviteId: inviteId || null
     };
@@ -264,15 +316,24 @@ const { questionId, answers, parentResponseId, submittedBy, submitterContact, su
           status: response.status,
           createdAt: response.createdAt,
           updatedAt: response.updatedAt,
-          inviteId: inviteId || null
+          inviteId: inviteId || null,
+          // NEW: Include image processing info in response
+          imageProcessing: {
+            totalImages: response.imageProcessing?.totalImages || 0,
+            driveBackups: response.imageProcessing?.driveBackups || 0,
+            folderPath: response.imageProcessing?.folderStructure?.fullPath
+          }
         },
         score: {
           correct,
           total,
           percentage: total > 0 ? Math.round((correct / total) * 100) : 0
         },
-          inviteStatus: inviteStatus
-          
+        imageProcessing: {
+          status: response.imageProcessing?.status || 'completed',
+          stats: response.imageProcessing
+        },
+        inviteStatus: inviteStatus
       }
     });
 
@@ -389,21 +450,35 @@ export const batchImportResponses = async (req, res) => {
           });
         };
         
-        const processedBatch = await processResponseImages(
-          batchAnswers, 
-          onProgressCallback, 
-          batchId
-        );
+       // Prepare metadata for Google Drive folder structure
+const metadata = {
+  tenantId: form.tenantId,
+  formId: actualQuestionId,
+  submissionId: `batch-${batchId}`,
+  submissionTimestamp: Date.now()
+};
+
+const processedBatch = await processResponseImages(
+  batchAnswers, 
+  metadata,  // CORRECT: This should be metadata object
+  onProgressCallback, 
+  batchId
+);
         
         // Create mapping of original URL -> Cloudinary URL
         const processedUrlMap = new Map();
-        Object.entries(processedBatch).forEach(([uniqueKey, cloudinaryUrl]) => {
-          const item = urlMapping[uniqueKey];
-          if (item && cloudinaryUrl !== item.url) {
-            processedUrlMap.set(item.url, cloudinaryUrl);
-          }
-        });
-        
+        const driveBackupMap = new Map();
+        Object.entries(processedBatch.processedAnswers).forEach(([uniqueKey, cloudinaryUrl]) => {
+  const item = urlMapping[uniqueKey];
+  if (item && cloudinaryUrl !== item.url) {
+    processedUrlMap.set(item.url, cloudinaryUrl);
+    
+    // Store drive backup info
+    if (processedBatch.driveBackupUrls && processedBatch.driveBackupUrls[uniqueKey]) {
+      driveBackupMap.set(item.url, processedBatch.driveBackupUrls[uniqueKey]);
+    }
+  }
+});
         console.log(`[BATCH ${batchId}] Successfully processed ${processedUrlMap.size}/${allGoogleDriveUrls.length} URLs`);
         
         // STEP 3: Process each response with already converted URLs
@@ -815,8 +890,19 @@ export const processBulkImages = async (req, res) => {
       });
     };
     
-    const processedAnswers = await processResponseImages(answers, onProgress, batchId);
-    
+const metadata = {
+  tenantId: req.body.tenantId || null,
+  formId: req.body.formId || null,
+  submissionId: batchId,
+  submissionTimestamp: Date.now()
+};
+
+const processedResult = await processResponseImages(
+  answers, 
+  metadata,  // ADD THIS
+  onProgress, 
+  batchId
+);    
     // Final success message
     emitImageProgress(batchId, {
       status: 'complete',

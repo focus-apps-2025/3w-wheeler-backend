@@ -18,6 +18,7 @@ class WhatsAppService {
     }
     
     this.twilioPhoneNumber = process.env.TWILIO_WHATSAPP_NUMBER || '';
+    this.inviteTemplateSid = process.env.TWILIO_INVITE_TEMPLATE_SID || '';
   }
 
   formatPhoneNumber(phone) {
@@ -157,7 +158,25 @@ Request ID: ${serviceRequest.id || 'N/A'}
         return { success: false, error: 'Invalid phone number' };
       }
 
-      const message = `
+      console.log('Form invite sending via WhatsApp...');
+      
+      let messageData;
+      
+      if (this.inviteTemplateSid) {
+        // Use Twilio Content API (Templates)
+        messageData = await this.client.messages.create({
+          from: `whatsapp:${this.twilioPhoneNumber}`,
+          to: `whatsapp:${customerPhone}`,
+          contentSid: this.inviteTemplateSid,
+          contentVariables: JSON.stringify({
+            "1": tenantName,
+            "2": formTitle,
+            "3": inviteLink
+          })
+        });
+      } else {
+        // Fallback to legacy body (only works in open sessions or sandbox)
+        const message = `
 📋 *FORM INVITATION*
 
 Hello! You have been invited by *${tenantName}* to fill out the following form:
@@ -170,11 +189,12 @@ ${inviteLink}
 Thank you!
       `.trim();
 
-      const messageData = await this.client.messages.create({
-        from: `whatsapp:${this.twilioPhoneNumber}`,
-        to: `whatsapp:${customerPhone}`,
-        body: message,
-      });
+        messageData = await this.client.messages.create({
+          from: `whatsapp:${this.twilioPhoneNumber}`,
+          to: `whatsapp:${customerPhone}`,
+          body: message,
+        });
+      }
 
       console.log('Form invite sent via WhatsApp:', messageData.sid);
       return { success: true, messageId: messageData.sid };
