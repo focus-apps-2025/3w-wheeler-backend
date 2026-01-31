@@ -482,8 +482,12 @@ export const exportAnalytics = async (req, res) => {
       data
     };
 
+    const filename = `analytics_${type}_${period}.json`;
+    const safeFilename = filename.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, "'");
+    const encodedFilename = encodeURIComponent(filename);
+
     res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Content-Disposition', `attachment; filename="analytics_${type}_${period}.json"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`);
     res.json(exportData);
 
   } catch (error) {

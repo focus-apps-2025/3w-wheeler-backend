@@ -72,13 +72,17 @@ router.post('/generate', async (req, res) => {
     const usedAfter = process.memoryUsage().heapUsed / 1024 / 1024;
     console.log(`✅ PDF generated in ${duration.toFixed(2)}s (Memory usage: ${Math.round(usedAfter * 100) / 100} MB)`);
     
-    res.set({
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': `attachment; filename="${filename}"`,
-      'Content-Length': pdfBuffer.length,
-      'X-Generation-Time': `${duration}s`,
-      'X-PDF-Format': format
-    });
+    // Sanitize filename for Content-Disposition header
+    // 1. Basic ASCII-only filename for older clients
+    const safeFilename = filename.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, "'");
+    // 2. UTF-8 encoded filename for modern clients (RFC 6266)
+    const encodedFilename = encodeURIComponent(filename);
+    
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    res.setHeader('X-Generation-Time', `${duration}s`);
+    res.setHeader('X-PDF-Format', format);
 
     res.send(pdfBuffer);
 

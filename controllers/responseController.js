@@ -1379,8 +1379,12 @@ export const exportResponses = async (req, res) => {
     }));
 
     if (format === 'json') {
+      const filename = `${form.title}_responses.json`;
+      const safeFilename = filename.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, "'");
+      const encodedFilename = encodeURIComponent(filename);
+
       res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Content-Disposition', `attachment; filename="${form.title}_responses.json"`);
+      res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`);
       res.json({
         form: {
           id: form.id,

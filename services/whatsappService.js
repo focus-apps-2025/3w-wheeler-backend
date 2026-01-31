@@ -158,22 +158,83 @@ Request ID: ${serviceRequest.id || 'N/A'}
         return { success: false, error: 'Invalid phone number' };
       }
 
-      console.log('Form invite sending via WhatsApp...');
+      console.log('📱 Preparing WhatsApp Invite...');
+      console.log('Template SID:', this.inviteTemplateSid);
       
       let messageData;
       
       if (this.inviteTemplateSid) {
-        // Use Twilio Content API (Templates)
+        // CLEANING: WhatsApp is extremely strict about variables.
+        // We remove characters that often cause template rejection.
+        const safe = (val, max = 200) => {
+          if (!val) return "";
+          return String(val)
+            .replace(/[\r\n\t]/g, " ") // No newlines
+            .replace(/[\\\"']/g, "")   // No quotes or backslashes
+            .trim()
+            .substring(0, max);
+        };
+
+        const v1 = safe(tenantName, 60);
+        const v2 = safe(formTitle, 150);
+        const v3 = String(inviteLink || "").trim(); // URLs need to stay intact but trimmed
+
+        console.log('📱 WhatsApp Template Diagnostic Send...');
+        console.log('To:', customerPhone);
+        console.log('SID:', this.inviteTemplateSid);
+
+        const attempts = [
+          { name: 'Standard (1,2,3)', vars: { "1": v1, "2": v2, "3": v3 }, json: true },
+          { name: 'Standard (1,2,3) Obj', vars: { "1": v1, "2": v2, "3": v3 }, json: false },
+          { name: 'Zero-Indexed (0,1,2)', vars: { "0": v1, "1": v2, "2": v3 }, json: true },
+          { name: 'Mustache ({{1}})', vars: { "{{1}}": v1, "{{2}}": v2, "{{3}}": v3 }, json: true },
+          { name: 'Safe-Text Test', vars: { "1": "Company", "2": "Form", "3": "https://google.com" }, json: true }
+        ];
+
+        for (const attempt of attempts) {
+          try {
+            console.log(`Testing Strategy: ${attempt.name}`);
+            messageData = await this.client.messages.create({
+              from: `whatsapp:${this.twilioPhoneNumber}`,
+              to: `whatsapp:${customerPhone}`,
+              contentSid: this.inviteTemplateSid.trim(),
+              contentVariables: attempt.json ? JSON.stringify(attempt.vars) : attempt.vars
+            });
+            console.log(`✅ SUCCESS! Strategy ${attempt.name} worked. SID:`, messageData.sid);
+            return { success: true, messageId: messageData.sid };
+          } catch (err) {
+            console.warn(`❌ ${attempt.name} failed: ${err.message}`);
+            // Log code 21656 specifically to see if any strategy bypasses it
+            if (err.code !== 21656) {
+              console.error('Fatal Twilio Error:', err.code, err.message);
+              throw err; 
+            }
+          }
+        }
+
+        // Final Fallback (Template without variables - check if it's a static template error)
+        try {
+          console.log('Testing Strategy: No-Vars');
+          messageData = await this.client.messages.create({
+            from: `whatsapp:${this.twilioPhoneNumber}`,
+            to: `whatsapp:${customerPhone}`,
+            contentSid: this.inviteTemplateSid.trim()
+          });
+          return { success: true, messageId: messageData.sid };
+        } catch (e) {
+          console.error('All template strategies exhausted.');
+        }
+
+        // Last resort: Fallback to plain text only if we absolutely have to
+        // Note: This may get 63005 if the user hasn't messaged the business first
+        console.error('All template attempts failed. Attempting plain text fallback...');
+        const body = `📋 *FORM INVITATION*\n\nHello! You have been invited by *${v1}* to fill out the form: *${v2}*\n\nPlease click here: ${v3}`;
         messageData = await this.client.messages.create({
           from: `whatsapp:${this.twilioPhoneNumber}`,
           to: `whatsapp:${customerPhone}`,
-          contentSid: this.inviteTemplateSid,
-          contentVariables: JSON.stringify({
-            "1": tenantName,
-            "2": formTitle,
-            "3": inviteLink
-          })
+          body: body
         });
+        return { success: true, messageId: messageData.sid, note: 'fallback' };
       } else {
         // Fallback to legacy body (only works in open sessions or sandbox)
         const message = `
