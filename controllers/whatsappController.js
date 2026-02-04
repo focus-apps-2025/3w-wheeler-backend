@@ -248,12 +248,15 @@ export const sendWhatsAppInvites = async (req, res) => {
           results.push({
             phone,
             status: 'sent',
-            inviteId
+            inviteId,
+            strategy: whatsappResult.strategy,
+            twilioStatus: whatsappResult.status
           });
         } else {
           failed.push({
             phone,
-            reason: whatsappResult.error
+            reason: whatsappResult.error,
+            details: whatsappResult.details // If we add details later
           });
         }
       } catch (error) {
@@ -264,9 +267,14 @@ export const sendWhatsAppInvites = async (req, res) => {
       }
     }
     
+    // Only return success: true if at least one message was sent successfully
+    const overallSuccess = results.length > 0;
+
     res.json({
-      success: true,
-      message: `Processed ${phones.length} WhatsApp invites`,
+      success: overallSuccess,
+      message: overallSuccess 
+        ? `Successfully sent ${results.length} WhatsApp invites`
+        : `Failed to send any WhatsApp invites. ${failed.length} failures.`,
       data: {
         sent: results.length,
         failed: failed.length,
