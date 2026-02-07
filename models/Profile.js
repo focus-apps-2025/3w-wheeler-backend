@@ -43,7 +43,6 @@ const ProfileSchema = new mongoose.Schema({
 });
 
 // Index for efficient queries
-ProfileSchema.index({ userId: 1 });
 ProfileSchema.index({ email: 1 });
 
 const Profile = mongoose.model('Profile', ProfileSchema);

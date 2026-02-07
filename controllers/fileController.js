@@ -3,9 +3,89 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { uploadToCloudinary, deleteFromCloudinary } from '../services/cloudinaryService.js';
+import axios from 'axios';
+import https from 'https';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Helper to proxy external files to avoid CORS issues in frontend
+export const proxyFile = async (req, res) => {
+  try {
+    let { url } = req.query;
+
+    if (!url) {
+      return res.status(400).json({
+        success: false,
+        message: 'URL is required'
+      });
+    }
+
+    // Basic security check
+    try {
+      new URL(url);
+    } catch (e) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid URL'
+      });
+    }
+
+    // Handle Google Drive links - convert view links to download links
+    if (url.includes('drive.google.com')) {
+      const fileIdMatch = url.match(/\/d\/([^/]+)/);
+      if (fileIdMatch && fileIdMatch[1]) {
+        url = `https://drive.google.com/uc?export=download&id=${fileIdMatch[1]}`;
+      }
+    }
+
+    console.log(`[PROXY] Fetching: ${url}`);
+
+    const response = await axios({
+      method: 'get',
+      url: url,
+      responseType: 'stream',
+      timeout: 60000, // 60 seconds
+      maxRedirects: 5,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      },
+      httpsAgent: new https.Agent({ keepAlive: true, rejectUnauthorized: false })
+    });
+
+    // Pass along content-type and other useful headers
+    const contentType = response.headers['content-type'];
+    if (contentType) {
+      res.setHeader('Content-Type', contentType);
+    }
+    
+    if (response.headers['content-length']) {
+      res.setHeader('Content-Length', response.headers['content-length']);
+    }
+    
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.setHeader('Access-Control-Allow-Origin', '*'); // Ensure CORS is allowed for the proxy response itself
+
+    response.data.pipe(res);
+  } catch (error) {
+    console.error('Proxy file error:', error.message);
+    
+    // If axios failed with a response, we might want to pass that status along
+    if (error.response) {
+      return res.status(error.response.status).json({
+        success: false,
+        message: `External server returned error: ${error.response.statusText}`,
+        url: url
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: 'Failed to proxy file',
+      error: error.message
+    });
+  }
+};
 
 export const uploadFile = async (req, res) => {
   try {

@@ -74,7 +74,6 @@ const tenantSchema = new mongoose.Schema({
 });
 
 // Index for faster queries
-tenantSchema.index({ slug: 1 });
 tenantSchema.index({ adminId: 1 });
 tenantSchema.index({ isActive: 1 });
 

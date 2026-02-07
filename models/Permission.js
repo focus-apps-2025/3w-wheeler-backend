@@ -78,7 +78,6 @@ const RoleSchema = new mongoose.Schema({
 });
 
 // Index for efficient queries
-RoleSchema.index({ name: 1 });
 RoleSchema.index({ isSystem: 1 });
 
 const Role = mongoose.model('Role', RoleSchema);

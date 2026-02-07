@@ -32,7 +32,7 @@ import formInviteRoutes from './routes/formInviteRoutes.js';
 import uploadRoutes from './routes/upload.js';
 
 // Connect to database
-connectDB();
+await connectDB();
 
 const app = express();
 

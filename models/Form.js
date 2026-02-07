@@ -363,7 +363,6 @@ FormSchema.pre('save', function(next) {
 });
 
 // Index for efficient queries
-FormSchema.index({ id: 1 });
 FormSchema.index({ createdBy: 1 });
 FormSchema.index({ isVisible: 1 });
 FormSchema.index({ isActive: 1 });
