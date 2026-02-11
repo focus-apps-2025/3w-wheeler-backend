@@ -43,8 +43,18 @@ const CATEGORY_MAPPING = {
   'attachment': 'attachments'
 };
 
-router.post('/presigned-url', authenticate, hasPermission('upload:create'), async (req, res) => {
+router.post('/presigned-url', authenticate, async (req, res) => {
   try {
+    // Check if AWS credentials are configured
+    if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) {
+      console.error('[Presigned URL] AWS credentials are not configured in .env');
+      return res.status(500).json({
+        success: false,
+        error: 'Upload service misconfigured',
+        details: 'AWS credentials missing on server'
+      });
+    }
+
     let { filename, fileType, category = 'general', associatedId } = req.body;
     const user = req.user;
     

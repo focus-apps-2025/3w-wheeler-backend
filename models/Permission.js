@@ -57,7 +57,9 @@ const RoleSchema = new mongoose.Schema({
       'manage_roles',
       'view_analytics',
       'export_data',
-      'system_settings'
+      'system_settings',
+      'upload:create',
+      'upload:delete'
     ]
   }],
   formPermissions: [FormPermissionSchema],

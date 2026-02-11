@@ -375,6 +375,16 @@ export const getAvailablePermissions = async (req, res) => {
         id: 'system_settings',
         name: 'System Settings',
         description: 'Can access system settings and configuration'
+      },
+      {
+        id: 'upload:create',
+        name: 'Create Uploads',
+        description: 'Can upload files and images'
+      },
+      {
+        id: 'upload:delete',
+        name: 'Delete Uploads',
+        description: 'Can delete uploaded files'
       }
     ];
 
