@@ -1,5 +1,10 @@
 import Tenant from '../models/Tenant.js';
 import User from '../models/User.js';
+import Form from '../models/Form.js';
+import Response from '../models/Response.js';
+import FormInvite from '../models/FormInvite.js';
+import Parameter from '../models/Parameter.js';
+import Profile from '../models/Profile.js';
 import bcrypt from 'bcryptjs';
 
 // Create a new tenant (SuperAdmin only)
@@ -106,7 +111,7 @@ export const createTenant = async (req, res) => {
 // Get all tenants (SuperAdmin only)
 export const getAllTenants = async (req, res) => {
   try {
-    const { page = 1, limit = 10, search = '', status = 'all' } = req.query;
+    const { page = 1, limit = 1000, search = '', status = 'all' } = req.query;
 
     const query = { ...req.tenantFilter };
 
@@ -279,10 +284,7 @@ export const toggleTenantStatus = async (req, res) => {
   }
 };
 
-// Delete tenant (soft delete - deactivate)
-
-
-// Delete tenant (soft delete - deactivate)
+// Delete tenant (hard delete)
 export const deleteTenant = async (req, res) => {
   try {
     const { id } = req.params;
@@ -295,25 +297,32 @@ export const deleteTenant = async (req, res) => {
       });
     }
 
-    // Deactivate instead of deleting
-    tenant.isActive = false;
-    await tenant.save();
+    // Find all users of this tenant to delete their profiles
+    const users = await User.find({ tenantId: id });
+    const userIds = users.map(u => u._id);
 
-    // Deactivate admin user
-    await User.findByIdAndUpdate(tenant.adminId, {
-      isActive: false
-    });
+    // Delete all associated data
+    await Promise.all([
+      Profile.deleteMany({ userId: { $in: userIds } }),
+      User.deleteMany({ tenantId: id }),
+      Form.deleteMany({ tenantId: id }),
+      Response.deleteMany({ tenantId: id }),
+      FormInvite.deleteMany({ tenantId: id }),
+      Parameter.deleteMany({ tenantId: id }),
+      Tenant.findByIdAndDelete(id)
+    ]);
 
     res.json({
       success: true,
-      message: 'Tenant deactivated successfully'
+      message: 'Tenant and all associated data deleted successfully from database'
     });
 
   } catch (error) {
     console.error('Delete tenant error:', error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: 'Internal server error',
+      error: error.message
     });
   }
 };
