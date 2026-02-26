@@ -59,7 +59,7 @@ const FollowUpQuestionSchema = new mongoose.Schema({
     enum: [
       'text', 'radio', 'checkbox', 'email', 'url', 'tel', 'date', 'time',
       'file', 'range', 'rating', 'scale', 'radio-grid', 'checkbox-grid',
-      'radio-image', 'paragraph', 'search-select', 'number', 'location', 'boolean',
+      'radio-image', 'paragraph', 'search-select', 'number', 'location', 
       'yesNoNA',
       // Hierarchy types
       'productNPSTGWBuckets',
@@ -233,7 +233,6 @@ const normalizeQuestionType = (type) => {
     
     // Yes/No variations
     'yesnona': 'yesNoNA',
-    'yesno': 'yesNoNA',
     
     // Core types - pass through
     'text': 'text',
@@ -263,7 +262,6 @@ const normalizeQuestionType = (type) => {
     'searchselect': 'search-select',
     'number': 'number',
     'location': 'location',
-    'boolean': 'boolean',
     'textarea': 'textarea',
     
     // Feedback types

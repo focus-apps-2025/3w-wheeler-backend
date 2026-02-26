@@ -55,12 +55,7 @@ const userSchema = new mongoose.Schema({
   },
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: function() {
-      // Only superadmin doesn't need createdBy (they are created by script)
-      // Admin is created by superadmin, so they need createdBy
-      return this.role !== 'superadmin';
-    }
+    ref: 'User'
   },
   lastLogin: {
     type: Date

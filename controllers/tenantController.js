@@ -5,6 +5,7 @@ import Response from '../models/Response.js';
 import FormInvite from '../models/FormInvite.js';
 import Parameter from '../models/Parameter.js';
 import Profile from '../models/Profile.js';
+import Settings from '../models/Settings.js';
 import bcrypt from 'bcryptjs';
 
 // Create a new tenant (SuperAdmin only)
@@ -111,7 +112,7 @@ export const createTenant = async (req, res) => {
 // Get all tenants (SuperAdmin only)
 export const getAllTenants = async (req, res) => {
   try {
-    const { page = 1, limit = 1000, search = '', status = 'all' } = req.query;
+    const { page = 1, limit = 1000, search = '', status = 'all', plan = 'all' } = req.query;
 
     const query = { ...req.tenantFilter };
 
@@ -125,6 +126,14 @@ export const getAllTenants = async (req, res) => {
 
     if (status !== 'all') {
       query.isActive = status === 'active';
+    }
+
+    if (plan !== 'all') {
+      if (plan === 'paid') {
+        query['subscription.plan'] = { $ne: 'free' };
+      } else {
+        query['subscription.plan'] = plan;
+      }
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -375,6 +384,7 @@ export const addAdminToTenant = async (req, res) => {
   try {
     const { tenantId } = req.params;
     const { email, password, firstName, lastName } = req.body;
+    const requestingUser = req.user;
 
     console.log("📥 Adding admin to tenant:", { tenantId, email, firstName, lastName });
 
@@ -385,6 +395,13 @@ export const addAdminToTenant = async (req, res) => {
     const tenant = await Tenant.findById(tenantId);
     if (!tenant) {
       return res.status(404).json({ success: false, message: "Tenant not found" });
+    }
+
+    if (requestingUser.role !== 'superadmin' && requestingUser.tenantId.toString() !== tenantId) {
+      return res.status(403).json({ 
+        success: false, 
+        message: "You can only manage admins in your own tenant" 
+      });
     }
 
     // Check duplicate email
@@ -485,8 +502,9 @@ export const addAdminToTenant = async (req, res) => {
 export const removeAdminFromTenant = async (req, res) => {
   try {
     const { tenantId, adminId } = req.params;
+    const requestingUser = req.user;
 
-    //console.log("🗑️ Removing admin from tenant:", { tenantId, adminId });
+    console.log("🗑️ Removing admin from tenant:", { tenantId, adminId });
 
     if (!tenantId || !adminId) {
       return res.status(400).json({ success: false, message: "Tenant ID and Admin ID are required" });
@@ -495,6 +513,13 @@ export const removeAdminFromTenant = async (req, res) => {
     const tenant = await Tenant.findById(tenantId);
     if (!tenant) {
       return res.status(404).json({ success: false, message: "Tenant not found" });
+    }
+
+    if (requestingUser.role !== 'superadmin' && requestingUser.tenantId.toString() !== tenantId) {
+      return res.status(403).json({ 
+        success: false, 
+        message: "You can only manage admins in your own tenant" 
+      });
     }
 
     // Check if this is the last admin/subadmin
@@ -535,6 +560,95 @@ export const removeAdminFromTenant = async (req, res) => {
       success: false, 
       message: "Internal server error",
       error: error.message 
+    });
+  }
+};
+
+// Get global default logo (SuperAdmin only)
+export const getGlobalDefaultLogo = async (req, res) => {
+  try {
+    const settings = await Settings.findOne({ settingType: 'global' });
+    
+    return res.json({
+      success: true,
+      data: {
+        defaultLogo: settings?.defaultLogo || null
+      }
+    });
+  } catch (error) {
+    console.error("❌ Get global logo error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: error.message
+    });
+  }
+};
+
+// Update global default logo (SuperAdmin only)
+export const updateGlobalDefaultLogo = async (req, res) => {
+  try {
+    const { defaultLogo } = req.body;
+
+    if (!defaultLogo) {
+      return res.status(400).json({
+        success: false,
+        message: 'Default logo is required'
+      });
+    }
+
+    let settings = await Settings.findOne({ settingType: 'global' });
+
+    if (!settings) {
+      settings = new Settings({
+        settingType: 'global',
+        defaultLogo
+      });
+    } else {
+      settings.defaultLogo = defaultLogo;
+      settings.updatedAt = new Date();
+    }
+
+    await settings.save();
+
+    return res.json({
+      success: true,
+      message: 'Global default logo updated successfully',
+      data: {
+        defaultLogo: settings.defaultLogo
+      }
+    });
+  } catch (error) {
+    console.error("❌ Update global logo error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: error.message
+    });
+  }
+};
+
+// Remove global default logo (SuperAdmin only)
+export const removeGlobalDefaultLogo = async (req, res) => {
+  try {
+    const settings = await Settings.findOne({ settingType: 'global' });
+
+    if (settings) {
+      settings.defaultLogo = null;
+      settings.updatedAt = new Date();
+      await settings.save();
+    }
+
+    return res.json({
+      success: true,
+      message: 'Global default logo removed successfully'
+    });
+  } catch (error) {
+    console.error("❌ Remove global logo error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: error.message
     });
   }
 };

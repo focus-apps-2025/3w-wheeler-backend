@@ -65,7 +65,6 @@ const mapQuestionType = (csvType) => {
     'emojireactionfeedback': 'emoji-reaction-feedback',
     'number': 'number',
     'location': 'location',
-    'boolean': 'boolean',
     'textarea': 'textarea'
   };
   

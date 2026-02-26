@@ -135,6 +135,20 @@ export const createForm = async (req, res) => {
     }
 
 
+    // Check form limits for free plan
+    const Tenant = (await import('../models/Tenant.js')).default;
+    const tenant = await Tenant.findById(tenantId);
+    if (tenant && tenant.subscription && tenant.subscription.plan === 'free') {
+      const formCount = await Form.countDocuments({ tenantId });
+      const maxForms = tenant.subscription.maxForms || 5;
+      if (formCount >= maxForms) {
+        return res.status(403).json({
+          success: false,
+          message: `Your free trial limit of ${maxForms} forms has been reached. Please contact admin to upgrade your plan.`
+        });
+      }
+    }
+
     const formData = {
       ...req.body,
       id: req.body.id || uuidv4(),

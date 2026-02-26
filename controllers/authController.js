@@ -72,6 +72,18 @@ export const login = async (req, res) => {
           });
         }
       }
+
+      // Check trial expiration for free plan
+      if (tenant.subscription && tenant.subscription.plan === 'free') {
+        const now = new Date();
+        if (tenant.subscription.endDate && now > tenant.subscription.endDate) {
+          return res.status(403).json({
+            success: false,
+            message: 'Your 30-day free trial has expired. please contact admin to get more details choose our upgrade plan',
+            trialExpired: true
+          });
+        }
+      }
     }
 
     // Check password
@@ -109,10 +121,12 @@ export const login = async (req, res) => {
     if (tenant) {
       responseData.tenant = {
         id: tenant._id,
+        _id: tenant._id,
         name: tenant.name,
         slug: tenant.slug,
         companyName: tenant.companyName,
-        settings: tenant.settings
+        settings: tenant.settings,
+        subscription: tenant.subscription
       };
       responseData.user.tenantId = tenant._id;
     }
@@ -192,6 +206,109 @@ export const changePassword = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Internal server error'
+    });
+  }
+};
+
+export const signup = async (req, res) => {
+  try {
+    const { 
+      name, 
+      slug, 
+      companyName, 
+      adminEmail, 
+      adminPassword,
+      adminFirstName,
+      adminLastName 
+    } = req.body;
+
+    // Validate required fields
+    if (!name || !slug || !companyName || !adminEmail || !adminPassword || !adminFirstName || !adminLastName) {
+      return res.status(400).json({
+        success: false,
+        message: 'All required fields must be provided'
+      });
+    }
+
+    // Check if slug already exists
+    const existingTenant = await Tenant.findOne({ slug: slug.toLowerCase() });
+    if (existingTenant) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tenant slug already exists. Please choose a different slug.'
+      });
+    }
+
+    // Check if admin email already exists
+    const existingUser = await User.findOne({ email: adminEmail.toLowerCase() });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email already exists'
+      });
+    }
+
+    // Calculate trial end date (30 days from now)
+    const startDate = new Date();
+    const endDate = new Date();
+    endDate.setDate(startDate.getDate() + 30);
+
+    // Create admin user
+    const adminUser = new User({
+      username: adminEmail.split('@')[0] + '-' + slug,
+      email: adminEmail.toLowerCase(),
+      password: adminPassword,
+      firstName: adminFirstName,
+      lastName: adminLastName,
+      role: 'admin',
+      isActive: true
+    });
+
+    // Create tenant
+    const tenant = new Tenant({
+      name,
+      slug: slug.toLowerCase(),
+      companyName,
+      adminId: [adminUser._id],
+      isActive: true,
+      subscription: {
+        plan: 'free',
+        startDate,
+        endDate,
+        maxUsers: 10,
+        maxForms: 5
+      }
+    });
+
+    adminUser.tenantId = tenant._id;
+    await adminUser.save();
+    
+    try {
+      await tenant.save();
+    } catch (error) {
+      await User.findByIdAndDelete(adminUser._id);
+      throw error;
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Signup successful! Your 30-day free trial has started.',
+      data: {
+        tenant: {
+          id: tenant._id,
+          name: tenant.name,
+          slug: tenant.slug,
+          endDate: tenant.subscription.endDate
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Signup error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
     });
   }
 };

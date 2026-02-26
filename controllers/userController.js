@@ -265,11 +265,11 @@ export const deleteUser = async (req, res) => {
       });
     }
 
-    // Prevent deletion of admin users
-    if (user.role === 'admin') {
+    // Prevent deletion of admin/subadmin users
+    if (user.role === 'admin' || user.role === 'subadmin') {
       return res.status(400).json({
         success: false,
-        message: 'Cannot delete admin users'
+        message: 'Cannot delete admin users. Use removeAdminFromTenant endpoint instead.'
       });
     }
 
@@ -293,6 +293,7 @@ export const resetUserPassword = async (req, res) => {
   try {
     const { id } = req.params;
     const { newPassword } = req.body;
+    const requestingUser = req.user;
 
     if (!newPassword || newPassword.length < 6) {
       return res.status(400).json({
@@ -310,12 +311,28 @@ export const resetUserPassword = async (req, res) => {
       });
     }
 
+    const userEmail = user.email;
+    const userRole = user.role;
+    const isSuperAdminReset = requestingUser.role === 'superadmin';
+
+    if (isSuperAdminReset) {
+      console.log(`🔐 SuperAdmin (${requestingUser.email}) resetting password for ${userRole} (${userEmail})`);
+    } else {
+      console.log(`🔐 Admin (${requestingUser.email}) resetting password for user (${userEmail})`);
+    }
+
     user.password = newPassword;
     await user.save();
 
     res.json({
       success: true,
-      message: 'Password reset successfully'
+      message: 'Password reset successfully',
+      data: {
+        userId: user._id,
+        email: user.email,
+        role: user.role,
+        resetBy: isSuperAdminReset ? 'superadmin' : 'admin'
+      }
     });
 
   } catch (error) {

@@ -31,7 +31,7 @@ const ALLOWED_FILE_TYPES = {
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const ALLOWED_CATEGORIES = [
   'form','forms', 'submissions', 'profile', 'documents', 
-  'templates', 'general', 'attachments'
+  'templates', 'general', 'attachments', 'logo'
 ];
 
 // Add a mapping for common variations
