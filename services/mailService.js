@@ -2,10 +2,15 @@ import nodemailer from 'nodemailer';
 
 class MailService {
   constructor() {
+    // Railway often blocks port 587 or has IPv6 issues. For Gmail, port 465 works much more reliably.
+    const host = process.env.SMTP_HOST || 'smtp.gmail.com';
+    const isGmail = host.includes('gmail.com');
+    const port = isGmail ? 465 : (process.env.SMTP_PORT || 587);
+
     this.transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST || 'smtp.gmail.com',
-      port: process.env.SMTP_PORT || 587,
-      secure: false, // true for 465, false for other ports
+      host: host,
+      port: port,
+      secure: port == 465 || port === '465', // true for 465, false for other ports
       auth: {
         user: process.env.SMTP_USER || 'your-email@gmail.com',
         pass: process.env.SMTP_PASS || 'your-app-password'
@@ -217,7 +222,7 @@ class MailService {
       console.log('From:', process.env.SMTP_USER);
       console.log('To:', recipientEmail);
       console.log('Subject:', subject);
-      
+
       const mailOptions = {
         from: process.env.SMTP_USER,
         to: recipientEmail,
@@ -279,6 +284,50 @@ class MailService {
       return { success: false, error: error.message };
     }
   }
+
+  // Send form invitation
+  async sendFormInvite(recipientEmail, formTitle, inviteLink, tenantName) {
+    try {
+      console.log('📧 Sending form invite to:', recipientEmail);
+
+      const mailOptions = {
+        from: process.env.SMTP_USER,
+        to: recipientEmail,
+        subject: `Invitation: Please complete "${formTitle}"`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+            <h2 style="color: #2563eb; text-align: center;">Form Invitation</h2>
+            <p style="font-size: 16px; line-height: 1.6; color: #333;">
+              Hello! You have been invited by <strong>${tenantName}</strong> to fill out the following form:
+            </p>
+            <h3 style="text-align: center; color: #1e40af; background: #f0f9ff; padding: 10px; border-radius: 4px;">
+              ${formTitle}
+            </h3>
+            
+            <div style="margin: 30px 0; text-align: center;">
+              <a href="${inviteLink}" 
+                 style="display: inline-block; background-color: #2563eb; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 5px; font-size: 16px; font-weight: bold;">
+                Fill Out Form
+              </a>
+            </div>
+            
+            <p style="font-size: 14px; color: #666; margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px;">
+                If the button doesn't work, copy and paste this link into your browser:<br>
+                <a href="${inviteLink}" style="color: #2563eb; word-break: break-all;">${inviteLink}</a>
+            </p>
+          </div>
+        `
+      };
+
+      const result = await this.transporter.sendMail(mailOptions);
+      console.log('✅ Email invite sent successfully to', recipientEmail);
+      return { success: true, messageId: result.messageId };
+    } catch (error) {
+      console.error('❌ Error sending email invite:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
 }
 
 export default new MailService();

@@ -23,7 +23,8 @@ import {
   getSectionBranching,
   getSectionBranchingPublic,
   importFormFromCSV,
-  getGlobalFormStats
+  getGlobalFormStats,
+  submitPublicResponse
 } from '../controllers/formController.js';
 import { authenticate, adminOnly, teacherOrAdmin, superAdminOnly } from '../middleware/auth.js';
 import { addTenantFilter } from '../middleware/tenantIsolation.js';
@@ -39,6 +40,7 @@ router.get('/public/:tenantSlug', getPublicForms);  // Get all public forms for 
 router.get('/:id/public/:tenantSlug', getFormById);  // Get specific form for a tenant
 router.get('/:id/section-branching/public/:tenantSlug', getSectionBranchingPublic);
 
+router.post('/:id/public/submit', submitPublicResponse);
 // Protected routes
 router.use(authenticate);
 router.use(addTenantFilter);

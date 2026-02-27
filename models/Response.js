@@ -33,6 +33,14 @@ const ResponseSchema = new mongoose.Schema({
     default: 'pending'
   },
   notes: String,
+  isSectionSubmit: {
+    type: Boolean,
+    default: false
+  },
+  sectionIndex: {
+    type: Number,
+    default: null
+  },
   score: {
     correct: {
       type: Number,

@@ -131,6 +131,7 @@ const SectionSchema = new mongoose.Schema({
     min: 0,
     max: 100
   },
+  nextSectionId: String,
   questions: [FollowUpQuestionSchema]
 }, { _id: false });
 

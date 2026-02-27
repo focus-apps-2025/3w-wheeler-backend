@@ -3,6 +3,7 @@ import multer from 'multer';
 import {
   uploadInvites,
   sendInvites,
+  sendSMSInvites,
   getInviteStats,
   getInviteList
 } from '../controllers/formInviteController.js';
@@ -16,7 +17,7 @@ const router = express.Router();
 
 // Configure multer for file upload
 const storage = multer.memoryStorage();
-const upload = multer({ 
+const upload = multer({
   storage,
   limits: {
     fileSize: 5 * 1024 * 1024, // 5MB limit
@@ -24,8 +25,8 @@ const upload = multer({
   },
   fileFilter: (req, file, cb) => {
     if (file.mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-        file.mimetype === 'application/vnd.ms-excel' ||
-        file.mimetype === 'text/csv') {
+      file.mimetype === 'application/vnd.ms-excel' ||
+      file.mimetype === 'text/csv') {
       cb(null, true);
     } else {
       cb(new Error('Only Excel/CSV files are allowed'), false);
@@ -46,42 +47,49 @@ const adminOnly = (req, res, next) => {
 };
 
 // Routes
-router.post('/:formId/invites/upload', 
+router.post('/:formId/invites/upload',
   authenticate,
-  adminOnly, 
-  upload.single('file'), 
+  adminOnly,
+  upload.single('file'),
   uploadInvites
 );
 
-router.post('/:formId/invites/send', 
+router.post('/:formId/invites/send',
   authenticate,
-  adminOnly, 
+  adminOnly,
   sendInvites
 );
 
-router.post('/:formId/invites/whatsapp/upload', 
+router.post('/:formId/invites/whatsapp/upload',
   authenticate,
-  adminOnly, 
-  upload.single('file'), 
+  adminOnly,
+  upload.single('file'),
   uploadWhatsAppInvites
 );
 
-router.post('/:formId/invites/whatsapp/send', 
+router.post('/:formId/invites/whatsapp/send',
   authenticate,
-  adminOnly, 
+  adminOnly,
   sendWhatsAppInvites
 );
 
-router.get('/:formId/invites/stats', 
+// SMS routes
+router.post('/:formId/invites/sms/send',
   authenticate,
-  adminOnly, 
+  adminOnly,
+  sendSMSInvites
+);
+
+router.get('/:formId/invites/stats',
+  authenticate,
+  adminOnly,
   getInviteStats
 );
 // Add to your formInviteRoutes.js
-  router.get('/:formId/invites', 
-    authenticate,
-    adminOnly,
-    getInviteList
-  );
+router.get('/:formId/invites',
+  authenticate,
+  adminOnly,
+  getInviteList
+);
 
 export default router;

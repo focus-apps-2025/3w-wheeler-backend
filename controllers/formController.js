@@ -148,7 +148,7 @@ export const createForm = async (req, res) => {
         });
       }
     }
-
+      
     const formData = {
       ...req.body,
       id: req.body.id || uuidv4(),
@@ -620,6 +620,26 @@ export const getFormById = async (req, res) => {
           });
         }
       });
+    }
+
+    // Check for invite status if inviteId is provided in query
+    if (req.query.inviteId) {
+      const FormInvite = mongoose.model('FormInvite');
+      const invite = await FormInvite.findOne({ 
+        formId: id, 
+        inviteId: req.query.inviteId 
+      });
+
+      if (invite && invite.status === 'responded') {
+        return res.status(409).json({
+          success: false,
+          message: 'ALREADY_SUBMITTED',
+          data: {
+            email: invite.email,
+            submittedAt: invite.respondedAt
+          }
+        });
+      }
     }
 
     res.json({
@@ -1134,10 +1154,11 @@ export const getFormAnalytics = async (req, res) => {
         startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     }
 
-    // Get responses for analytics
+    // Get responses for analytics (exclude partial submissions)
     const responses = await Response.find({
       questionId: id,
-      createdAt: { $gte: startDate }
+      createdAt: { $gte: startDate },
+      isSectionSubmit: { $ne: true }
     }).sort({ createdAt: 1 });
 
     // Calculate analytics
@@ -2125,6 +2146,143 @@ export const getGlobalFormStats = async (req, res) => {
     res.status(500).json({
       success: false,
       message: error.message || 'Internal server error'
+    });
+  }
+};
+export const submitPublicResponse = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { inviteId, answers, location, isSectionSubmit, sectionIndex } = req.body;
+
+    console.log("=".repeat(50));
+    console.log("📝 PUBLIC SUBMISSION DEBUG");
+    console.log("=".repeat(50));
+    console.log("Form ID:", id);
+    console.log("Invite ID:", inviteId);
+    console.log("Is Section Submit:", isSectionSubmit);
+    console.log("Section Index:", sectionIndex);
+    console.log("Answers keys:", Object.keys(answers || {}));
+    console.log("Location:", location);
+
+    if (!inviteId) {
+      console.log("❌ No inviteId provided");
+      return res.status(400).json({
+        success: false,
+        message: 'Invite ID is required'
+      });
+    }
+
+    // Import models
+    const FormInvite = mongoose.model('FormInvite');
+    const Form = mongoose.model('Form');
+    
+    console.log("🔍 Searching for invite with:");
+    console.log("  formId:", id);
+    console.log("  inviteId:", inviteId);
+
+    // First, find the invite (don't filter by status yet)
+    const invite = await FormInvite.findOne({
+      formId: id,
+      inviteId: inviteId
+    });
+
+    console.log("📊 Invite found:", invite ? "YES" : "NO");
+    
+    if (invite) {
+      console.log("  Invite details:");
+      console.log("    - Status:", invite.status);
+      console.log("    - Email:", invite.email);
+      console.log("    - Created:", invite.createdAt);
+      console.log("    - Sent:", invite.sentAt);
+      console.log("    - Responded:", invite.respondedAt);
+    } else {
+      // Check if any invites exist for this form
+      const allInvites = await FormInvite.find({ formId: id }).limit(5);
+      console.log(`📋 Total invites for this form: ${allInvites.length}`);
+      if (allInvites.length > 0) {
+        console.log("Sample invite IDs in DB:");
+        allInvites.forEach((inv, idx) => {
+          console.log(`  ${idx + 1}. ${inv.inviteId} (${inv.status})`);
+        });
+      }
+    }
+
+    if (!invite) {
+      return res.status(403).json({
+        success: false,
+        message: 'Invalid invite'
+      });
+    }
+
+    // Check if already responded
+    if (invite.status === 'responded' && !isSectionSubmit) {
+      console.log("⚠️ Invite already responded at:", invite.respondedAt);
+      return res.status(409).json({
+        success: false,
+        message: 'ALREADY_SUBMITTED',
+        data: {
+          email: invite.email,
+          submittedAt: invite.respondedAt
+        }
+      });
+    }
+
+    // Get the form
+    const form = await Form.findOne({ id: id });
+    console.log("📋 Form found:", form ? "YES" : "NO");
+    
+    if (!form) {
+      return res.status(404).json({
+        success: false,
+        message: 'Form not found'
+      });
+    }
+
+    console.log("✅ All validations passed, creating response...");
+
+    // Create the response
+    const response = new Response({
+      id: uuidv4(),
+      questionId: id,
+      tenantId: form.tenantId,
+      formId: id,
+      inviteId: inviteId,
+      answers: answers,
+      location: location,
+      isSectionSubmit: !!isSectionSubmit,
+      sectionIndex: sectionIndex || null,
+      submittedAt: new Date(),
+      createdAt: new Date()
+    });
+
+    await response.save();
+    console.log("✅ Response saved with ID:", response._id);
+
+    // Update invite status only on final submission
+    if (!isSectionSubmit) {
+      invite.status = 'responded';
+      invite.respondedAt = new Date();
+      await invite.save();
+      console.log("✅ Invite updated to responded");
+    } else {
+      console.log("✅ Partial section response saved");
+    }
+
+    res.json({
+      success: true,
+      message: 'SUCCESS',
+      data: { 
+        responseId: response._id,
+        inviteId: inviteId
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error in public submission:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to submit form',
+      error: error.message
     });
   }
 };

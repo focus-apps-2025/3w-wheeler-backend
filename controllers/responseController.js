@@ -11,7 +11,17 @@ import FormInvite from '../models/FormInvite.js';
 
 export const createResponse = async (req, res) => {
   try {
-    const { questionId, answers, parentResponseId, submittedBy, submitterContact, submissionMetadata: bodyMetadata, inviteId } = req.body;    
+    const { 
+      questionId, 
+      answers, 
+      parentResponseId, 
+      submittedBy, 
+      submitterContact, 
+      submissionMetadata: bodyMetadata, 
+      inviteId,
+      isSectionSubmit,
+      sectionIndex
+    } = req.body;    
     const { tenantSlug } = req.params;
 
     let form;
@@ -70,20 +80,23 @@ export const createResponse = async (req, res) => {
       }
       
       // Check if already responded
-      if (invite.status === 'responded') {
+      if (invite.status === 'responded' && !isSectionSubmit) {
         return res.status(403).json({
           success: false,
           message: 'This invite link has already been used'
         });
       }
       
-      // Mark as responded
-      invite.status = 'responded';
-      invite.respondedAt = new Date();
-      await invite.save();
-      
-      inviteStatus = 'responded';
-      console.log(`[INVITE] Updated invite ${inviteId} to responded status`);
+      // Mark as responded only if it's NOT a section submit
+      if (!isSectionSubmit) {
+        invite.status = 'responded';
+        invite.respondedAt = new Date();
+        await invite.save();
+        inviteStatus = 'responded';
+        console.log(`[INVITE] Updated invite ${inviteId} to responded status (Final submission)`);
+      } else {
+        console.log(`[INVITE] Partial submission for invite ${inviteId}, keeping status as is`);
+      }
     }
 
     const submissionMetadata = await collectSubmissionMetadata(req, {
@@ -281,6 +294,8 @@ try {
       submitterContact,
       submissionMetadata,
       status: 'pending',
+      isSectionSubmit: !!isSectionSubmit,
+      sectionIndex: sectionIndex || null,
       tenantId: form.tenantId,
       score: { correct, total },
       inviteId: inviteId || null
@@ -946,10 +961,16 @@ export const getAllResponses = async (req, res) => {
       assignedTo, 
       search,
       startDate,
-      endDate 
+      endDate,
+      includePartial = 'false'
     } = req.query;
     
     const query = { ...req.tenantFilter };
+
+    // Filter out partial submissions unless explicitly requested
+    if (includePartial !== 'true') {
+      query.isSectionSubmit = { $ne: true };
+    }
 
     // Filter by form
     if (questionId) {
@@ -1252,7 +1273,7 @@ export const deleteMultipleResponses = async (req, res) => {
 export const getResponsesByForm = async (req, res) => {
   try {
     const { formId } = req.params;
-    const { page = 1, limit = 10000, status } = req.query;
+    const { page = 1, limit = 10000, status, includePartial = 'false' } = req.query;
 
     // Verify form exists
     let formSearchQuery = { id: formId };
@@ -1278,6 +1299,12 @@ export const getResponsesByForm = async (req, res) => {
     }
 
     const query = { questionId: formId, ...req.tenantFilter };
+    
+    // Filter out partial submissions unless explicitly requested
+    if (includePartial !== 'true') {
+      query.isSectionSubmit = { $ne: true };
+    }
+
     if (status && status !== 'all') {
       query.status = status;
     }
@@ -1337,7 +1364,7 @@ export const getResponsesByForm = async (req, res) => {
 export const exportResponses = async (req, res) => {
   try {
     const { formId } = req.params;
-    const { format = 'json', status } = req.query;
+    const { format = 'json', status, includePartial = 'false' } = req.query;
 
     // Verify form exists
     let formSearchQuery = { id: formId };
@@ -1363,6 +1390,12 @@ export const exportResponses = async (req, res) => {
     }
 
     const query = { questionId: formId, ...req.tenantFilter };
+
+    // Filter out partial submissions unless explicitly requested
+    if (includePartial !== 'true') {
+      query.isSectionSubmit = { $ne: true };
+    }
+
     if (status && status !== 'all') {
       query.status = status;
     }

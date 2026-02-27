@@ -156,6 +156,7 @@ export const parseSimplifiedCSVForm = (csvData, formMetadata = {}) => {
       const sectionTitle = row['Section Title'];
       const sectionDesc = row['Section Description'] || '';
       const sectionWeightage = row['Section Weightage'] ? parseFloat(row['Section Weightage']) : 0;
+      const nextSectionNum = row['Next Section'] || '';
       const question = row['Question'];
       const questionDesc = row['Question Description'] || '';
       const questionType = row['Question Type'];
@@ -184,6 +185,7 @@ export const parseSimplifiedCSVForm = (csvData, formMetadata = {}) => {
           title: sectionTitle,
           description: sectionDesc,
           weightage: sectionWeightage,
+          nextSectionId: nextSectionNum && nextSectionNum.toLowerCase() !== 'end' ? `section-${nextSectionNum}` : (nextSectionNum.toLowerCase() === 'end' ? 'end' : null),
           number: sectionNum,
           questions: []
         });
@@ -343,6 +345,15 @@ export const parseSimplifiedCSVForm = (csvData, formMetadata = {}) => {
 
     // Validate that all target sections exist
     const sectionIds = new Set(sections.map(s => s.id));
+    
+    sections.forEach(section => {
+      if (section.nextSectionId && section.nextSectionId !== 'end' && !sectionIds.has(section.nextSectionId)) {
+        throw new Error(
+          `Next Section references non-existent section: ${section.nextSectionId} in section ${section.id}`
+        );
+      }
+    });
+
     branchingRules.forEach(rule => {
       if (!sectionIds.has(rule.targetSectionId)) {
         throw new Error(
@@ -351,22 +362,28 @@ export const parseSimplifiedCSVForm = (csvData, formMetadata = {}) => {
       }
     });
 
-    // Collect all target section IDs from branching rules
+    // Collect all target section IDs from branching rules and section navigation
     const targetSectionIds = new Set();
     branchingRules.forEach(rule => {
       targetSectionIds.add(rule.targetSectionId);
+    });
+    sections.forEach(section => {
+      if (section.nextSectionId && section.nextSectionId !== 'end') {
+        targetSectionIds.add(section.nextSectionId);
+      }
     });
 
     // Add submit button to:
     // 1. Last section (always)
     // 2. ALL sections that are targets of branching navigation (mandatory!)
+    // 3. Sections that point to 'end'
     if (sections.length > 0) {
       sections[sections.length - 1].showSubmitButton = true;
     }
     
     // Add submit button to all navigated sections (mandatory requirement!)
     sections.forEach(section => {
-      if (targetSectionIds.has(section.id)) {
+      if (targetSectionIds.has(section.id) || section.nextSectionId === 'end') {
         section.showSubmitButton = true;
       }
     });

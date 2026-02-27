@@ -40,6 +40,11 @@ const formInviteSchema = new mongoose.Schema({
   respondedAt: {
     type: Date
   },
+  notificationChannels: {
+    type: [String],
+    default: [],
+    enum: ['email', 'sms', 'whatsapp']
+  },
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
@@ -52,16 +57,9 @@ const formInviteSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Compound index for formId + email uniqueness
-formInviteSchema.index({ formId: 1, email: 1 }, { 
-  unique: true, 
-  partialFilterExpression: { email: { $type: "string" } } 
-});
-
-// Compound index for formId + phone uniqueness
-formInviteSchema.index({ formId: 1, phone: 1 }, { 
-  unique: true, 
-  partialFilterExpression: { phone: { $type: "string", $ne: "" } } 
-});
+formInviteSchema.index({ formId: 1, email: 1 }); // Regular index, not unique
+formInviteSchema.index({ formId: 1, phone: 1 }); // Regular index, not unique
+formInviteSchema.index({ status: 1 });
+formInviteSchema.index({ inviteId: 1 }); // inviteId is already unique
 
 export default mongoose.model('FormInvite', formInviteSchema);
