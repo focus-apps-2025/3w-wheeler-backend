@@ -1011,8 +1011,8 @@ export const getInviteList = async (req, res) => {
 
 const sendInviteEmail = async ({ email, inviteId, formId, formTitle, tenantSlug }) => {
   try {
-    // const baseUrl = 'https://forms.focusengineeringapp.com';
-    const baseUrl = 'http://localhost:5174';
+    const baseUrl = 'https://forms.focusengineeringapp.com';
+    // const baseUrl = 'http://localhost:5174';
     const inviteLink = `${baseUrl}/${tenantSlug}/forms/${formId}?inviteId=${inviteId}`;
 
     // Use MailService (SMTP)
