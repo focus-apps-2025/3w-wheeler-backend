@@ -284,7 +284,8 @@ export const uploadInvites = async (req, res) => {
     const tenant = await Tenant.findById(form.tenantId);
     const tenantSlug = tenant?.slug || 'public';
 
-    const inviteBaseUrl = 'http://127.0.0.1:5173';
+    // Use environment variable for frontend URL, with fallback
+    const inviteBaseUrl = process.env.INVITE_FRONTEND_URL || 'https://forms.focusengineeringapp.com';
 
     res.json({
       success: true,
@@ -372,7 +373,8 @@ export const sendInvites = async (req, res) => {
 
     console.log(`🔄 Processing ${emails.length} emails...`);
 
-    for (const emailData of emails) {
+    // Process in parallel with Promise.all
+    const invitePromises = emails.map(async (emailData) => {
       try {
         const email = emailData.email.toLowerCase().trim();
         console.log(`\n--- Processing: ${email} ---`);
@@ -384,91 +386,91 @@ export const sendInvites = async (req, res) => {
         });
 
         if (existingInvite) {
-  console.log(`  Found existing invite with status: ${existingInvite.status}`);          
-  if (existingInvite.status === 'responded') {
-    // ✅ CREATE A NEW INVITE instead of blocking
-    console.log(`  ✨ Creating NEW invite for ${email} (previous was responded)`);
-    
-    const newInviteId = uuidv4();
-    console.log(`  New inviteId: ${newInviteId}`);
+          console.log(`  Found existing invite with status: ${existingInvite.status}`);          
+          if (existingInvite.status === 'responded') {
+            // ✅ CREATE A NEW INVITE instead of blocking
+            console.log(`  ✨ Creating NEW invite for ${email} (previous was responded)`);
+            
+            const newInviteId = uuidv4();
+            console.log(`  New inviteId: ${newInviteId}`);
 
-    const newInvite = new FormInvite({
-      formId,
-      tenantId: form.tenantId,
-      email,
-      phone: emailData.phone || existingInvite.phone || '',
-      inviteId: newInviteId,
-      status: 'sent',
-      createdBy: req.user._id,
-      // Optional: track the previous invite
-      previousInviteId: existingInvite.inviteId
-    });
+            const newInvite = new FormInvite({
+              formId,
+              tenantId: form.tenantId,
+              email,
+              phone: emailData.phone || existingInvite.phone || '',
+              inviteId: newInviteId,
+              status: 'sent',
+              createdBy: req.user._id,
+              // Optional: track the previous invite
+              previousInviteId: existingInvite.inviteId
+            });
 
-    // Send email with NEW invite
-    console.log(`  📤 Sending email to ${email} with new invite`);
-    const emailResult = await sendInviteEmail({
-      email,
-      inviteId: newInviteId,
-      formId,
-      formTitle: form.title,
-      tenantSlug: tenant.slug
-    });
+            // Send email with NEW invite
+            console.log(`  📤 Sending email to ${email} with new invite`);
+            const emailResult = await sendInviteEmail({
+              email,
+              inviteId: newInviteId,
+              formId,
+              formTitle: form.title,
+              tenantSlug: tenant.slug
+            });
 
-    console.log(`  Email result:`, emailResult);
+            console.log(`  Email result:`, emailResult);
 
-    if (!emailResult.success) {
-      console.log(`  ❌ Email sending failed:`, emailResult.error);
-      failed.push({
-        email,
-        reason: emailResult.error || 'Email sending failed'
-      });
-      continue;
-    }
+            if (!emailResult.success) {
+              console.log(`  ❌ Email sending failed:`, emailResult.error);
+              failed.push({
+                email,
+                reason: emailResult.error || 'Email sending failed'
+              });
+              return;
+            }
 
-    await newInvite.save();
-    console.log(`  ✅ New invite saved with ID: ${newInviteId}`);
+            await newInvite.save();
+            console.log(`  ✅ New invite saved with ID: ${newInviteId}`);
 
-    results.push({
-      email,
-      action: 'new_invite_created',
-      inviteId: newInviteId,
-      previousInviteId: existingInvite.inviteId
-    });
-    
-  } else {
-    // Existing invite is NOT responded - can resend normally
-    console.log(`  📤 Resending to ${email}`);
-    const emailResult = await sendInviteEmail({
-      email,
-      inviteId: existingInvite.inviteId,
-      formId,
-      formTitle: form.title,
-      tenantSlug: tenant.slug
-    });
+            results.push({
+              email,
+              action: 'new_invite_created',
+              inviteId: newInviteId,
+              previousInviteId: existingInvite.inviteId
+            });
+            
+          } else {
+            // Existing invite is NOT responded - can resend normally
+            console.log(`  📤 Resending to ${email}`);
+            const emailResult = await sendInviteEmail({
+              email,
+              inviteId: existingInvite.inviteId,
+              formId,
+              formTitle: form.title,
+              tenantSlug: tenant.slug
+            });
 
-    console.log(`  Email result:`, emailResult);
+            console.log(`  Email result:`, emailResult);
 
-    if (!emailResult.success) {
-      console.log(`  ❌ Email sending failed:`, emailResult.error);
-      failed.push({
-        email,
-        reason: emailResult.error || 'Email sending failed'
-      });
-      continue;
-    }
+            if (!emailResult.success) {
+              console.log(`  ❌ Email sending failed:`, emailResult.error);
+              failed.push({
+                email,
+                reason: emailResult.error || 'Email sending failed'
+              });
+              return;
+            }
 
-    // Update sentAt
-    existingInvite.sentAt = new Date();
-    await existingInvite.save();
-    console.log(`  ✅ Resent successfully`);
+            // Update sentAt
+            existingInvite.sentAt = new Date();
+            await existingInvite.save();
+            console.log(`  ✅ Resent successfully`);
 
-    results.push({
-      email,
-      action: 'resent',
-      inviteId: existingInvite.inviteId
-    });
-  }
-} else {
+            results.push({
+              email,
+              action: 'resent',
+              inviteId: existingInvite.inviteId
+            });
+          }
+        } else {
           // Create new invite
           console.log(`  ✨ Creating new invite for ${email}`);
           const inviteId = uuidv4();
@@ -502,7 +504,7 @@ export const sendInvites = async (req, res) => {
               email,
               reason: emailResult.error || 'Email sending failed'
             });
-            continue;
+            return;
           }
 
           await newInvite.save();
@@ -522,7 +524,9 @@ export const sendInvites = async (req, res) => {
           reason: error.message || 'Processing failed'
         });
       }
-    }
+    });
+
+    await Promise.all(invitePromises);
 
     console.log("\n📊 FINAL RESULTS:");
     console.log("Total:", emails.length);
@@ -594,7 +598,8 @@ export const sendSMSInvites = async (req, res) => {
     const results = [];
     const failed = [];
 
-    for (const phoneData of phones) {
+    // Process in parallel with Promise.all
+    const invitePromises = phones.map(async (phoneData) => {
       try {
         const phone = phoneData.phone.trim();
         const email = phoneData.email?.toLowerCase().trim() || '';
@@ -609,18 +614,13 @@ export const sendSMSInvites = async (req, res) => {
         });
 
         if (existingInvite) {
-          if (existingInvite.status === 'responded') {
-            failed.push({
-              phone,
-              reason: 'Already responded, cannot resend'
-            });
-            continue;
-          }
+          const isResponded = existingInvite.status === 'responded';
+          const inviteId = isResponded ? uuidv4() : existingInvite.inviteId;
 
-          // Resend existing invite via SMS
+          // Send SMS
           const smsResult = await sendInviteSMS({
             phone,
-            inviteId: existingInvite.inviteId,
+            inviteId,
             formId,
             formTitle: form.title,
             tenantName: tenant.name,
@@ -632,24 +632,46 @@ export const sendSMSInvites = async (req, res) => {
               phone,
               reason: smsResult.error || 'SMS sending failed'
             });
-            continue;
+            return;
           }
 
-          // Update sentAt and notification channels
-          existingInvite.sentAt = new Date();
-          if (!existingInvite.notificationChannels) {
-            existingInvite.notificationChannels = [];
-          }
-          if (!existingInvite.notificationChannels.includes('sms')) {
-            existingInvite.notificationChannels.push('sms');
-          }
-          await existingInvite.save();
+          if (isResponded) {
+            // Create NEW invite record after response
+            const newInvite = new FormInvite({
+              formId,
+              tenantId: form.tenantId,
+              email: email || existingInvite.email || `sms_${phone}@placeholder.com`,
+              phone,
+              inviteId,
+              status: 'sent',
+              notificationChannels: ['sms'],
+              createdBy: req.user._id,
+              previousInviteId: existingInvite.inviteId
+            });
+            await newInvite.save();
+            
+            results.push({
+              phone,
+              action: 'new_invite_created',
+              inviteId
+            });
+          } else {
+            // Update existing invite
+            existingInvite.sentAt = new Date();
+            if (!existingInvite.notificationChannels) {
+              existingInvite.notificationChannels = [];
+            }
+            if (!existingInvite.notificationChannels.includes('sms')) {
+              existingInvite.notificationChannels.push('sms');
+            }
+            await existingInvite.save();
 
-          results.push({
-            phone,
-            action: 'resent',
-            inviteId: existingInvite.inviteId
-          });
+            results.push({
+              phone,
+              action: 'resent',
+              inviteId
+            });
+          }
 
         } else {
           // Create new invite
@@ -658,7 +680,7 @@ export const sendSMSInvites = async (req, res) => {
           const newInvite = new FormInvite({
             formId,
             tenantId: form.tenantId,
-            email: email || `sms_${phone}@placeholder.com`, // Placeholder email for SMS-only invites
+            email: email || `sms_${phone}@placeholder.com`,
             phone,
             inviteId,
             status: 'sent',
@@ -666,7 +688,7 @@ export const sendSMSInvites = async (req, res) => {
             createdBy: req.user._id
           });
 
-          // Send SMS first
+          // Send SMS
           const smsResult = await sendInviteSMS({
             phone,
             inviteId,
@@ -681,7 +703,7 @@ export const sendSMSInvites = async (req, res) => {
               phone,
               reason: smsResult.error || 'SMS sending failed'
             });
-            continue;
+            return;
           }
 
           await newInvite.save();
@@ -700,7 +722,9 @@ export const sendSMSInvites = async (req, res) => {
           reason: error.message || 'Processing failed'
         });
       }
-    }
+    });
+
+    await Promise.all(invitePromises);
 
     res.json({
       success: true,
@@ -773,10 +797,14 @@ export const getInviteStats = async (req, res) => {
 
     // Get response count for this form (from Response model)
     const Response = mongoose.model('Response');
-    const totalResponses = await Response.countDocuments({ formId });
+    const totalResponses = await Response.countDocuments({ 
+      formId, 
+      isSectionSubmit: { $ne: true } 
+    });
     const invitedResponses = await Response.countDocuments({
       formId,
-      inviteId: { $ne: null }
+      inviteId: { $ne: null },
+      isSectionSubmit: { $ne: true }
     });
     const publicResponses = totalResponses - invitedResponses;
 
@@ -1011,8 +1039,7 @@ export const getInviteList = async (req, res) => {
 
 const sendInviteEmail = async ({ email, inviteId, formId, formTitle, tenantSlug }) => {
   try {
-    const baseUrl = 'https://forms.focusengineeringapp.com';
-    // const baseUrl = 'http://localhost:5174';
+    const baseUrl = process.env.INVITE_FRONTEND_URL || 'https://forms.focusengineeringapp.com';
     const inviteLink = `${baseUrl}/${tenantSlug}/forms/${formId}?inviteId=${inviteId}`;
 
     // Use MailService (SMTP)

@@ -141,6 +141,7 @@ export const uploadWhatsAppInvites = async (req, res) => {
     
     const tenant = await Tenant.findById(form.tenantId);
     const tenantSlug = tenant?.slug || 'public';
+    const baseUrl = process.env.INVITE_FRONTEND_URL || 'https://forms.focusengineeringapp.com';
     
     res.json({
       success: true,
@@ -151,7 +152,7 @@ export const uploadWhatsAppInvites = async (req, res) => {
         invalid: invalidRecords.length,
         duplicatePhones: records.length - seenPhones.size,
         preview: preview.slice(0, 10),
-        sampleLink: `https://forms.focusengineeringapp.com/${tenantSlug}/forms/${formId}?inviteId=SAMPLE_INVITE_ID`,
+        sampleLink: `${baseUrl}/${tenantSlug}/forms/${formId}?inviteId=SAMPLE_INVITE_ID`,
         form: {
           id: form.id,
           title: form.title,
@@ -200,7 +201,8 @@ export const sendWhatsAppInvites = async (req, res) => {
     const results = [];
     const failed = [];
     
-    for (const record of phones) {
+    // Process in parallel with Promise.all
+    const invitePromises = phones.map(async (record) => {
       try {
         const phone = record.phone.trim();
         const email = record.email ? record.email.toLowerCase().trim() : '';
@@ -210,16 +212,11 @@ export const sendWhatsAppInvites = async (req, res) => {
           phone
         });
         
-        if (invite && invite.status === 'responded') {
-          failed.push({
-            phone,
-            reason: 'Already responded'
-          });
-          continue;
-        }
-        
-        const inviteId = invite ? invite.inviteId : uuidv4();
-        const inviteLink = `https://forms.focusengineeringapp.com/${tenant.slug}/forms/${formId}?inviteId=${inviteId}`;
+        // If already responded, we create a NEW invite record to allow tracking a new submission
+        const isResponded = invite && invite.status === 'responded';
+        const inviteId = isResponded || !invite ? uuidv4() : invite.inviteId;
+        const baseUrl = process.env.INVITE_FRONTEND_URL || 'https://forms.focusengineeringapp.com';
+        const inviteLink = `${baseUrl}/${tenant.slug}/forms/${formId}?inviteId=${inviteId}`;
         
         const whatsappResult = await WhatsAppService.sendFormInvite(
           phone,
@@ -229,20 +226,22 @@ export const sendWhatsAppInvites = async (req, res) => {
         );
         
         if (whatsappResult.success) {
-          if (invite) {
+          if (invite && !isResponded) {
             invite.sentAt = new Date();
             await invite.save();
           } else {
-            invite = new FormInvite({
+            // Create new invite (either first time or after response)
+            const newInvite = new FormInvite({
               formId,
               tenantId: form.tenantId,
               phone,
-              email: email || undefined, // Only set if provided
+              email: email || undefined,
               inviteId,
               status: 'sent',
-              createdBy: req.user?._id
+              createdBy: req.user?._id,
+              previousInviteId: isResponded ? invite.inviteId : undefined
             });
-            await invite.save();
+            await newInvite.save();
           }
           
           results.push({
@@ -265,7 +264,9 @@ export const sendWhatsAppInvites = async (req, res) => {
           reason: error.message
         });
       }
-    }
+    });
+
+    await Promise.all(invitePromises);
     
     // Only return success: true if at least one message was sent successfully
     const overallSuccess = results.length > 0;

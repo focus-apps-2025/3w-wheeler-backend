@@ -14,7 +14,18 @@ class MailService {
       auth: {
         user: process.env.SMTP_USER || 'your-email@gmail.com',
         pass: process.env.SMTP_PASS || 'your-app-password'
-      }
+      },
+      pool: true,               // Enable pooling
+      maxConnections: 5,        // Max 5 concurrent connections
+      maxMessages: 100,         // Max 100 messages per connection
+      rateDelta: 1000,          // 1 second window
+      rateLimit: 5,             // Max 5 messages per second
+      connectionTimeout: 20000, // 20 seconds
+      greetingTimeout: 20000,   // 20 seconds
+      socketTimeout: 30000,     // 30 seconds
+      dnsTimeout: 10000,        // 10 seconds
+      debug: true,              // Enable debug output
+      logger: true              // Log information to console
     });
   }
 

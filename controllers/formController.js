@@ -415,7 +415,8 @@ export const getAllForms = async (req, res) => {
         {
           $match: {
             ...req.tenantFilter,
-            questionId: { $in: formIdsForCounts }
+            questionId: { $in: formIdsForCounts },
+            isSectionSubmit: { $ne: true }
           }
         },
         {
@@ -2101,7 +2102,8 @@ export const getGlobalFormStats = async (req, res) => {
     const stats = await Response.aggregate([
       { 
         $match: { 
-          $or: matchOrConditions
+          $or: matchOrConditions,
+          isSectionSubmit: { $ne: true }
         } 
       },
       {

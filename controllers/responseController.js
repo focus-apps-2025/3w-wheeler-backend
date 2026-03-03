@@ -81,10 +81,8 @@ export const createResponse = async (req, res) => {
       
       // Check if already responded
       if (invite.status === 'responded' && !isSectionSubmit) {
-        return res.status(403).json({
-          success: false,
-          message: 'This invite link has already been used'
-        });
+        console.log(`[INVITE] Invite ${inviteId} was already responded. Allowing re-submission as requested.`);
+        // We still proceed, but we'll update the respondedAt date
       }
       
       // Mark as responded only if it's NOT a section submit
