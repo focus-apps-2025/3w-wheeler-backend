@@ -307,7 +307,7 @@ class MailService {
         from: process.env.SMTP_USER,
         to: recipientEmail,
         subject: `Invitation: Please complete "${formTitle}"`,
-        html: this._baseWrapper('Your Feedback Is Important', '#2563eb', '#f5c518', body)
+        html: this._baseWrapper('Your Feedback Is Very Important', '#2563eb', '#f5c518', body)
       };
 
       const result = await this.transporter.sendMail(mailOptions);
