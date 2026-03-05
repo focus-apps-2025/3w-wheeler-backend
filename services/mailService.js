@@ -2,7 +2,6 @@ import nodemailer from 'nodemailer';
 
 class MailService {
   constructor() {
-    // Railway often blocks port 587 or has IPv6 issues. For Gmail, port 465 works much more reliably.
     const host = process.env.SMTP_HOST || 'smtp.gmail.com';
     const isGmail = host.includes('gmail.com');
     const port = isGmail ? 465 : (process.env.SMTP_PORT || 587);
@@ -10,82 +9,101 @@ class MailService {
     this.transporter = nodemailer.createTransport({
       host: host,
       port: port,
-      secure: port == 465 || port === '465', // true for 465, false for other ports
+      secure: port == 465 || port === '465',
       auth: {
         user: process.env.SMTP_USER || 'your-email@gmail.com',
         pass: process.env.SMTP_PASS || 'your-app-password'
       },
-      pool: true,               // Enable pooling
-      maxConnections: 5,        // Max 5 concurrent connections
-      maxMessages: 100,         // Max 100 messages per connection
-      rateDelta: 1000,          // 1 second window
-      rateLimit: 5,             // Max 5 messages per second
-      connectionTimeout: 20000, // 20 seconds
-      greetingTimeout: 20000,   // 20 seconds
-      socketTimeout: 30000,     // 30 seconds
-      dnsTimeout: 10000,        // 10 seconds
-      debug: true,              // Enable debug output
-      logger: true              // Log information to console
+      pool: true,
+      maxConnections: 5,
+      maxMessages: 100,
+      rateDelta: 1000,
+      rateLimit: 5,
+      connectionTimeout: 20000,
+      greetingTimeout: 20000,
+      socketTimeout: 30000,
+      dnsTimeout: 10000,
+      debug: true,
+      logger: true
     });
+  }
+
+  // Shared base styles
+  _baseWrapper(headerTitle, headerColor = '#2563eb', accentColor = '#f5c518', bodyContent) {
+    return `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #ffffff;">
+        <!-- Header -->
+        <div style="background-color: ${headerColor}; padding: 24px 32px;">
+          <h1 style="color: #ffffff; margin: 0; font-size: 18px; font-weight: bold; letter-spacing: 0.5px; text-transform: uppercase;">
+            ${headerTitle}
+          </h1>
+        </div>
+
+        <!-- Body -->
+        <div style="padding: 32px;">
+          <!-- Yellow accent line -->
+          <div style="height: 4px; background-color: ${accentColor}; margin-bottom: 28px; border-radius: 2px;"></div>
+
+          ${bodyContent}
+
+          <!-- Footer -->
+          <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #e5e7eb; text-align: center;">
+            <p style="color: #9ca3af; font-size: 12px; margin: 0;">
+              Focus Auto Shop — Automated Notification<br>
+              <span style="font-size: 11px;">Generated: ${new Date().toLocaleString()}</span>
+            </p>
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   // Send email to shop manager when new service request is submitted
   async sendServiceRequestNotification(serviceRequest, customerInfo) {
     try {
+      const body = `
+        <p style="font-size: 16px; color: #111827; margin: 0 0 6px;">Hello, <strong>FOCUS AUTO SHOP TEAM,</strong></p>
+        <p style="font-size: 15px; color: #374151; margin: 0 0 28px;">
+          A new service request has been submitted on <strong>${new Date().toLocaleDateString()}</strong>.
+        </p>
+
+        <div style="background: #f8fafc; border-left: 4px solid #2563eb; padding: 20px; border-radius: 0 8px 8px 0; margin-bottom: 20px;">
+          <p style="font-size: 13px; font-weight: bold; color: #6b7280; text-transform: uppercase; margin: 0 0 12px; letter-spacing: 1px;">Customer Information</p>
+          <p style="margin: 4px 0; color: #111827;"><strong>Name:</strong> ${customerInfo.name}</p>
+          <p style="margin: 4px 0; color: #111827;"><strong>Email:</strong> ${customerInfo.email}</p>
+          <p style="margin: 4px 0; color: #111827;"><strong>Phone:</strong> ${customerInfo.phone || 'Not provided'}</p>
+        </div>
+
+        <div style="background: #fffbeb; border-left: 4px solid #f59e0b; padding: 20px; border-radius: 0 8px 8px 0; margin-bottom: 20px;">
+          <p style="font-size: 13px; font-weight: bold; color: #92400e; text-transform: uppercase; margin: 0 0 12px; letter-spacing: 1px;">Vehicle Information</p>
+          <p style="margin: 4px 0; color: #111827;"><strong>Make:</strong> ${serviceRequest.vehicleMake}</p>
+          <p style="margin: 4px 0; color: #111827;"><strong>Model:</strong> ${serviceRequest.vehicleModel}</p>
+          <p style="margin: 4px 0; color: #111827;"><strong>Year:</strong> ${serviceRequest.vehicleYear || 'Not specified'}</p>
+          <p style="margin: 4px 0; color: #111827;"><strong>License Plate:</strong> ${serviceRequest.licensePlate || 'Not provided'}</p>
+        </div>
+
+        <div style="background: #fef2f2; border-left: 4px solid #dc2626; padding: 20px; border-radius: 0 8px 8px 0; margin-bottom: 20px;">
+          <p style="font-size: 13px; font-weight: bold; color: #991b1b; text-transform: uppercase; margin: 0 0 12px; letter-spacing: 1px;">Service Details</p>
+          <p style="margin: 4px 0; color: #111827;"><strong>Service Type:</strong> ${serviceRequest.serviceType}</p>
+          ${serviceRequest.urgency ? `<p style="margin: 4px 0; color: #dc2626;"><strong>Urgency:</strong> ${serviceRequest.urgency}</p>` : ''}
+          ${serviceRequest.preferredDate ? `<p style="margin: 4px 0; color: #111827;"><strong>Preferred Date:</strong> ${serviceRequest.preferredDate}</p>` : ''}
+          <p style="margin: 12px 0 4px; color: #111827;"><strong>Issue Description:</strong></p>
+          <p style="background: #fff; border: 1px solid #fecaca; padding: 12px; border-radius: 6px; color: #374151; margin: 0;">${serviceRequest.issueDescription}</p>
+        </div>
+
+        <div style="background: #eff6ff; border-left: 4px solid #3b82f6; padding: 16px 20px; border-radius: 0 8px 8px 0;">
+          <p style="margin: 0; color: #1e40af; font-size: 14px;">
+            📋 <strong>Request ID:</strong> ${serviceRequest.id || 'N/A'} &nbsp;|&nbsp;
+            🕒 <strong>Submitted:</strong> ${new Date().toLocaleString()}
+          </p>
+        </div>
+      `;
+
       const mailOptions = {
         from: process.env.SMTP_USER,
         to: process.env.SHOP_EMAIL || 'admin@focus.com',
         subject: `🚗 New Service Request - ${serviceRequest.vehicleMake} ${serviceRequest.vehicleModel}`,
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #2563eb; border-bottom: 2px solid #2563eb; padding-bottom: 10px;">
-              New Service Request Received
-            </h2>
-            
-            <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
-              <h3 style="color: #374151; margin-top: 0;">Customer Information:</h3>
-              <p><strong>Name:</strong> ${customerInfo.name}</p>
-              <p><strong>Email:</strong> ${customerInfo.email}</p>
-              <p><strong>Phone:</strong> ${customerInfo.phone || 'Not provided'}</p>
-            </div>
-
-            <div style="background: #fef3c7; padding: 20px; border-radius: 8px; margin: 20px 0;">
-              <h3 style="color: #92400e; margin-top: 0;">Vehicle Information:</h3>
-              <p><strong>Make:</strong> ${serviceRequest.vehicleMake}</p>
-              <p><strong>Model:</strong> ${serviceRequest.vehicleModel}</p>
-              <p><strong>Year:</strong> ${serviceRequest.vehicleYear || 'Not specified'}</p>
-              <p><strong>License Plate:</strong> ${serviceRequest.licensePlate || 'Not provided'}</p>
-            </div>
-
-            <div style="background: #fef2f2; padding: 20px; border-radius: 8px; margin: 20px 0;">
-              <h3 style="color: #dc2626; margin-top: 0;">Service Details:</h3>
-              <p><strong>Service Type:</strong> ${serviceRequest.serviceType}</p>
-              <p><strong>Issue Description:</strong></p>
-              <p style="background: white; padding: 15px; border-radius: 4px;">${serviceRequest.issueDescription}</p>
-              
-              ${serviceRequest.urgency ? `
-                <p style="color: #dc2626;"><strong>Urgency:</strong> ${serviceRequest.urgency}</p>
-              ` : ''}
-              
-              ${serviceRequest.preferredDate ? `
-                <p><strong>Preferred Date:</strong> ${serviceRequest.preferredDate}</p>
-              ` : ''}
-            </div>
-
-            <div style="background: #e0f2fe; padding: 20px; border-radius: 8px; margin: 20px 0;">
-              <p style="margin: 0; color: #0369a1;">
-                <strong>📅 Request ID:</strong> ${serviceRequest.id || 'N/A'}<br>
-                <strong>🕒 Submitted:</strong> ${new Date().toLocaleString()}
-              </p>
-            </div>
-
-            <div style="text-align: center; margin-top: 30px; padding: 20px; border-top: 1px solid #e5e7eb;">
-              <p style="color: #6b7280; margin: 0;">
-                This is an automated notification from Focus Auto Shop Service System
-              </p>
-            </div>
-          </div>
-        `
+        html: this._baseWrapper('New Service Request Received', '#2563eb', '#f5c518', body)
       };
 
       const result = await this.transporter.sendMail(mailOptions);
@@ -100,53 +118,39 @@ class MailService {
   // Send confirmation email to customer
   async sendCustomerConfirmation(serviceRequest, customerInfo) {
     try {
+      const body = `
+        <p style="font-size: 16px; color: #111827; margin: 0 0 6px;">Hello, <strong>${customerInfo.name.toUpperCase()},</strong></p>
+        <p style="font-size: 15px; color: #374151; margin: 0 0 28px;">
+          Thank you for choosing <strong>Focus Auto Shop</strong>. We have received your service request and will contact you shortly.
+        </p>
+
+        <div style="background: #f0fdf4; border-left: 4px solid #16a34a; padding: 20px; border-radius: 0 8px 8px 0; margin-bottom: 24px;">
+          <p style="font-size: 13px; font-weight: bold; color: #166534; text-transform: uppercase; margin: 0 0 12px; letter-spacing: 1px;">Your Request Summary</p>
+          <p style="margin: 4px 0; color: #111827;"><strong>Vehicle:</strong> ${serviceRequest.vehicleMake} ${serviceRequest.vehicleModel} ${serviceRequest.vehicleYear || ''}</p>
+          <p style="margin: 4px 0; color: #111827;"><strong>Service Type:</strong> ${serviceRequest.serviceType}</p>
+          <p style="margin: 4px 0; color: #111827;"><strong>Issue:</strong> ${serviceRequest.issueDescription}</p>
+          ${serviceRequest.preferredDate ? `<p style="margin: 4px 0; color: #111827;"><strong>Preferred Date:</strong> ${serviceRequest.preferredDate}</p>` : ''}
+        </div>
+
+        <div style="background: #eff6ff; border-left: 4px solid #2563eb; padding: 20px; border-radius: 0 8px 8px 0; margin-bottom: 24px;">
+          <p style="font-size: 13px; font-weight: bold; color: #1e40af; text-transform: uppercase; margin: 0 0 12px; letter-spacing: 1px;">What Happens Next?</p>
+          <p style="margin: 6px 0; color: #374151;">✅ Our team will review your request within 24 hours</p>
+          <p style="margin: 6px 0; color: #374151;">📅 We'll contact you to schedule an appointment</p>
+          <p style="margin: 6px 0; color: #374151;">🔧 Our certified mechanics will diagnose and fix your vehicle</p>
+        </div>
+
+        <div style="text-align: center; background: #f9fafb; border-radius: 8px; padding: 20px;">
+          <p style="font-weight: bold; color: #111827; margin: 0 0 6px;">Need immediate assistance?</p>
+          <p style="color: #2563eb; font-size: 18px; font-weight: bold; margin: 0 0 4px;">📞 (555) 123-4567</p>
+          <p style="color: #6b7280; font-size: 13px; margin: 0;">support@focus-auto.com</p>
+        </div>
+      `;
+
       const mailOptions = {
         from: process.env.SMTP_USER,
         to: customerInfo.email,
         subject: `✅ Service Request Received - Focus Auto Shop`,
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #16a34a; border-bottom: 2px solid #16a34a; padding-bottom: 10px;">
-              Service Request Confirmed
-            </h2>
-            
-            <p>Dear ${customerInfo.name},</p>
-            
-            <p>Thank you for choosing Focus Auto Shop! We have received your service request and will contact you soon.</p>
-
-            <div style="background: #f0fdf4; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #16a34a;">
-              <h3 style="color: #166534; margin-top: 0;">Your Request Summary:</h3>
-              <p><strong>Vehicle:</strong> ${serviceRequest.vehicleMake} ${serviceRequest.vehicleModel} ${serviceRequest.vehicleYear || ''}</p>
-              <p><strong>Service Type:</strong> ${serviceRequest.serviceType}</p>
-              <p><strong>Issue:</strong> ${serviceRequest.issueDescription}</p>
-              ${serviceRequest.preferredDate ? `<p><strong>Preferred Date:</strong> ${serviceRequest.preferredDate}</p>` : ''}
-            </div>
-
-            <div style="background: #eff6ff; padding: 20px; border-radius: 8px; margin: 20px 0;">
-              <h3 style="color: #1d4ed8; margin-top: 0;">What Happens Next?</h3>
-              <ul style="color: #374151;">
-                <li>Our team will review your request within 24 hours</li>
-                <li>We'll contact you to schedule an appointment</li>
-                <li>Our certified mechanics will diagnose and fix your vehicle</li>
-              </ul>
-            </div>
-
-            <div style="text-align: center; margin: 30px 0;">
-              <p style="color: #374151; margin: 0;">
-                <strong>📞 Need immediate assistance?</strong><br>
-                Call us at: <strong>(555) 123-4567</strong><br>
-                Email: <strong>support@focus-auto.com</strong>
-              </p>
-            </div>
-
-            <div style="text-align: center; margin-top: 30px; padding: 20px; border-top: 1px solid #e5e7eb;">
-              <p style="color: #6b7280; margin: 0;">
-                Focus Auto Shop - Your Trusted Car Care Partner<br>
-                <small>This is an automated confirmation email</small>
-              </p>
-            </div>
-          </div>
-        `
+        html: this._baseWrapper('Service Request Confirmed', '#16a34a', '#f5c518', body)
       };
 
       const result = await this.transporter.sendMail(mailOptions);
@@ -161,60 +165,51 @@ class MailService {
   // Send status update to customer
   async sendStatusUpdate(serviceRequest, customerInfo, status, message, estimatedCompletion = null) {
     try {
-      const statusColors = {
-        'received': '#3b82f6',
-        'in-progress': '#f59e0b',
-        'waiting-parts': '#ef4444',
-        'completed': '#10b981',
-        'ready-pickup': '#16a34a'
+      const statusMap = {
+        'received':      { color: '#3b82f6', label: 'Received',        accent: '#bfdbfe' },
+        'in-progress':   { color: '#f59e0b', label: 'In Progress',     accent: '#fde68a' },
+        'waiting-parts': { color: '#ef4444', label: 'Waiting for Parts', accent: '#fecaca' },
+        'completed':     { color: '#10b981', label: 'Completed',       accent: '#a7f3d0' },
+        'ready-pickup':  { color: '#16a34a', label: 'Ready for Pickup', accent: '#bbf7d0' }
       };
+      const s = statusMap[status] || { color: '#6b7280', label: status, accent: '#e5e7eb' };
 
-      const statusColor = statusColors[status] || '#6b7280';
+      const body = `
+        <p style="font-size: 16px; color: #111827; margin: 0 0 6px;">Hello, <strong>${customerInfo.name.toUpperCase()},</strong></p>
+        <p style="font-size: 15px; color: #374151; margin: 0 0 28px;">
+          Here is the latest update on your vehicle service at <strong>Focus Auto Shop</strong>.
+        </p>
+
+        <div style="background: #f8fafc; border-left: 4px solid ${s.color}; padding: 20px; border-radius: 0 8px 8px 0; margin-bottom: 20px;">
+          <p style="font-size: 13px; font-weight: bold; color: #6b7280; text-transform: uppercase; margin: 0 0 8px; letter-spacing: 1px;">Vehicle</p>
+          <p style="font-size: 17px; color: #111827; font-weight: bold; margin: 0 0 12px;">${serviceRequest.vehicleMake} ${serviceRequest.vehicleModel}</p>
+          <p style="font-size: 13px; font-weight: bold; color: #6b7280; text-transform: uppercase; margin: 0 0 6px; letter-spacing: 1px;">Current Status</p>
+          <span style="display: inline-block; background: ${s.accent}; color: ${s.color}; font-weight: bold; font-size: 14px; padding: 6px 16px; border-radius: 20px; text-transform: uppercase; letter-spacing: 0.5px;">
+            ${s.label}
+          </span>
+        </div>
+
+        <div style="background: #ffffff; border: 1px solid #e5e7eb; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+          <p style="font-size: 13px; font-weight: bold; color: #6b7280; text-transform: uppercase; margin: 0 0 10px; letter-spacing: 1px;">Update Details</p>
+          <p style="color: #374151; margin: 0;">${message}</p>
+          ${estimatedCompletion ? `
+            <p style="margin: 14px 0 0; color: #059669; font-weight: bold;">
+              🕒 Estimated Completion: ${estimatedCompletion}
+            </p>` : ''}
+        </div>
+
+        <div style="text-align: center; background: #f9fafb; border-radius: 8px; padding: 20px;">
+          <p style="font-weight: bold; color: #111827; margin: 0 0 6px;">Questions about your service?</p>
+          <p style="color: #2563eb; font-size: 18px; font-weight: bold; margin: 0 0 4px;">📞 (555) 123-4567</p>
+          <p style="color: #6b7280; font-size: 13px; margin: 0;">Please have your Request ID ready when calling</p>
+        </div>
+      `;
 
       const mailOptions = {
         from: process.env.SMTP_USER,
         to: customerInfo.email,
-        subject: `🔧 Service Update: ${serviceRequest.vehicleMake} ${serviceRequest.vehicleModel} - ${status.replace('-', ' ').toUpperCase()}`,
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: ${statusColor}; border-bottom: 2px solid ${statusColor}; padding-bottom: 10px;">
-              Service Status Update
-            </h2>
-            
-            <p>Dear ${customerInfo.name},</p>
-            
-            <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
-              <h3 style="color: #374151; margin-top: 0;">Vehicle: ${serviceRequest.vehicleMake} ${serviceRequest.vehicleModel}</h3>
-              <p style="font-size: 18px; color: ${statusColor}; font-weight: bold;">
-                Status: ${status.replace('-', ' ').toUpperCase()}
-              </p>
-            </div>
-
-            <div style="background: #ffffff; padding: 20px; border-radius: 8px; border: 1px solid #e5e7eb; margin: 20px 0;">
-              <h3 style="color: #374151; margin-top: 0;">Update Details:</h3>
-              <p>${message}</p>
-              
-              ${estimatedCompletion ? `
-                <p style="color: #059669;"><strong>Estimated Completion:</strong> ${estimatedCompletion}</p>
-              ` : ''}
-            </div>
-
-            <div style="text-align: center; margin: 30px 0;">
-              <p style="color: #374151; margin: 0;">
-                <strong>Questions about your service?</strong><br>
-                Call us at: <strong>(555) 123-4567</strong><br>
-                Reference your request ID when calling
-              </p>
-            </div>
-
-            <div style="text-align: center; margin-top: 30px; padding: 20px; border-top: 1px solid #e5e7eb;">
-              <p style="color: #6b7280; margin: 0;">
-                Focus Auto Shop - Keeping You Updated Every Step<br>
-                <small>This is an automated status update</small>
-              </p>
-            </div>
-          </div>
-        `
+        subject: `🔧 Service Update: ${serviceRequest.vehicleMake} ${serviceRequest.vehicleModel} — ${s.label.toUpperCase()}`,
+        html: this._baseWrapper('Service Status Update', s.color, '#f5c518', body)
       };
 
       const result = await this.transporter.sendMail(mailOptions);
@@ -230,56 +225,39 @@ class MailService {
   async sendResponseReportWithAttachment(recipientEmail, subject, fileData, fileName) {
     try {
       console.log('📧 Attempting to send report email...');
-      console.log('From:', process.env.SMTP_USER);
-      console.log('To:', recipientEmail);
-      console.log('Subject:', subject);
+
+      const body = `
+        <p style="font-size: 16px; color: #111827; margin: 0 0 6px;">Hello,</p>
+        <p style="font-size: 15px; color: #374151; margin: 0 0 28px;">
+          Please find the attached Excel report with the latest dashboard data and response details.
+        </p>
+
+        <div style="background: #f0fdf4; border-left: 4px solid #16a34a; padding: 20px; border-radius: 0 8px 8px 0; margin-bottom: 20px;">
+          <p style="font-size: 13px; font-weight: bold; color: #166534; text-transform: uppercase; margin: 0 0 12px; letter-spacing: 1px;">Report Contents</p>
+          <p style="margin: 6px 0; color: #374151;">📊 <strong>Sheet 1 — Dashboard:</strong> Summary statistics, percentages, and weighted data</p>
+          <p style="margin: 6px 0; color: #374151;">📋 <strong>Sheet 2 — Responses:</strong> Detailed responses organized by sections</p>
+        </div>
+
+        <div style="text-align: center; background: #f9fafb; border-radius: 8px; padding: 16px;">
+          <p style="color: #6b7280; font-size: 13px; margin: 0;">
+            📎 Attachment: <strong>${fileName || 'report.xlsx'}</strong>
+          </p>
+        </div>
+      `;
 
       const mailOptions = {
         from: process.env.SMTP_USER,
         to: recipientEmail,
         subject: subject || 'Response Report',
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #2563eb; border-bottom: 2px solid #2563eb; padding-bottom: 10px;">
-              Response Report
-            </h2>
-            
-            <p>Dear Recipient,</p>
-            
-            <p>Please find attached the Excel report with the dashboard data and response details organized by sections.</p>
-
-            <div style="background: #f0fdf4; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #16a34a;">
-              <h3 style="color: #166534; margin-top: 0;">Report Contents:</h3>
-              <ul style="color: #374151;">
-                <li><strong>Sheet 1 - Dashboard:</strong> Summary statistics, percentages, and weighted data</li>
-                <li><strong>Sheet 2 - Responses:</strong> Detailed responses organized by sections</li>
-              </ul>
-            </div>
-
-            <div style="text-align: center; margin-top: 30px; padding: 20px; border-top: 1px solid #e5e7eb;">
-              <p style="color: #6b7280; margin: 0;">
-                This is an automated report from the Form Management System<br>
-                <small>Report generated: ${new Date().toLocaleString()}</small>
-              </p>
-            </div>
-          </div>
-        `,
-        attachments: [
-          {
-            filename: fileName || 'report.xlsx',
-            content: fileData
-          }
-        ]
+        html: this._baseWrapper('Response Report', '#2563eb', '#f5c518', body),
+        attachments: [{ filename: fileName || 'report.xlsx', content: fileData }]
       };
 
       const result = await this.transporter.sendMail(mailOptions);
       console.log('✅ Response report sent successfully!');
-      console.log('Message ID:', result.messageId);
       return { success: true, messageId: result.messageId };
     } catch (error) {
-      console.error('❌ Error sending response report:');
-      console.error('Error message:', error.message);
-      console.error('Full error:', error);
+      console.error('❌ Error sending response report:', error);
       return { success: false, error: error.message };
     }
   }
@@ -301,33 +279,35 @@ class MailService {
     try {
       console.log('📧 Sending form invite to:', recipientEmail);
 
+      const body = `
+        <p style="font-size: 16px; color: #111827; margin: 0 0 6px;">Hello,</p>
+        <p style="font-size: 15px; color: #374151; margin: 0 0 28px;">
+          You have been invited by <strong>${tenantName}</strong> to fill out the following form:
+        </p>
+
+        <div style="background: #eff6ff; border-left: 4px solid #2563eb; padding: 20px; border-radius: 0 8px 8px 0; margin-bottom: 28px;">
+          <p style="font-size: 13px; font-weight: bold; color: #1e40af; text-transform: uppercase; margin: 0 0 8px; letter-spacing: 1px;">Form Name</p>
+          <p style="font-size: 18px; font-weight: bold; color: #1e40af; margin: 0;">${formTitle}</p>
+        </div>
+
+        <div style="text-align: center; margin: 28px 0;">
+          <a href="${inviteLink}"
+             style="display: inline-block; background-color: #2563eb; color: #ffffff; text-decoration: none; padding: 14px 36px; border-radius: 6px; font-size: 16px; font-weight: bold; letter-spacing: 0.3px;">
+            Fill Out Form →
+          </a>
+        </div>
+
+        <p style="font-size: 13px; color: #9ca3af; text-align: center; margin: 20px 0 0;">
+          If the button doesn't work, copy and paste this link:<br>
+          <a href="${inviteLink}" style="color: #2563eb; word-break: break-all; font-size: 12px;">${inviteLink}</a>
+        </p>
+      `;
+
       const mailOptions = {
         from: process.env.SMTP_USER,
         to: recipientEmail,
         subject: `Invitation: Please complete "${formTitle}"`,
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
-            <h2 style="color: #2563eb; text-align: center;">Form Invitation</h2>
-            <p style="font-size: 16px; line-height: 1.6; color: #333;">
-              Hello! You have been invited by <strong>${tenantName}</strong> to fill out the following form:
-            </p>
-            <h3 style="text-align: center; color: #1e40af; background: #f0f9ff; padding: 10px; border-radius: 4px;">
-              ${formTitle}
-            </h3>
-            
-            <div style="margin: 30px 0; text-align: center;">
-              <a href="${inviteLink}" 
-                 style="display: inline-block; background-color: #2563eb; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 5px; font-size: 16px; font-weight: bold;">
-                Fill Out Form
-              </a>
-            </div>
-            
-            <p style="font-size: 14px; color: #666; margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px;">
-                If the button doesn't work, copy and paste this link into your browser:<br>
-                <a href="${inviteLink}" style="color: #2563eb; word-break: break-all;">${inviteLink}</a>
-            </p>
-          </div>
-        `
+        html: this._baseWrapper('Your Feedback Is Important', '#2563eb', '#f5c518', body)
       };
 
       const result = await this.transporter.sendMail(mailOptions);
@@ -338,7 +318,6 @@ class MailService {
       return { success: false, error: error.message };
     }
   }
-
 }
 
 export default new MailService();

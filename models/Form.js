@@ -64,7 +64,7 @@ const FollowUpQuestionSchema = new mongoose.Schema({
       // Hierarchy types
       'productNPSTGWBuckets',
       // Feedback types
-      'slider-feedback', 'emoji-star-feedback', 'emoji-reaction-feedback',
+      'slider-feedback', 'emoji-star-feedback', 'emoji-reaction-feedback', 'rating-number', 'satisfaction-rating',
       // Legacy types for backward compatibility (will be migrated)
       'select', 'textarea'
     ],
@@ -272,6 +272,10 @@ const normalizeQuestionType = (type) => {
     'emojistarfeedback': 'emoji-star-feedback',
     'emoji-reaction-feedback': 'emoji-reaction-feedback',
     'emojireactionfeedback': 'emoji-reaction-feedback',
+    'rating-number': 'rating-number',
+    'ratingnumber': 'rating-number',
+    'satisfaction-rating': 'satisfaction-rating',
+    'satisfactionrating': 'satisfaction-rating',
     'productnpstgwbuckets': 'productNPSTGWBuckets',
     'product-nps-tgw-buckets': 'productNPSTGWBuckets'
   };
