@@ -132,6 +132,11 @@ const SectionSchema = new mongoose.Schema({
     max: 100
   },
   nextSectionId: String,
+  isSubsection: {
+    type: Boolean,
+    default: false
+  },
+  parentSectionId: String,
   questions: [FollowUpQuestionSchema]
 }, { _id: false });
 
@@ -190,6 +195,11 @@ const FormSchema = new mongoose.Schema({
   locationEnabled: {
     type: Boolean,
     default: true // Default to true for backward compatibility
+  },
+  viewType: {
+    type: String,
+    enum: ['section-wise', 'question-wise'],
+    default: 'section-wise'
   },
   inviteOnlyTracking: {
     type: Boolean,

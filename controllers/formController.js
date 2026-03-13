@@ -506,7 +506,7 @@ export const getPublicForms = async (req, res) => {
     }
     
     const forms = await Form.find(query)
-      .select('id title description logoUrl imageUrl createdAt tenantId isActive isVisible sections parentFormId')
+      .select('id title description logoUrl imageUrl createdAt tenantId isActive isVisible sections parentFormId viewType')
       .populate('sections.questions')
       .sort({ createdAt: -1 });
 
@@ -548,6 +548,11 @@ export const getFormById = async (req, res) => {
         success: false,
         message: 'Form not found'
       });
+    }
+
+    // Ensure viewType has a default value if missing (Mongoose lean() doesn't include defaults for missing fields)
+    if (!form.viewType) {
+      form.viewType = 'section-wise';
     }
 
     // Permission check for authenticated users (not public slug access)
@@ -1069,6 +1074,66 @@ export const updateFormActiveStatus = async (req, res) => {
 
   } catch (error) {
     console.error('Update form active status error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+export const updateFormViewType = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { viewType } = req.body;
+    
+    console.log(`[updateFormViewType] Attempting to update form ${id} to viewType: ${viewType}`);
+
+    if (!['section-wise', 'question-wise'].includes(viewType)) {
+      console.log(`[updateFormViewType] Invalid viewType: ${viewType}`);
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid view type. Must be "section-wise" or "question-wise".'
+      });
+    }
+
+    const form = await findFormByIdentifier(id);
+
+    if (!form) {
+      console.log(`[updateFormViewType] Form not found: ${id}`);
+      return res.status(404).json({
+        success: false,
+        message: 'Form not found'
+      });
+    }
+
+    // Check permissions
+    if (form.createdBy && req.user._id && form.createdBy.toString() !== req.user._id.toString() &&
+        req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. You can only modify your own forms.'
+      });
+    }
+
+    // For admin, ensure they can only modify forms in their tenant
+    if (req.user.role === 'admin' && form.tenantId && req.user.tenantId && form.tenantId.toString() !== req.user.tenantId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. You can only modify forms in your organization.'
+      });
+    }
+
+    form.viewType = viewType;
+    await form.save();
+
+    res.json({
+      success: true,
+      message: `Form view type updated to ${viewType} successfully`,
+      data: { form }
+    });
+
+  } catch (error) {
+    console.error('Update form view type error:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error'

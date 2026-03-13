@@ -9,6 +9,7 @@ import {
   updateFormVisibility,
   getFormLocationEnabled,
   updateFormLocationEnabled,
+  updateFormViewType,
   updateFormActiveStatus,
   duplicateForm,
   getFormAnalytics,
@@ -58,6 +59,7 @@ router.delete('/:id', deleteForm);
 router.patch('/:id/visibility', updateFormVisibility);
 router.get('/:id/location', getFormLocationEnabled);
 router.patch('/:id/location', updateFormLocationEnabled);
+router.patch('/:id/view-type', updateFormViewType);
 router.patch('/:id/active', updateFormActiveStatus);
 router.post('/:id/duplicate', duplicateForm);
 
