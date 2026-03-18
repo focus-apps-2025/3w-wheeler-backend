@@ -107,6 +107,10 @@ const FollowUpQuestionSchema = new mongoose.Schema({
   },
   description: String,
   suggestion: String,
+  trackResponseRank: {
+    type: Boolean,
+    default: false
+  },
   subParam1: String,
   subParam2: String,
   sectionId: String,

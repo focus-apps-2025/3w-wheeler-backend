@@ -16,6 +16,11 @@ const ResponseSchema = new mongoose.Schema({
     of: mongoose.Schema.Types.Mixed,
     required: true
   },
+  responseRanks: {
+    type: Map,
+    of: Number,
+    default: {}
+  },
   parentResponseId: String,
   assignedTo: {
     type: mongoose.Schema.Types.ObjectId,

@@ -12,7 +12,7 @@ import FormInvite from '../models/FormInvite.js';
 export const createResponse = async (req, res) => {
   try {
     const { 
-      questionId, 
+      questionId: bodyFormId, 
       answers, 
       parentResponseId, 
       submittedBy, 
@@ -22,8 +22,20 @@ export const createResponse = async (req, res) => {
       isSectionSubmit,
       sectionIndex
     } = req.body;    
-    const { tenantSlug } = req.params;
+    const { tenantSlug, formId: paramFormId } = req.params;
 
+    // Use formId from params OR body
+    const questionId = paramFormId || bodyFormId;
+    
+    if (!questionId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Form ID is required'
+      });
+    }
+
+    console.log(`[CREATE RESPONSE] FormID: ${questionId}, TenantSlug: ${tenantSlug || 'N/A'}`);
+    
     let form;
 
     if (tenantSlug) {
@@ -120,17 +132,31 @@ export const createResponse = async (req, res) => {
       console.log('[DEBUG] Captured location stored:', submissionMetadata.capturedLocation);
     }
 
-    //Calculate score for quiz forms
+    // Helper function to recursively collect all questions
+    const collectAllQuestions = (questions, result = []) => {
+      if (!Array.isArray(questions)) return result;
+      
+      questions.forEach(q => {
+        result.push(q);
+        if (Array.isArray(q.followUpQuestions)) {
+          collectAllQuestions(q.followUpQuestions, result);
+        }
+      });
+      
+      return result;
+    };
+
+    // Calculate score for quiz forms
     const allQuestions = [];
     if (form.sections) {
       form.sections.forEach(section => {
         if (section.questions) {
-          allQuestions.push(...section.questions);
+          collectAllQuestions(section.questions, allQuestions);
         }
       });
     }
     if (form.followUpQuestions) {
-      allQuestions.push(...form.followUpQuestions);
+      collectAllQuestions(form.followUpQuestions, allQuestions);
     }
 
     let correct = 0;
@@ -193,6 +219,66 @@ export const createResponse = async (req, res) => {
         }
       }
     });
+
+    // Calculate ranks for specific questions
+    const responseRanks = {};
+    const formObj = form.toObject();
+    const allQs = [];
+    
+    // Recursive helper to collect all questions
+    const collectFromQuestions = (questions) => {
+      if (!Array.isArray(questions)) return;
+      questions.forEach(q => {
+        allQs.push(q);
+        if (Array.isArray(q.followUpQuestions)) {
+          collectFromQuestions(q.followUpQuestions);
+        }
+      });
+    };
+
+    if (formObj.sections) {
+      formObj.sections.forEach(section => {
+        if (section.questions) {
+          collectFromQuestions(section.questions);
+        }
+      });
+    }
+    if (formObj.followUpQuestions) {
+      collectFromQuestions(formObj.followUpQuestions);
+    }
+
+    console.log(`[RANK DEBUG] Calculating ranks for ${allQs.length} total questions in form ${questionId}`);
+    
+    for (const question of allQs) {
+      const qId = question.id;
+      
+      // Check for trackResponseRank (handle both boolean and string "true")
+      const isTrackingEnabled = question.trackResponseRank === true || question.trackResponseRank === "true";
+      
+      if (isTrackingEnabled) {
+        const answer = answers[qId];
+        console.log(`[RANK DEBUG] Question "${question.text}" (ID: ${qId}) HAS tracking enabled. Answer: "${answer}"`);
+        
+        if (answer !== undefined && answer !== null && answer !== "") {
+          // Count existing responses with the SAME answer for this form
+          // We filter by tenantId to avoid cross-business rank contamination
+          const query = {
+            questionId: questionId,
+            [`answers.${qId}`]: answer,
+            isSectionSubmit: { $ne: true },
+            tenantId: form.tenantId
+          };
+          
+          try {
+            const count = await Response.countDocuments(query);
+            console.log(`[RANK DEBUG] Found ${count} existing final responses for form ${questionId}, question ${qId}, answer "${answer}". New rank: ${count + 1}`);
+            responseRanks[qId] = count + 1;
+          } catch (countError) {
+            console.error(`[RANK ERROR] Failed to count documents for question ${qId}:`, countError);
+          }
+        }
+      }
+    }
 
     // ======== UPDATED : Process images with Google Drive backup ==========
 // ========== UPDATED: Process ALL images with OAuth 2.0 Google Drive backup ==========
@@ -276,6 +362,7 @@ try {
       id: uuidv4(),
       questionId,
       answers: new Map(Object.entries(processingResult.processedAnswers)),
+      responseRanks: new Map(Object.entries(responseRanks)),
       // NEW: Store Google Drive backup URLs
       driveBackupUrls: processingResult.driveBackupUrls || {},
       // NEW: Store image processing metadata
@@ -303,6 +390,7 @@ try {
     await response.save();
 
     const answersObj = response.answers instanceof Map ? Object.fromEntries(response.answers) : response.answers;
+    const ranksObj = response.responseRanks instanceof Map ? Object.fromEntries(response.responseRanks) : response.responseRanks;
 
     // Emit real-time event for new response
     emitResponseCreated(questionId, {
@@ -312,6 +400,7 @@ try {
       submittedBy: response.submittedBy,
       createdAt: response.createdAt,
       answers: answersObj,
+      responseRanks: ranksObj,
       inviteId: inviteId || null
     });
 
@@ -323,6 +412,7 @@ try {
           id: response.id,
           questionId: response.questionId,
           answers: answersObj,
+          responseRanks: ranksObj,
           parentResponseId: response.parentResponseId,
           submittedBy: response.submittedBy,
           submitterContact: response.submitterContact,
@@ -352,6 +442,67 @@ try {
 
   } catch (error) {
     console.error('Create response error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+/**
+ * Get current rank for a specific question and answer
+ * Used for real-time ranking display during form filling
+ */
+export const getRank = async (req, res) => {
+  try {
+    const { formId, questionId, answer } = req.query;
+    const { tenantSlug } = req.params;
+
+    if (!formId || !questionId || answer === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'formId, questionId, and answer are required'
+      });
+    }
+
+    let tenantId;
+    if (tenantSlug) {
+      const tenant = await Tenant.findOne({ slug: tenantSlug, isActive: true });
+      if (tenant) {
+        tenantId = tenant._id;
+      }
+    }
+
+    // Find the form to verify it exists and if tracking is enabled
+    const formQuery = { id: formId };
+    if (tenantId) formQuery.tenantId = tenantId;
+    
+    const form = await Form.findOne(formQuery);
+    if (!form) {
+      return res.status(404).json({
+        success: false,
+        message: 'Form not found'
+      });
+    }
+
+    // Count existing final responses with the SAME answer for this form
+    const query = {
+      questionId: formId,
+      [`answers.${questionId}`]: answer,
+      isSectionSubmit: { $ne: true }
+    };
+    
+    if (tenantId) query.tenantId = tenantId;
+
+    const count = await Response.countDocuments(query);
+    
+    return res.status(200).json({
+      success: true,
+      rank: count + 1
+    });
+
+  } catch (error) {
+    console.error('Get rank error:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error'
@@ -526,16 +677,30 @@ const processedBatch = await processResponseImages(
               includeLocation: form.locationEnabled !== false,
             });
             
+            // Helper function to recursively collect all questions
+            const collectAllQuestions = (questions, result = []) => {
+              if (!Array.isArray(questions)) return result;
+              
+              questions.forEach(q => {
+                result.push(q);
+                if (Array.isArray(q.followUpQuestions)) {
+                  collectAllQuestions(q.followUpQuestions, result);
+                }
+              });
+              
+              return result;
+            };
+
             const allQuestions = [];
             if (form.sections) {
               form.sections.forEach(section => {
                 if (section.questions) {
-                  allQuestions.push(...section.questions);
+                  collectAllQuestions(section.questions, allQuestions);
                 }
               });
             }
             if (form.followUpQuestions) {
-              allQuestions.push(...form.followUpQuestions);
+              collectAllQuestions(form.followUpQuestions, allQuestions);
             }
             
             let correct = 0;
@@ -550,11 +715,37 @@ const processedBatch = await processResponseImages(
                 }
               }
             });
+
+            // Calculate ranks for specific questions
+            const responseRanks = {};
+            console.log(`[BATCH-RANK] Calculating ranks for ${allQuestions.length} questions`);
+            for (const question of allQuestions) {
+              // Check for trackResponseRank at any level
+              if (question.trackResponseRank) {
+                const answer = processedAnswers[question.id];
+                console.log(`[BATCH-RANK] Question "${question.text}" (ID: ${question.id}) has trackResponseRank=true. Answer:`, answer);
+                
+                if (answer !== undefined && answer !== null && answer !== '') {
+                  // Count existing responses with the same answer for this form
+                  const query = {
+                    questionId: actualQuestionId,
+                    [`answers.${question.id}`]: answer,
+                    isSectionSubmit: false
+                  };
+                  
+                  console.log(`[BATCH-RANK] Querying existing responses with:`, JSON.stringify(query));
+                  const count = await Response.countDocuments(query);
+                  console.log(`[BATCH-RANK] Found ${count} existing responses. New rank: ${count + 1}`);
+                  responseRanks[question.id] = count + 1;
+                }
+              }
+            }
             
             const responseData = {
               id: uuidv4(),
               questionId: actualQuestionId,
               answers: new Map(Object.entries(processedAnswers)),
+              responseRanks: new Map(Object.entries(responseRanks)),
               parentResponseId,
               submittedBy,
               submitterContact,
@@ -569,6 +760,8 @@ const processedBatch = await processResponseImages(
             
             const answersObj = response.answers instanceof Map ? 
               Object.fromEntries(response.answers) : response.answers;
+            const ranksObj = response.responseRanks instanceof Map ? 
+              Object.fromEntries(response.responseRanks) : response.responseRanks;
             
             emitResponseCreated(actualQuestionId, {
               id: response.id,
@@ -576,7 +769,8 @@ const processedBatch = await processResponseImages(
               status: response.status,
               submittedBy: response.submittedBy,
               createdAt: response.createdAt,
-              answers: answersObj
+              answers: answersObj,
+              responseRanks: ranksObj
             });
             
             createdResponses.push({
@@ -658,17 +852,31 @@ const processedBatch = await processResponseImages(
             includeLocation: form.locationEnabled !== false,
           });
           
+          // Helper function to recursively collect all questions
+          const collectAllQuestions = (questions, result = []) => {
+            if (!Array.isArray(questions)) return result;
+            
+            questions.forEach(q => {
+              result.push(q);
+              if (Array.isArray(q.followUpQuestions)) {
+                collectAllQuestions(q.followUpQuestions, result);
+              }
+            });
+            
+            return result;
+          };
+
           // Get all questions from form for scoring
           const allQuestions = [];
           if (form.sections) {
             form.sections.forEach(section => {
               if (section.questions) {
-                allQuestions.push(...section.questions);
+                collectAllQuestions(section.questions, allQuestions);
               }
             });
           }
           if (form.followUpQuestions) {
-            allQuestions.push(...form.followUpQuestions);
+            collectAllQuestions(form.followUpQuestions, allQuestions);
           }
           
           // Calculate score for yesNoNA questions
@@ -683,12 +891,38 @@ const processedBatch = await processResponseImages(
               }
             }
           });
+
+          // Calculate ranks for specific questions
+          const responseRanks = {};
+          console.log(`[BATCH-RANK] Calculating ranks for ${allQuestions.length} questions`);
+          for (const question of allQuestions) {
+            // Check for trackResponseRank at any level
+            if (question.trackResponseRank) {
+              const answer = processedAnswers[question.id];
+              console.log(`[BATCH-RANK] Question "${question.text}" (ID: ${question.id}) has trackResponseRank=true. Answer:`, answer);
+              
+              if (answer !== undefined && answer !== null && answer !== '') {
+                // Count existing responses with the same answer for this form
+                const query = {
+                  questionId: actualQuestionId,
+                  [`answers.${question.id}`]: answer,
+                  isSectionSubmit: false
+                };
+                
+                console.log(`[BATCH-RANK] Querying existing responses with:`, JSON.stringify(query));
+                const count = await Response.countDocuments(query);
+                console.log(`[BATCH-RANK] Found ${count} existing responses. New rank: ${count + 1}`);
+                responseRanks[question.id] = count + 1;
+              }
+            }
+          }
           
           // Create response data
           const responseData = {
             id: uuidv4(),
             questionId: actualQuestionId,
             answers: new Map(Object.entries(processedAnswers)),
+            responseRanks: new Map(Object.entries(responseRanks)),
             parentResponseId,
             submittedBy: submittedBy || 'Excel Import',
             submitterContact,
@@ -705,6 +939,8 @@ const processedBatch = await processResponseImages(
           // Convert Map to Object for emitting
           const answersObj = response.answers instanceof Map ? 
             Object.fromEntries(response.answers) : response.answers;
+          const ranksObj = response.responseRanks instanceof Map ? 
+            Object.fromEntries(response.responseRanks) : response.responseRanks;
           
           // Emit event if function exists
           if (typeof emitResponseCreated === 'function') {
@@ -714,7 +950,8 @@ const processedBatch = await processResponseImages(
               status: response.status,
               submittedBy: response.submittedBy,
               createdAt: response.createdAt,
-              answers: answersObj
+              answers: answersObj,
+              responseRanks: ranksObj
             });
           }
           
@@ -1033,6 +1270,7 @@ export const getAllResponses = async (req, res) => {
       return {
         ...responseObj,
         answers: Object.fromEntries(response.answers),
+        responseRanks: response.responseRanks ? Object.fromEntries(response.responseRanks) : {},
         submissionMetadata: responseObj.submissionMetadata || null
       };
     });
@@ -1080,6 +1318,7 @@ export const getResponseById = async (req, res) => {
     const formattedResponse = {
       ...responseObj,
       answers: Object.fromEntries(response.answers),
+      responseRanks: response.responseRanks ? Object.fromEntries(response.responseRanks) : {},
       submissionMetadata: responseObj.submissionMetadata || null
     };
 
@@ -1138,7 +1377,8 @@ export const updateResponse = async (req, res) => {
     // Convert Map to Object for JSON serialization
     const formattedResponse = {
       ...response.toObject(),
-      answers: Object.fromEntries(response.answers)
+      answers: Object.fromEntries(response.answers),
+      responseRanks: response.responseRanks ? Object.fromEntries(response.responseRanks) : {}
     };
 
     // Emit real-time event for updated response
@@ -1149,7 +1389,8 @@ export const updateResponse = async (req, res) => {
       submittedBy: response.submittedBy,
       createdAt: response.createdAt,
       updatedAt: response.updatedAt,
-      answers: Object.fromEntries(response.answers)
+      answers: Object.fromEntries(response.answers),
+      responseRanks: response.responseRanks ? Object.fromEntries(response.responseRanks) : {}
     });
 
     res.json({
@@ -1328,6 +1569,7 @@ export const getResponsesByForm = async (req, res) => {
       return {
         ...responseObj,
         answers: response.answers ? Object.fromEntries(response.answers) : {},
+        responseRanks: response.responseRanks ? Object.fromEntries(response.responseRanks) : {},
         submissionMetadata: responseObj.submissionMetadata || null
       };
     });
@@ -1406,7 +1648,8 @@ export const exportResponses = async (req, res) => {
     // Convert Map to Object for JSON serialization
     const formattedResponses = responses.map(response => ({
       ...response.toObject(),
-      answers: response.answers ? Object.fromEntries(response.answers) : {}
+      answers: response.answers ? Object.fromEntries(response.answers) : {},
+      responseRanks: response.responseRanks ? Object.fromEntries(response.responseRanks) : {}
     }));
 
     if (format === 'json') {

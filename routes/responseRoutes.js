@@ -11,6 +11,7 @@ import {
   getResponsesByForm,
   exportResponses,
   processBulkImages,
+  getRank,
 } from '../controllers/responseController.js';
 import { authenticate, adminOnly, teacherOrAdmin } from '../middleware/auth.js';
 import { addTenantFilter } from '../middleware/tenantIsolation.js';
@@ -119,6 +120,10 @@ router.post('/convert-image', async (req, res) => {
 
 // 6. SINGLE RESPONSE CREATION
 router.post('/:tenantSlug/forms/:formId/responses', createResponse);
+
+// 7. GET RANK (PUBLIC)
+router.get('/rank', getRank);
+router.get('/:tenantSlug/forms/:formId/rank', getRank);
 
 // ========== PROTECTED ROUTES (Require Auth) ==========
 router.use(authenticate);
