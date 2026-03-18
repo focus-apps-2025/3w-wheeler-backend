@@ -3,6 +3,7 @@ import Form from '../models/Form.js';
 import Response from '../models/Response.js';
 import Parameter from '../models/Parameter.js';
 import { v4 as uuidv4 } from 'uuid';
+import { collectSubmissionMetadata } from '../services/locationService.js';
 
 const ALLOWED_FILE_TYPES = ['image', 'pdf', 'excel'];
 
@@ -2307,6 +2308,19 @@ export const submitPublicResponse = async (req, res) => {
 
     console.log("✅ All validations passed, creating response...");
 
+    const submissionMetadata = await collectSubmissionMetadata(req, {
+      includeLocation: form.locationEnabled !== false,
+    });
+
+    // Set source based on invite channel
+    if (invite.notificationChannels && invite.notificationChannels.length > 0) {
+      submissionMetadata.source = invite.notificationChannels[0];
+    } else if (invite.phone) {
+      submissionMetadata.source = 'sms'; // Default if phone exists but no channel recorded
+    } else {
+      submissionMetadata.source = 'email'; // Default fallback
+    }
+
     // Create the response
     const response = new Response({
       id: uuidv4(),
@@ -2318,6 +2332,7 @@ export const submitPublicResponse = async (req, res) => {
       location: location,
       isSectionSubmit: !!isSectionSubmit,
       sectionIndex: sectionIndex || null,
+      submissionMetadata: submissionMetadata,
       submittedAt: new Date(),
       createdAt: new Date()
     });

@@ -228,6 +228,12 @@ export const sendWhatsAppInvites = async (req, res) => {
         if (whatsappResult.success) {
           if (invite && !isResponded) {
             invite.sentAt = new Date();
+            if (!invite.notificationChannels) {
+              invite.notificationChannels = [];
+            }
+            if (!invite.notificationChannels.includes('whatsapp')) {
+              invite.notificationChannels.push('whatsapp');
+            }
             await invite.save();
           } else {
             // Create new invite (either first time or after response)
@@ -238,6 +244,7 @@ export const sendWhatsAppInvites = async (req, res) => {
               email: email || undefined,
               inviteId,
               status: 'sent',
+              notificationChannels: ['whatsapp'],
               createdBy: req.user?._id,
               previousInviteId: isResponded ? invite.inviteId : undefined
             });

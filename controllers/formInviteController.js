@@ -401,6 +401,7 @@ export const sendInvites = async (req, res) => {
               phone: emailData.phone || existingInvite.phone || '',
               inviteId: newInviteId,
               status: 'sent',
+              notificationChannels: ['email'],
               createdBy: req.user._id,
               // Optional: track the previous invite
               previousInviteId: existingInvite.inviteId
@@ -459,8 +460,14 @@ export const sendInvites = async (req, res) => {
               return;
             }
 
-            // Update sentAt
+            // Update sentAt and notification channels
             existingInvite.sentAt = new Date();
+            if (!existingInvite.notificationChannels) {
+              existingInvite.notificationChannels = [];
+            }
+            if (!existingInvite.notificationChannels.includes('email')) {
+              existingInvite.notificationChannels.push('email');
+            }
             await existingInvite.save();
             console.log(`  ✅ Resent successfully`);
 
@@ -483,6 +490,7 @@ export const sendInvites = async (req, res) => {
             phone: emailData.phone || '',
             inviteId,
             status: 'sent',
+            notificationChannels: ['email'],
             createdBy: req.user._id
           });
 
@@ -561,6 +569,8 @@ export const sendSMSInvites = async (req, res) => {
     const { formId } = req.params;
     const { phones } = req.body; // Array of phone data from frontend
 
+    console.log(`📱 [SMS] Request to send ${phones?.length} invites for form ${formId}`);
+
     if (!Array.isArray(phones) || phones.length === 0) {
       return res.status(400).json({
         success: false,
@@ -571,6 +581,7 @@ export const sendSMSInvites = async (req, res) => {
     // Find form
     const form = await Form.findOne({ id: formId });
     if (!form) {
+      console.error(`❌ [SMS] Form ${formId} not found`);
       return res.status(404).json({
         success: false,
         message: 'Form not found'
@@ -579,30 +590,28 @@ export const sendSMSInvites = async (req, res) => {
 
     // Check if invite tracking is enabled
     if (!form.inviteOnlyTracking) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invite tracking is not enabled for this form'
-      });
+      console.warn(`⚠️ [SMS] Invite tracking was disabled for form ${formId}. Enabling it now to allow SMS invites.`);
+      form.inviteOnlyTracking = true;
+      await form.save();
     }
 
     // Get tenant for slug
     const tenant = await Tenant.findById(form.tenantId);
     if (!tenant) {
+      console.error(`❌ [SMS] Tenant ${form.tenantId} not found`);
       return res.status(404).json({
         success: false,
         message: 'Tenant not found'
       });
     }
 
-    // Process each phone
-    const results = [];
-    const failed = [];
-
     // Process in parallel with Promise.all
     const invitePromises = phones.map(async (phoneData) => {
       try {
         const phone = phoneData.phone.trim();
         const email = phoneData.email?.toLowerCase().trim() || '';
+        
+        console.log(`🔍 [SMS] Processing phone: ${phone}, email: ${email}`);
 
         // Check existing invite by phone or email
         const existingInvite = await FormInvite.findOne({
@@ -613,118 +622,93 @@ export const sendSMSInvites = async (req, res) => {
           ]
         });
 
+        let inviteId;
+        let isResponded = false;
+
         if (existingInvite) {
-          const isResponded = existingInvite.status === 'responded';
-          const inviteId = isResponded ? uuidv4() : existingInvite.inviteId;
-
-          // Send SMS
-          const smsResult = await sendInviteSMS({
-            phone,
-            inviteId,
-            formId,
-            formTitle: form.title,
-            tenantName: tenant.name,
-            tenantSlug: tenant.slug
-          });
-
-          if (!smsResult.success) {
-            failed.push({
-              phone,
-              reason: smsResult.error || 'SMS sending failed'
-            });
-            return;
-          }
-
-          if (isResponded) {
-            // Create NEW invite record after response
-            const newInvite = new FormInvite({
-              formId,
-              tenantId: form.tenantId,
-              email: email || existingInvite.email || `sms_${phone}@placeholder.com`,
-              phone,
-              inviteId,
-              status: 'sent',
-              notificationChannels: ['sms'],
-              createdBy: req.user._id,
-              previousInviteId: existingInvite.inviteId
-            });
-            await newInvite.save();
-            
-            results.push({
-              phone,
-              action: 'new_invite_created',
-              inviteId
-            });
-          } else {
-            // Update existing invite
-            existingInvite.sentAt = new Date();
-            if (!existingInvite.notificationChannels) {
-              existingInvite.notificationChannels = [];
-            }
-            if (!existingInvite.notificationChannels.includes('sms')) {
-              existingInvite.notificationChannels.push('sms');
-            }
-            await existingInvite.save();
-
-            results.push({
-              phone,
-              action: 'resent',
-              inviteId
-            });
-          }
-
+          isResponded = existingInvite.status === 'responded';
+          inviteId = isResponded ? uuidv4() : existingInvite.inviteId;
+          console.log(`ℹ️ [SMS] Found existing invite for ${phone}. Status: ${existingInvite.status}, New ID: ${inviteId !== existingInvite.inviteId}`);
         } else {
-          // Create new invite
-          const inviteId = uuidv4();
+          inviteId = uuidv4();
+          console.log(`🆕 [SMS] Creating new invite for ${phone}. ID: ${inviteId}`);
+        }
 
+        // Send SMS
+        const smsResult = await sendInviteSMS({
+          phone,
+          inviteId,
+          formId,
+          formTitle: form.title,
+          tenantName: tenant.name,
+          tenantSlug: tenant.slug
+        });
+
+        if (!smsResult.success) {
+          console.error(`❌ [SMS] Service failed for ${phone}: ${smsResult.error}`);
+          return {
+            success: false,
+            phone,
+            reason: smsResult.error || 'SMS sending failed'
+          };
+        }
+
+        if (existingInvite && !isResponded) {
+          // Update existing invite
+          existingInvite.sentAt = new Date();
+          if (!existingInvite.notificationChannels) {
+            existingInvite.notificationChannels = [];
+          }
+          if (!existingInvite.notificationChannels.includes('sms')) {
+            existingInvite.notificationChannels.push('sms');
+          }
+          await existingInvite.save();
+          console.log(`✅ [SMS] Updated existing invite for ${phone}`);
+          return {
+            success: true,
+            phone,
+            action: 'resent',
+            inviteId
+          };
+        } else {
+          // Create new invite record
           const newInvite = new FormInvite({
             formId,
             tenantId: form.tenantId,
-            email: email || `sms_${phone}@placeholder.com`,
+            email: email || (existingInvite?.email) || `sms_${phone}@placeholder.com`,
             phone,
             inviteId,
             status: 'sent',
             notificationChannels: ['sms'],
-            createdBy: req.user._id
+            createdBy: req.user._id,
+            previousInviteId: isResponded ? existingInvite.inviteId : undefined
           });
-
-          // Send SMS
-          const smsResult = await sendInviteSMS({
-            phone,
-            inviteId,
-            formId,
-            formTitle: form.title,
-            tenantName: tenant.name,
-            tenantSlug: tenant.slug
-          });
-
-          if (!smsResult.success) {
-            failed.push({
-              phone,
-              reason: smsResult.error || 'SMS sending failed'
-            });
-            return;
-          }
-
           await newInvite.save();
-
-          results.push({
+          console.log(`✅ [SMS] Created and saved new invite for ${phone}`);
+          return {
+            success: true,
             phone,
-            action: 'sent',
+            action: isResponded ? 'new_invite_created' : 'sent',
             inviteId
-          });
+          };
         }
 
       } catch (error) {
-        console.error(`Failed to process ${phoneData.phone}:`, error);
-        failed.push({
+        console.error(`❌ [SMS] Error processing ${phoneData.phone}:`, error);
+        return {
+          success: false,
           phone: phoneData.phone,
           reason: error.message || 'Processing failed'
-        });
+        };
       }
     });
 
-    await Promise.all(invitePromises);
+    const allResults = await Promise.all(invitePromises);
+    
+    const results = allResults.filter(r => r.success);
+    const failed = allResults.filter(r => !r.success);
+
+    console.log(`🏁 [SMS] Finished. Successful: ${results.length}, Failed: ${failed.length}`);
 
     res.json({
       success: true,
@@ -739,7 +723,7 @@ export const sendSMSInvites = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Send SMS invites error:', error);
+    console.error('❌ [SMS] Global error:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to send SMS invites'

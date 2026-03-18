@@ -52,25 +52,26 @@ class SMSService {
 
     async sendFormInvite(phone, formTitle, inviteLink, tenantName) {
         try {
+            console.log(`[SMS] sendFormInvite called for phone: ${phone}`);
             if (!this.isConfigured) {
+                console.error('[SMS] Twilio not configured');
                 return { success: false, error: 'Twilio SMS service not configured' };
             }
 
             const customerPhone = this.formatPhoneNumber(phone);
+            console.log(`[SMS] Formatted phone: ${customerPhone}`);
+            
             if (!customerPhone) {
+                console.error(`[SMS] Invalid phone: ${phone}`);
                 return { success: false, error: 'Invalid phone number' };
             }
 
-            console.log('📱 Sending SMS Invite...');
-            console.log(`   From: ${this.smsNumber}`);
-            console.log(`   To: ${customerPhone}`);
-
             // SMS message (160 characters limit for single SMS, 1600 for concatenated)
             // Keep it concise to avoid multiple SMS charges
-            const message = `Hello! ${tenantName} invites you to fill: ${formTitle}. Link: ${inviteLink}`;
+            const message = `Hello! ${tenantName} would like your feedback on your recent service. Please share your experience here: ${inviteLink}`;
 
-            console.log(`   Message: ${message}`);
-            console.log(`   Length: ${message.length} characters`);
+            console.log(`📱 [SMS] Sending to: ${customerPhone}`);
+            console.log(`💬 [SMS] Message: ${message}`);
 
             const result = await this.client.messages.create({
                 from: this.smsNumber,
@@ -78,9 +79,7 @@ class SMSService {
                 body: message
             });
 
-            console.log('✅ SMS sent successfully!');
-            console.log(`   SID: ${result.sid}`);
-            console.log(`   Status: ${result.status}`);
+            console.log('✅ [SMS] Twilio response success:', result.sid);
 
             return {
                 success: true,

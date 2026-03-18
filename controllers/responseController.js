@@ -75,16 +75,17 @@ export const createResponse = async (req, res) => {
     }
 
     let inviteStatus = null;
+    let inviteObj = null;
     if (inviteId) {
       console.log(`[INVITE] Processing response with inviteId: ${inviteId}`);
       
       // Find the invite
-      const invite = await FormInvite.findOne({ 
+      inviteObj = await FormInvite.findOne({ 
         formId: questionId,
         inviteId: inviteId
       });
       
-      if (!invite) {
+      if (!inviteObj) {
         return res.status(403).json({
           success: false,
           message: 'Invalid or expired invite link'
@@ -92,16 +93,16 @@ export const createResponse = async (req, res) => {
       }
       
       // Check if already responded
-      if (invite.status === 'responded' && !isSectionSubmit) {
+      if (inviteObj.status === 'responded' && !isSectionSubmit) {
         console.log(`[INVITE] Invite ${inviteId} was already responded. Allowing re-submission as requested.`);
         // We still proceed, but we'll update the respondedAt date
       }
       
       // Mark as responded only if it's NOT a section submit
       if (!isSectionSubmit) {
-        invite.status = 'responded';
-        invite.respondedAt = new Date();
-        await invite.save();
+        inviteObj.status = 'responded';
+        inviteObj.respondedAt = new Date();
+        await inviteObj.save();
         inviteStatus = 'responded';
         console.log(`[INVITE] Updated invite ${inviteId} to responded status (Final submission)`);
       } else {
@@ -115,6 +116,21 @@ export const createResponse = async (req, res) => {
 
     if (bodyMetadata && bodyMetadata.source) {
       submissionMetadata.source = bodyMetadata.source;
+    } else if (inviteId && inviteObj) {
+      // Use the already found invite object
+      if (inviteObj.notificationChannels && inviteObj.notificationChannels.length > 0) {
+        // Preference 1: Use the explicit notification channel (email, sms, whatsapp)
+        submissionMetadata.source = inviteObj.notificationChannels[0];
+      } else if (inviteObj.phone && !inviteObj.email) {
+        // Preference 2: If only phone is present, it's likely SMS
+        submissionMetadata.source = 'sms';
+      } else if (inviteObj.email) {
+        // Preference 3: If email is present, it's likely Email
+        submissionMetadata.source = 'email';
+      } else {
+        // Fallback
+        submissionMetadata.source = 'email';
+      }
     }
 
     if (form.locationEnabled !== false && req.body.location && typeof req.body.location === 'object') {
