@@ -12,6 +12,9 @@ import {
   exportResponses,
   processBulkImages,
   getRank,
+  getUnassignedResponses,
+  assignResponses,
+  autoAssignResponse
 } from '../controllers/responseController.js';
 import { authenticate, adminOnly, teacherOrAdmin } from '../middleware/auth.js';
 import { addTenantFilter } from '../middleware/tenantIsolation.js';
@@ -143,6 +146,9 @@ router.put('/:id', updateResponse);
 router.patch('/:id/assign', assignResponse);
 router.delete('/:id', deleteResponse);
 router.delete('/', deleteMultipleResponses);
+router.get('/unassigned', getUnassignedResponses);
+router.post('/assign-multiple', assignResponses);
+router.post('/:responseId/auto-assign', autoAssignResponse);
 
 // DEBUG: Log all registered routes
 console.log('\n=== Registered Response Routes ===');

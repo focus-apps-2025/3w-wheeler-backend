@@ -25,11 +25,13 @@ import { errorHandler, notFound } from "./middleware/errorHandler.js";
 import { handleUploadError } from "./middleware/upload.js";
 import { initializeSocket } from "./socket/socketHandler.js";
 import pdfService from './services/pdfService.js';  // Add this for cleanup
-import pdfRoutes from './routes/pdfRoutes.js'; 
+import pdfRoutes from './routes/pdfRoutes.js';
 import githubWebhookRoutes from "./routes/githubWebhook.js";
 import formInviteRoutes from './routes/formInviteRoutes.js';
 
 import uploadRoutes from './routes/upload.js';
+import activityRoutes from './routes/activityRoutes.js';
+import attendanceRoutes from './routes/attendanceRoutes.js';
 
 // Connect to database
 await connectDB();
@@ -45,6 +47,7 @@ const allowedOrigins = [
   "https://servicerequests.netlify.app",
   "https://formsadmin.netlify.app",
   "https://formsuperadmin.focusengineeringapp.com",
+  "https://3wheelertvs.focusengineeringapp.com",
   ...(process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',').map(url => url.trim()) : [])
 ];
 
@@ -97,7 +100,7 @@ app.use('/api/upload', uploadRoutes);
 app.get("/", (req, res) => {
   res.json({
     success: true,
-    message: "Little Flower School Backend API is running 🚀",
+    message: " Backend API is running 🚀",
     version: "1.0.0",
     timestamp: new Date().toISOString()
   });
@@ -123,6 +126,8 @@ app.use("/api/tenants", tenantRoutes);
 app.use("/api/parameters", parameterRoutes);
 app.use('/api/pdf', pdfRoutes);
 app.use('/api/forms', formInviteRoutes);
+app.use('/api/activity', activityRoutes);
+app.use('/api/attendance', attendanceRoutes);
 
 
 process.on('SIGTERM', async () => {
@@ -231,7 +236,7 @@ app.get("/api", (req, res) => {
         update: "PUT /api/parameters/:id",
         delete: "DELETE /api/parameters/:id"
       },
-      pdf:{
+      pdf: {
         generate: "POST /api/pdf/generate"
       }
     }

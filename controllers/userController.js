@@ -1,5 +1,5 @@
 import User from '../models/User.js';
-
+import LoginLog from '../models/LoginLog.js';
 const MODULE_PERMISSIONS = [
   'dashboard:view',
   'analytics:view',
@@ -337,6 +337,145 @@ export const resetUserPassword = async (req, res) => {
 
   } catch (error) {
     console.error('Reset password error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+export const getAvailableAdmins = async (req, res) => {
+  try {
+    const { tenantId, role } = req.query;
+    
+    const query = { 
+      ...req.tenantFilter,
+      isActive: true 
+    };
+    
+    if (tenantId) {
+      query.tenantId = tenantId;
+    }
+    
+    if (role) {
+      // Handle comma-separated roles like "admin,subadmin"
+      const roles = role.split(',');
+      query.role = { $in: roles };
+    } else {
+      query.role = { $in: ['admin', 'subadmin'] };
+    }
+    
+    const users = await User.find(query)
+      .select('_id firstName lastName email role')
+      .sort({ firstName: 1 });
+    
+    res.json({
+      success: true,
+      data: {
+        users
+      }
+    });
+  } catch (error) {
+    console.error('Get available admins error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+export const getUserActivityLogs = async (req, res) => {
+  try {
+    const { page = 1, limit = 50, search, startDate, endDate } = req.query;
+
+    let userQuery = {};
+    if (req.user.role === 'admin') {
+      // Admin sees their subadmins and themselves
+      const subAdmins = await User.find({ createdBy: req.user._id }).select('_id');
+      const allowedUserIds = [req.user._id, ...subAdmins.map(u => u._id)];
+      userQuery.userId = { $in: allowedUserIds };
+    } else if (req.user.role !== 'superadmin') {
+      userQuery.userId = req.user._id;
+    }
+    
+    // Default tenant filtering
+    if (req.tenantFilter && req.tenantFilter.tenantId) {
+      userQuery.tenantId = req.tenantFilter.tenantId;
+    }
+
+    if (startDate && endDate) {
+      userQuery.loginTime = { 
+        $gte: new Date(startDate), 
+        $lte: new Date(endDate) 
+      };
+    }
+
+    const options = {
+      page: parseInt(page),
+      limit: parseInt(limit),
+      sort: { loginTime: -1 }
+    };
+
+    const logs = await LoginLog.find(userQuery)
+      .populate('userId', 'username firstName lastName email role')
+      .populate('tenantId', 'name')
+      .sort(options.sort)
+      .limit(options.limit * 1)
+      .skip((options.page - 1) * options.limit);
+
+    const total = await LoginLog.countDocuments(userQuery);
+
+    res.json({
+      success: true,
+      data: {
+        logs,
+        pagination: {
+          currentPage: options.page,
+          totalPages: Math.ceil(total / options.limit),
+          totalLogs: total,
+          hasNextPage: options.page < Math.ceil(total / options.limit),
+          hasPrevPage: options.page > 1
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Get user activity logs error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+export const getUsersHierarchy = async (req, res) => {
+  try {
+    const query = { ...req.tenantFilter };
+    
+    if (req.user.role === 'admin') {
+      const subadmins = await User.find({ createdBy: req.user._id })
+         .select('-password').sort({ createdAt: -1 });
+      return res.json({
+        success: true,
+        data: { users: subadmins }
+      });
+    }
+
+    // Superadmin: We want to return Admins and their Subadmins
+    // Either a tree structure or list with populated createdBy
+    const users = await User.find(query)
+      .populate('createdBy', 'username firstName lastName email role')
+      .populate('tenantId', 'name')
+      .select('-password')
+      .sort({ role: 1, createdAt: -1 });
+
+    res.json({
+      success: true,
+      data: {
+        users
+      }
+    });
+  } catch (error) {
+    console.error('Get users hierarchy error:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error'

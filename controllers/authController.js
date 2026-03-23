@@ -1,10 +1,75 @@
 import User from '../models/User.js';
 import Tenant from '../models/Tenant.js';
+import LoginLog from '../models/LoginLog.js';
 import { generateToken } from '../middleware/auth.js';
+import axios from 'axios';
+
+// Helper function to get location from IP address
+const getLocationFromIP = async (ip) => {
+  try {
+    // Skip private/local IPs
+    if (ip === '127.0.0.1' || ip === '::1' || ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.')) {
+      return null;
+    }
+
+    const response = await axios.get(`http://ip-api.com/json/${ip}`, {
+      timeout: 3000
+    });
+
+    if (response.data && response.data.status === 'success') {
+      return {
+        city: response.data.city,
+        country: response.data.country,
+        countryCode: response.data.countryCode,
+        latitude: response.data.lat,
+        longitude: response.data.lon,
+        status: 'ip-based'
+      };
+    }
+  } catch (error) {
+    console.error('IP location lookup failed:', error.message);
+  }
+  return null;
+};
+
+// Helper to combine browser geolocation with IP-based location
+const enhanceLocationData = async (browserLocation, ipAddress) => {
+  let locationData = {
+    status: 'unknown',
+    latitude: null,
+    longitude: null,
+    city: null,
+    country: null,
+    countryCode: null
+  };
+
+  // Use browser coordinates if available
+  if (browserLocation && browserLocation.status === 'granted' && browserLocation.latitude) {
+    locationData.latitude = browserLocation.latitude;
+    locationData.longitude = browserLocation.longitude;
+    locationData.status = 'browser';
+
+    // Try to get city/country from IP (reverse geocode)
+    const ipLocation = await getLocationFromIP(ipAddress);
+    if (ipLocation) {
+      locationData.city = ipLocation.city;
+      locationData.country = ipLocation.country;
+      locationData.countryCode = ipLocation.countryCode;
+    }
+  } else {
+    // Fallback to IP-based location
+    const ipLocation = await getLocationFromIP(ipAddress);
+    if (ipLocation) {
+      locationData = ipLocation;
+    }
+  }
+
+  return locationData;
+};
 
 export const login = async (req, res) => {
   try {
-    const { username, email, password, tenantSlug } = req.body;
+    const { username, email, password, tenantSlug, location } = req.body;
     const normalizedUsername = typeof username === 'string' ? username.trim() : '';
     const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
 
@@ -102,8 +167,31 @@ export const login = async (req, res) => {
     // Generate token
     const token = generateToken(user._id);
 
+    // Get IP address for location lookup
+    const ipAddress = req.ip || req.connection?.remoteAddress || req.headers['x-forwarded-for'];
+
+    // Enhance location data with IP-based lookup
+    const enhancedLocation = await enhanceLocationData(location, ipAddress);
+
+    // Create LoginLog entry
+    const newLog = new LoginLog({
+      userId: user._id,
+      tenantId: user.tenantId,
+      location: enhancedLocation,
+      ipAddress: ipAddress,
+      userAgent: req.headers['user-agent']
+    });
+    let sessionLogId = null;
+    try {
+      await newLog.save();
+      sessionLogId = newLog._id;
+    } catch (logErr) {
+      console.error('Failed to save login log:', logErr);
+    }
+
     const responseData = {
       token,
+      sessionLogId,
       user: {
         id: user._id,
         username: user.username,
@@ -182,7 +270,7 @@ export const changePassword = async (req, res) => {
     }
 
     const user = await User.findById(req.user._id);
-    
+
     // Verify current password
     const isCurrentPasswordValid = await user.comparePassword(currentPassword);
     if (!isCurrentPasswordValid) {
@@ -212,14 +300,14 @@ export const changePassword = async (req, res) => {
 
 export const signup = async (req, res) => {
   try {
-    const { 
-      name, 
-      slug, 
-      companyName, 
-      adminEmail, 
+    const {
+      name,
+      slug,
+      companyName,
+      adminEmail,
       adminPassword,
       adminFirstName,
-      adminLastName 
+      adminLastName
     } = req.body;
 
     // Validate required fields
@@ -282,7 +370,7 @@ export const signup = async (req, res) => {
 
     adminUser.tenantId = tenant._id;
     await adminUser.save();
-    
+
     try {
       await tenant.save();
     } catch (error) {
@@ -309,6 +397,36 @@ export const signup = async (req, res) => {
       success: false,
       message: 'Internal server error',
       error: error.message
+    });
+  }
+};
+
+export const logout = async (req, res) => {
+  try {
+    const { sessionLogId } = req.body;
+
+    if (sessionLogId) {
+      await LoginLog.findByIdAndUpdate(sessionLogId, {
+        logoutTime: new Date()
+      });
+    } else if (req.user) {
+      // Fallback: update latest open session for user
+      await LoginLog.findOneAndUpdate(
+        { userId: req.user._id, logoutTime: null },
+        { logoutTime: new Date() },
+        { sort: { loginTime: -1 } }
+      );
+    }
+
+    res.json({
+      success: true,
+      message: 'Logged out successfully'
+    });
+  } catch (error) {
+    console.error('Logout error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };

@@ -3,7 +3,6 @@ import Form from '../models/Form.js';
 import Response from '../models/Response.js';
 import Parameter from '../models/Parameter.js';
 import { v4 as uuidv4 } from 'uuid';
-import { collectSubmissionMetadata } from '../services/locationService.js';
 
 const ALLOWED_FILE_TYPES = ['image', 'pdf', 'excel'];
 
@@ -2220,7 +2219,17 @@ export const getGlobalFormStats = async (req, res) => {
 export const submitPublicResponse = async (req, res) => {
   try {
     const { id } = req.params;
-    const { inviteId, answers, location, isSectionSubmit, sectionIndex } = req.body;
+    const { 
+      inviteId, 
+      answers, 
+      location, 
+      isSectionSubmit, 
+      sectionIndex,
+      submissionMetadata,
+      startedAt,
+      completedAt,
+      sessionId
+    } = req.body;
 
     console.log("=".repeat(50));
     console.log("📝 PUBLIC SUBMISSION DEBUG");
@@ -2231,6 +2240,7 @@ export const submitPublicResponse = async (req, res) => {
     console.log("Section Index:", sectionIndex);
     console.log("Answers keys:", Object.keys(answers || {}));
     console.log("Location:", location);
+    console.log("Metadata:", submissionMetadata);
 
     if (!inviteId) {
       console.log("❌ No inviteId provided");
@@ -2308,17 +2318,48 @@ export const submitPublicResponse = async (req, res) => {
 
     console.log("✅ All validations passed, creating response...");
 
-    const submissionMetadata = await collectSubmissionMetadata(req, {
-      includeLocation: form.locationEnabled !== false,
-    });
-
-    // Set source based on invite channel
-    if (invite.notificationChannels && invite.notificationChannels.length > 0) {
-      submissionMetadata.source = invite.notificationChannels[0];
-    } else if (invite.phone) {
-      submissionMetadata.source = 'sms'; // Default if phone exists but no channel recorded
-    } else {
-      submissionMetadata.source = 'email'; // Default fallback
+    let submissionTimeSpent = 0;
+    let formSession = null;
+    let actualStartedAt = startedAt ? new Date(startedAt) : null;
+    let actualCompletedAt = completedAt ? new Date(completedAt) : new Date();
+    
+    // Calculate time if we have start time
+    if (actualStartedAt) {
+      submissionTimeSpent = Math.floor((actualCompletedAt - actualStartedAt) / 1000);
+    }
+    
+    // Try to find FormSession if we have sessionId
+    if (sessionId) {
+      try {
+        const FormSession = mongoose.model('FormSession');
+        formSession = await FormSession.findOne({ sessionId });
+        
+        if (formSession) {
+          // Use session data for more accurate timing
+          if (formSession.startedAt) {
+            actualStartedAt = formSession.startedAt;
+            actualCompletedAt = new Date();
+            submissionTimeSpent = Math.floor((actualCompletedAt - formSession.startedAt) / 1000);
+          }
+          
+          // Update session as completed (only for final submission, not partial)
+          if (!isSectionSubmit) {
+            formSession.completedAt = actualCompletedAt;
+            formSession.timeSpent = submissionTimeSpent;
+            formSession.status = 'completed';
+            formSession.answers = answers;
+            await formSession.save();
+            console.log(`[TIME TRACKING] Public Session ${sessionId} completed in ${submissionTimeSpent} seconds`);
+          } else {
+            // For partial submissions, just update last activity
+            formSession.lastActivityAt = actualCompletedAt;
+            await formSession.save();
+            console.log(`[TIME TRACKING] Partial public submission for session ${sessionId}`);
+          }
+        }
+      } catch (err) {
+        console.error('Error finding FormSession:', err);
+      }
     }
 
     // Create the response
@@ -2330,9 +2371,22 @@ export const submitPublicResponse = async (req, res) => {
       inviteId: inviteId,
       answers: answers,
       location: location,
+      submissionMetadata: {
+        ...submissionMetadata,
+        timeSpent: submissionTimeSpent,
+        sessionId: sessionId || formSession?.sessionId || null,
+        startedAt: actualStartedAt,
+        completedAt: actualCompletedAt,
+        questionTimings: formSession?.questionTimings,
+        sectionTimings: formSession?.sectionTimings
+      },
+      timeSpent: submissionTimeSpent,
+      sessionId: sessionId || formSession?.sessionId || null,
+      startedAt: actualStartedAt,
+      completedAt: actualCompletedAt,
+      questionTimings: formSession?.questionTimings || [],
       isSectionSubmit: !!isSectionSubmit,
       sectionIndex: sectionIndex || null,
-      submissionMetadata: submissionMetadata,
       submittedAt: new Date(),
       createdAt: new Date()
     });

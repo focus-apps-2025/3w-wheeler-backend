@@ -5,7 +5,10 @@ import {
   getUserById,
   updateUser,
   deleteUser,
-  resetUserPassword
+  resetUserPassword,
+  getAvailableAdmins,
+  getUserActivityLogs,
+  getUsersHierarchy
 } from '../controllers/userController.js';
 import { authenticate, adminOnly } from '../middleware/auth.js';
 import { addTenantFilter } from '../middleware/tenantIsolation.js';
@@ -27,6 +30,12 @@ router.post('/', validateUserCreation, createUser);
 // @desc    Get all users with pagination and filtering
 // @access  Private (Admin only)
 router.get('/', getAllUsers);
+
+// Add these new routes
+router.get('/available-admins', getAvailableAdmins);
+router.get('/activity-logs', getUserActivityLogs); // Fixed: Added route matching frontend endpoint
+router.get('/:userId/activity', getUserActivityLogs);
+router.get('/hierarchy', getUsersHierarchy);
 
 // @route   GET /api/users/:id
 // @desc    Get user by ID

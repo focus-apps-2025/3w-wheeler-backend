@@ -107,10 +107,6 @@ const FollowUpQuestionSchema = new mongoose.Schema({
   },
   description: String,
   suggestion: String,
-  trackResponseRank: {
-    type: Boolean,
-    default: false
-  },
   subParam1: String,
   subParam2: String,
   sectionId: String,
@@ -221,7 +217,6 @@ const FormSchema = new mongoose.Schema({
 });
 
 /**
- * Pre-save middleware to normalize question types from legacy/frontend names to backend enum values
  * Handles case-insensitive input and human-readable names with spaces/slashes
  */
 const normalizeQuestionType = (type) => {

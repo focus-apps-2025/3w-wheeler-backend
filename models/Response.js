@@ -1,3 +1,4 @@
+// In Response.js - Update the submissionMetadata object
 import mongoose from 'mongoose';
 
 const ResponseSchema = new mongoose.Schema({
@@ -15,11 +16,6 @@ const ResponseSchema = new mongoose.Schema({
     type: Map,
     of: mongoose.Schema.Types.Mixed,
     required: true
-  },
-  responseRanks: {
-    type: Map,
-    of: Number,
-    default: {}
   },
   parentResponseId: String,
   assignedTo: {
@@ -66,10 +62,10 @@ const ResponseSchema = new mongoose.Schema({
   ref: 'FormInvite',
   index: true,
   default: null
-},
-  // Location and metadata tracking
+}, // Location and metadata tracking
   submissionMetadata: {
     ipAddress: String,
+    formSessionId: String,
     userAgent: String,
     browser: String,
     device: String,
@@ -108,8 +104,64 @@ const ResponseSchema = new mongoose.Schema({
     source: {
       type: String,
       default: 'external'
+    },
+    // ========== ADD THESE NEW TIMING FIELDS ==========
+    // Total time spent on the form (in seconds)
+    timeSpent: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    // Session ID from FormSession
+    sessionId: {
+      type: String,
+      index: true,
+      default: null
+    },
+    // When the user started the form
+    startedAt: {
+      type: Date,
+      default: null
+    },
+    // When the user completed/submitted
+    completedAt: {
+      type: Date,
+      default: null
     }
   },
+  
+  // ========== ADD NEW TOP-LEVEL TIMING FIELDS (for easier querying) ==========
+  // These make it easier to query and aggregate time data
+  timeSpent: {
+    type: Number, // in seconds
+    default: 0,
+    index: true
+  },
+  sessionId: {
+    type: String,
+    index: true,
+    default: null
+  },
+  startedAt: {
+    type: Date,
+    default: null
+  },
+  completedAt: {
+    type: Date,
+    default: null
+  },
+  
+  // Question-level timings (if you want per-question data)
+  questionTimings: [{
+    questionId: String,
+    questionText: String,
+    questionType: String,
+    timeSpent: Number, // seconds spent on this question
+    order: Number,
+    startedAt: Date,
+    completedAt: Date
+  }],
+  
   tenantId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Tenant',
@@ -119,12 +171,15 @@ const ResponseSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Index for efficient queries
+// ========== ADD NEW INDEXES FOR TIME QUERIES ==========
 ResponseSchema.index({ questionId: 1 });
 ResponseSchema.index({ assignedTo: 1 });
 ResponseSchema.index({ status: 1 });
 ResponseSchema.index({ createdAt: -1 });
 ResponseSchema.index({ tenantId: 1 });
+ResponseSchema.index({ timeSpent: 1 }); // NEW - for time-based queries
+ResponseSchema.index({ sessionId: 1 });  // NEW - for session lookups
+ResponseSchema.index({ startedAt: -1 }); // NEW - for time range queries
 
 const Response = mongoose.model('Response', ResponseSchema);
 
