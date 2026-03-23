@@ -1,5 +1,5 @@
 import express from 'express';
-import { login, signup, getProfile, changePassword } from '../controllers/authController.js';
+import { login, logout, signup, getProfile, changePassword } from '../controllers/authController.js';
 import { authenticate } from '../middleware/auth.js';
 import { validateLogin } from '../middleware/validation.js';
 
@@ -9,6 +9,11 @@ const router = express.Router();
 // @desc    Login user
 // @access  Public
 router.post('/login', validateLogin, login);
+
+// @route   POST /api/auth/logout
+// @desc    Logout user and record logout time Let Location
+// @access  Private
+router.post('/logout', authenticate, logout);
 
 // @route   POST /api/auth/signup
 // @desc    Signup new tenant (Free Trial)
