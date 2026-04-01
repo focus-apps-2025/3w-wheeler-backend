@@ -4,7 +4,7 @@ import Response from '../models/Response.js';
 import Parameter from '../models/Parameter.js';
 import { v4 as uuidv4 } from 'uuid';
 
-const ALLOWED_FILE_TYPES = ['image', 'pdf', 'excel'];
+const ALLOWED_FILE_TYPES = ['image', 'pdf', 'excel', 'stp', 'pvz', 'doc', 'docx'];
 
 const applyPopulate = (query, populateOptions) => {
   if (!populateOptions) {
@@ -24,6 +24,10 @@ const applyPopulate = (query, populateOptions) => {
   return populatedQuery;
 };
 
+
+
+
+
 const findFormByIdentifier = async (identifier, populateOptions) => {
   let formQuery = applyPopulate(Form.findOne({ id: identifier }), populateOptions);
   let form = await formQuery;
@@ -35,6 +39,82 @@ const findFormByIdentifier = async (identifier, populateOptions) => {
 
   return form;
 };
+
+/**
+ * Normalize question types before form creation (handles spaces/slashes)
+ * Also filters allowedFileTypes to ensure they match the backend enum
+ */
+const normalizeQuestionTypes = (question) => {
+  const typeMap = {
+    // Legacy/UI type names - without spaces/slashes
+    'shorttext': 'text', 'shortint': 'text', 
+    'multiplechoice': 'radio', 
+    'longtext': 'paragraph', 'longinput': 'paragraph',
+    'dropdown': 'select', 'checkboxes': 'checkbox', 
+    'fileupload': 'file', 'file upload': 'file',
+    
+    // Yes/No variations
+    'yesnona': 'yesNoNA', 'yesno': 'yesNoNA',
+    
+    // Core types - pass through
+    'email': 'email', 'url': 'url', 'tel': 'tel',
+    'date': 'date', 'time': 'time', 'file': 'file', 'range': 'range',
+    'rating': 'rating', 'scale': 'scale', 'radio-grid': 'radio-grid',
+    'radiogrid': 'radio-grid', 'checkbox-grid': 'checkbox-grid', 'checkboxgrid': 'checkbox-grid',
+    'radio-image': 'radio-image', 'radioimage': 'radio-image',
+    'search-select': 'search-select', 'searchselect': 'search-select',
+    'number': 'number', 'location': 'location',
+    'boolean': 'boolean', 'textarea': 'textarea', 
+    'text': 'text', 'radio': 'radio', 'paragraph': 'paragraph', 
+    'select': 'select', 'checkbox': 'checkbox', 'productnpstgwbuckets': 'productNPSTGWBuckets',
+    'chassis-with-zone': 'chassis-with-zone',
+    'chassiswithzone': 'chassis-with-zone',
+    'chassis-without-zone': 'chassis-without-zone',
+    'chassiswithoutzone': 'chassis-without-zone',
+    'productnpstgwbuckets': 'productNPSTGWBuckets'
+  };
+  
+  if (question?.type) {
+    let normalizedType = String(question.type)
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, ' ')
+      .replace(/\s*\/\s*/g, '');
+    
+    const mappedType = typeMap[normalizedType] || typeMap[normalizedType.replace(/\s/g, '')] || question.type;
+    
+    // Log normalization if it changed
+    if (question.type !== mappedType) {
+      // console.log(`Normalizing question type: "${question.type}" → "${mappedType}"`);
+    }
+    question.type = mappedType;
+  }
+
+  // Handle allowedFileTypes validation
+  if (question?.type === 'file') {
+    if (Array.isArray(question.allowedFileTypes)) {
+      question.allowedFileTypes = question.allowedFileTypes.filter((type) =>
+        ALLOWED_FILE_TYPES.includes(type)
+      );
+      if (question.allowedFileTypes.length === 0) {
+        delete question.allowedFileTypes;
+      }
+    } else if (question?.allowedFileTypes !== undefined) {
+      delete question.allowedFileTypes;
+    }
+  } else if (question?.allowedFileTypes !== undefined) {
+    // If not a file type question, remove allowedFileTypes if present
+    delete question.allowedFileTypes;
+  }
+
+  // Recursively normalize follow-up questions
+  if (Array.isArray(question?.followUpQuestions)) {
+    question.followUpQuestions = question.followUpQuestions.map(fq => normalizeQuestionTypes(fq));
+  }
+  
+  return question;
+};
+
 
 class SectionWeightageError extends Error {
   constructor(message) {
@@ -85,12 +165,13 @@ const normalizeSectionWeightage = (sections) => {
   return total;
 };
 
+
 export const createForm = async (req, res) => {
   try {
     console.log('=== Create Form Request ===');
     console.log('User:', req.user?.email, 'Role:', req.user?.role);
     console.log('Request body keys:', Object.keys(req.body));
-    
+
     // Determine tenantId based on user role
     let tenantId;
     const isGlobal = req.body.isGlobal === true || req.body.isGlobal === 'true';
@@ -148,7 +229,7 @@ export const createForm = async (req, res) => {
         });
       }
     }
-      
+
     const formData = {
       ...req.body,
       id: req.body.id || uuidv4(),
@@ -157,51 +238,23 @@ export const createForm = async (req, res) => {
       isGlobal: isGlobal,
       sharedWithTenants: req.body.sharedWithTenants || []
     };
-    
+
     // DEBUG: Check formData before creating form
     console.log('=== DEBUG: formData before Form creation ===');
     console.log('First question suggestion:', formData.sections?.[0]?.questions?.[0]?.suggestion);
-
-    const form = new Form(formData);
-
-    // DEBUG: Check form document before save
-    console.log('=== DEBUG: Form document before save ===');
-    console.log('First question suggestion in mongoose doc:', form.sections?.[0]?.questions?.[0]?.suggestion);
-
-    try {
-      normalizeSectionWeightage(formData.sections);
-    } catch (error) {
-      if (error instanceof SectionWeightageError) {
-        return res.status(400).json({
-          success: false,
-          message: error.message
-        });
-      }
-      throw error;
-    }
-
-    console.log('Form data to save:', {
-      id: formData.id,
-      title: formData.title,
-      description: formData.description?.substring(0, 50),
-      sectionsCount: formData.sections?.length,
-      tenantId: formData.tenantId,
-      createdBy: formData.createdBy
-    });
-
-    // Normalize question types before form creation (handles spaces/slashes)
+     // Normalize question types before form creation (handles spaces/slashes)
     const normalizeQuestionTypes = (question) => {
       const typeMap = {
         // Legacy/UI type names - without spaces/slashes
-        'shorttext': 'text', 'shortint': 'text', 
-        'multiplechoice': 'radio', 
+        'shorttext': 'text', 'shortint': 'text',
+        'multiplechoice': 'radio',
         'longtext': 'paragraph', 'longinput': 'paragraph',
-        'dropdown': 'select', 'checkboxes': 'checkbox', 
+        'dropdown': 'select', 'checkboxes': 'checkbox',
         'fileupload': 'file', 'file upload': 'file',
-        
+
         // Yes/No variations
         'yesnona': 'yesNoNA', 'yesno': 'yesNoNA',
-        
+
         // Core types - pass through
         'email': 'email', 'url': 'url', 'tel': 'tel',
         'date': 'date', 'time': 'time', 'file': 'file', 'range': 'range',
@@ -210,20 +263,20 @@ export const createForm = async (req, res) => {
         'radio-image': 'radio-image', 'radioimage': 'radio-image',
         'search-select': 'search-select', 'searchselect': 'search-select',
         'number': 'number', 'location': 'location',
-        'boolean': 'boolean', 'textarea': 'textarea', 
-        'text': 'text', 'radio': 'radio', 'paragraph': 'paragraph', 
+        'boolean': 'boolean', 'textarea': 'textarea',
+        'text': 'text', 'radio': 'radio', 'paragraph': 'paragraph',
         'select': 'select', 'checkbox': 'checkbox', 'productnpstgwbuckets': 'productNPSTGWBuckets',
         'yesnona': 'yesNoNA',
         'productnpstgwbuckets': 'productNPSTGWBuckets'
       };
-      
+
       if (question?.type) {
         let normalizedType = String(question.type)
           .toLowerCase()
           .trim()
           .replace(/\s+/g, ' ')
           .replace(/\s*\/\s*/g, '');
-        
+
         const mappedType = typeMap[normalizedType] || typeMap[normalizedType.replace(/\s/g, '')] || question.type;
         if (question.type !== mappedType) {
           console.log(`Normalizing question type: "${question.type}" → "${mappedType}"`);
@@ -252,7 +305,7 @@ export const createForm = async (req, res) => {
       return question;
     };
 
-    // Normalize all sections
+        // Normalize all sections
     if (Array.isArray(formData.sections)) {
       formData.sections.forEach(section => {
         if (Array.isArray(section.questions)) {
@@ -267,23 +320,67 @@ export const createForm = async (req, res) => {
     }
 
     
+
+    const form = new Form(formData);
+
+    // DEBUG: Check form document before save
+    console.log('=== DEBUG: Form document before save ===');
+    console.log('First question suggestion in mongoose doc:', form.sections?.[0]?.questions?.[0]?.suggestion);
+
+    try {
+      normalizeSectionWeightage(formData.sections);
+    } catch (error) {
+      if (error instanceof SectionWeightageError) {
+        return res.status(400).json({
+          success: false,
+          message: error.message
+        });
+      }
+      throw error;
+    }
+
+    console.log('Form data to save:', {
+      id: formData.id,
+      title: formData.title,
+      description: formData.description?.substring(0, 50),
+      sectionsCount: formData.sections?.length,
+      tenantId: formData.tenantId,
+      createdBy: formData.createdBy
+    });
+
+   
+    // Normalize all sections
+    if (Array.isArray(formData.sections)) {
+      formData.sections.forEach(section => {
+        if (Array.isArray(section.questions)) {
+          section.questions = section.questions.map(q => normalizeQuestionTypes(q));
+        }
+      });
+    }
+
+    // Normalize top-level follow-up questions
+    if (Array.isArray(formData.followUpQuestions)) {
+      formData.followUpQuestions = formData.followUpQuestions.map(q => normalizeQuestionTypes(q));
+    }
+
+
     await form.save();
 
     console.log('Form created successfully with ID:', form.id);
-   
+
 
     res.status(201).json({
       success: true,
       message: 'Form created successfully',
       data: { form }
     });
-   
+
 
   } catch (error) {
     console.error('=== Create form error ===');
     console.error('Error name:', error.name);
     console.error('Error message:', error.message);
-    
+
     if (error.code === 11000) {
       console.error('Duplicate key error:', error.keyValue);
       return res.status(400).json({
@@ -301,14 +398,14 @@ export const createForm = async (req, res) => {
         value: error.errors[key].value
       }));
       console.error('Formatted errors:', errorDetails);
-      
+
       return res.status(400).json({
         success: false,
         message: 'Validation error',
         errors: errorDetails
       });
     }
-    
+
     console.error('Unhandled error:', error);
     res.status(500).json({
       success: false,
@@ -325,14 +422,17 @@ export const getAllForms = async (req, res) => {
 
     // If not superadmin, also include global forms shared with this tenant
     if (req.user.role !== 'superadmin' && req.user.tenantId) {
-      const tenantId = req.user.tenantId instanceof mongoose.Types.ObjectId 
-        ? req.user.tenantId 
+      const tenantId = req.user.tenantId instanceof mongoose.Types.ObjectId
+        ? req.user.tenantId
         : new mongoose.Types.ObjectId(req.user.tenantId);
-        
+
+      const tenantIdStr = tenantId.toString();
+
       query = {
         $or: [
           { tenantId: tenantId },
-          { sharedWithTenants: tenantId }
+          { sharedWithTenants: tenantId },
+          { "chassisTenantAssignments.assignedTenants": tenantIdStr }
         ]
       };
     }
@@ -359,7 +459,7 @@ export const getAllForms = async (req, res) => {
         { title: { $regex: search, $options: 'i' } },
         { description: { $regex: search, $options: 'i' } }
       ];
-      
+
       if (query.$or) {
         query = {
           $and: [
@@ -411,33 +511,69 @@ export const getAllForms = async (req, res) => {
 
     let responseCountsMap = new Map();
     if (formIdsForCounts.length > 0) {
-      const responseCounts = await Response.aggregate([
-        {
-          $match: {
-            ...req.tenantFilter,
-            questionId: { $in: formIdsForCounts },
-            isSectionSubmit: { $ne: true }
-          }
-        },
-        {
-          $group: {
-            _id: "$questionId",
-            count: { $sum: 1 }
-          }
-        }
-      ]);
+      // Determine current user's tenant ID for chassis filtering
+      const currentTenantId = req.user?.tenantId?.toString();
 
-      responseCountsMap = new Map(
-        responseCounts.map((item) => [item._id, item.count])
-      );
+      // Fetch all responses for these forms (no tenant filter)
+      const allResponses = await Response.find({
+        questionId: { $in: formIdsForCounts },
+        isSectionSubmit: { $ne: true }
+      }).select('questionId answers').lean();
+
+      // Count responses per form, with chassis filtering for shared forms
+      for (const form of forms) {
+        const formId = form.id || (form._id ? form._id.toString() : '');
+        if (!formId) continue;
+
+        const isOwner = form.tenantId?.toString() === currentTenantId;
+        const isShared = form.sharedWithTenants?.some(t => t.toString() === currentTenantId);
+        const chassisAssignments = form.chassisTenantAssignments || [];
+        const hasChassisShare = chassisAssignments.some(
+          a => a.assignedTenants && a.assignedTenants.includes(currentTenantId)
+        );
+
+        // Get responses for this form
+        const formResponses = allResponses.filter(r => r.questionId === formId);
+
+        if (!isOwner && !isShared && hasChassisShare) {
+          // Chassis-shared form: only count responses matching assigned chassis
+          const myChassis = chassisAssignments
+            .filter(a => a.assignedTenants?.includes(currentTenantId))
+            .map(a => a.chassisNumber)
+            .filter(Boolean);
+
+          if (myChassis.length > 0) {
+            // Find the chassis question field ID
+            const chassisQuestion = form.sections?.flatMap(s => s.questions || [])
+              .find(q => q.type === 'chassisNumber')
+              || form.followUpQuestions?.find(q => q.type === 'chassisNumber');
+            const chassisFieldId = chassisQuestion?.id || 'chassis_number';
+
+            const filteredCount = formResponses.filter(r => {
+              const answers = r.answers instanceof Map
+                ? Object.fromEntries(r.answers)
+                : (r.answers || {});
+              return myChassis.includes(answers[chassisFieldId] || answers['chassis_number']);
+            }).length;
+
+            responseCountsMap.set(formId, filteredCount);
+          } else {
+            responseCountsMap.set(formId, 0);
+          }
+        } else {
+          // Owned or shared form: count all responses
+          responseCountsMap.set(formId, formResponses.length);
+        }
+      }
     }
 
     const formsWithCounts = forms.map((form) => {
       const plain = form.toObject({ virtuals: true });
       const lookupId = form.id || (form._id ? form._id.toString() : "");
+      const responseCount = responseCountsMap.get(lookupId) || 0;
       return {
         ...plain,
-        responseCount: responseCountsMap.get(lookupId) || 0
+        responseCount
       };
     });
 
@@ -467,22 +603,22 @@ export const getAllForms = async (req, res) => {
 export const getPublicForms = async (req, res) => {
   try {
     const { tenantSlug } = req.params;
-    
+
     // If tenantSlug is provided (public customer access), find tenant by slug
     let query = { isActive: true, isVisible: true };
-    
+
     if (tenantSlug) {
       // Import Tenant model
       const Tenant = mongoose.model('Tenant');
       const tenant = await Tenant.findOne({ slug: tenantSlug, isActive: true });
-      
+
       if (!tenant) {
         return res.status(404).json({
           success: false,
           message: 'Business not found or inactive'
         });
       }
-      
+
       query = {
         ...query,
         $or: [
@@ -492,10 +628,10 @@ export const getPublicForms = async (req, res) => {
       };
     } else if (req.tenantFilter && req.user && req.user.role !== 'superadmin') {
       // Authenticated user - include shared global forms
-      const tenantId = req.user.tenantId instanceof mongoose.Types.ObjectId 
-        ? req.user.tenantId 
+      const tenantId = req.user.tenantId instanceof mongoose.Types.ObjectId
+        ? req.user.tenantId
         : new mongoose.Types.ObjectId(req.user.tenantId);
-        
+
       query = {
         ...query,
         $or: [
@@ -504,7 +640,7 @@ export const getPublicForms = async (req, res) => {
         ]
       };
     }
-    
+
     const forms = await Form.find(query)
       .select('id title description logoUrl imageUrl createdAt tenantId isActive isVisible sections parentFormId viewType')
       .populate('sections.questions')
@@ -560,8 +696,11 @@ export const getFormById = async (req, res) => {
       const userTenantId = req.user.tenantId.toString();
       const isOwnedByTenant = form.tenantId && form.tenantId.toString() === userTenantId;
       const isSharedWithTenant = form.sharedWithTenants && form.sharedWithTenants.some(tId => tId && tId.toString() === userTenantId);
-      
-      if (!isOwnedByTenant && !isSharedWithTenant) {
+      const hasChassisShare = Array.isArray(form.chassisTenantAssignments) && form.chassisTenantAssignments.some(
+        a => a.assignedTenants && a.assignedTenants.includes(userTenantId)
+      );
+
+      if (!isOwnedByTenant && !isSharedWithTenant && !hasChassisShare) {
         return res.status(403).json({
           success: false,
           message: 'Access denied. This form is not available for your organization.'
@@ -573,25 +712,25 @@ export const getFormById = async (req, res) => {
     if (tenantSlug) {
       const Tenant = mongoose.model('Tenant');
       const tenant = await Tenant.findOne({ slug: tenantSlug, isActive: true });
-      
+
       if (!tenant) {
         return res.status(404).json({
           success: false,
           message: 'Business not found or inactive'
         });
       }
-      
+
       // Verify form belongs to this tenant or is shared with it
       const isOwnedByTenant = form.tenantId && form.tenantId.toString() === tenant._id.toString();
       const isSharedWithTenant = form.sharedWithTenants && form.sharedWithTenants.some(tId => tId && tId.toString() === tenant._id.toString());
-      
+
       if (!isOwnedByTenant && !isSharedWithTenant) {
         return res.status(404).json({
           success: false,
           message: 'Form not found'
         });
       }
-      
+
       // Check if form is visible
       if (!form.isVisible) {
         return res.status(404).json({
@@ -600,7 +739,7 @@ export const getFormById = async (req, res) => {
         });
       }
     }
-    
+
     // For public access (no req.user and no tenantSlug), check if form is visible
     if (!req.user && !tenantSlug && !form.isVisible) {
       return res.status(404).json({
@@ -613,7 +752,7 @@ export const getFormById = async (req, res) => {
     console.log('=== DEBUG: Checking suggestions in form ===');
     console.log('Form ID:', form.id);
     console.log('Form type:', typeof form);
-    
+
     if (form.sections && form.sections.length > 0) {
       form.sections.forEach((section, idx) => {
         console.log(`Section ${idx}: ${section.title}, Questions: ${section.questions?.length || 0}`);
@@ -631,9 +770,9 @@ export const getFormById = async (req, res) => {
     // Check for invite status if inviteId is provided in query
     if (req.query.inviteId) {
       const FormInvite = mongoose.model('FormInvite');
-      const invite = await FormInvite.findOne({ 
-        formId: id, 
-        inviteId: req.query.inviteId 
+      const invite = await FormInvite.findOne({
+        formId: id,
+        inviteId: req.query.inviteId
       });
 
       if (invite && invite.status === 'responded') {
@@ -677,8 +816,8 @@ export const updateForm = async (req, res) => {
     }
 
     // Check permissions
-    if (form.createdBy && req.user._id && form.createdBy.toString() !== req.user._id.toString() && 
-        req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+    if (form.createdBy && req.user._id && form.createdBy.toString() !== req.user._id.toString() &&
+      req.user.role !== 'admin' && req.user.role !== 'superadmin') {
       return res.status(403).json({
         success: false,
         message: 'Access denied. You can only edit your own forms.'
@@ -695,7 +834,7 @@ export const updateForm = async (req, res) => {
 
     // Update form
     const updateData = { ...req.body };
-    
+
     // Only superadmin can change isGlobal and sharedWithTenants
     if (req.user.role !== 'superadmin') {
       delete updateData.isGlobal;
@@ -721,15 +860,15 @@ export const updateForm = async (req, res) => {
     const normalizeQuestionTypes = (question) => {
       const typeMap = {
         // Legacy/UI type names - without spaces/slashes
-        'shorttext': 'text', 'shortint': 'text', 
-        'multiplechoice': 'radio', 
+        'shorttext': 'text', 'shortint': 'text',
+        'multiplechoice': 'radio',
         'longtext': 'paragraph', 'longinput': 'paragraph',
-        'dropdown': 'select', 'checkboxes': 'checkbox', 
+        'dropdown': 'select', 'checkboxes': 'checkbox',
         'fileupload': 'file', 'file upload': 'file',
-        
+
         // Yes/No variations
         'yesnona': 'yesNoNA', 'yesno': 'yesNoNA',
-        
+
         // Core types - pass through
         'email': 'email', 'url': 'url', 'tel': 'tel',
         'date': 'date', 'time': 'time', 'file': 'file', 'range': 'range',
@@ -738,18 +877,22 @@ export const updateForm = async (req, res) => {
         'radio-image': 'radio-image', 'radioimage': 'radio-image',
         'search-select': 'search-select', 'searchselect': 'search-select',
         'number': 'number', 'location': 'location',
-        'boolean': 'boolean', 'textarea': 'textarea', 
-        'text': 'text', 'radio': 'radio', 'paragraph': 'paragraph', 
-        'select': 'select', 'checkbox': 'checkbox', 'productnpstgwbuckets': 'productNPSTGWBuckets'
+        'boolean': 'boolean', 'textarea': 'textarea',
+        'text': 'text', 'radio': 'radio', 'paragraph': 'paragraph',
+        'select': 'select', 'checkbox': 'checkbox', 'productnpstgwbuckets': 'productNPSTGWBuckets',
+        'chassis-with-zone': 'chassis-with-zone',
+        'chassiswithzone': 'chassis-with-zone',
+        'chassis-without-zone': 'chassis-without-zone',
+        'chassiswithoutzone': 'chassis-without-zone'
       };
-      
+
       if (question?.type) {
         let normalizedType = String(question.type)
           .toLowerCase()
           .trim()
           .replace(/\s+/g, ' ')
           .replace(/\s*\/\s*/g, '');
-        
+
         question.type = typeMap[normalizedType] || typeMap[normalizedType.replace(/\s/g, '')] || question.type;
       }
 
@@ -831,8 +974,8 @@ export const deleteForm = async (req, res) => {
     }
 
     // Check permissions
-    if (form.createdBy && req.user._id && form.createdBy.toString() !== req.user._id.toString() && 
-        req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+    if (form.createdBy && req.user._id && form.createdBy.toString() !== req.user._id.toString() &&
+      req.user.role !== 'admin' && req.user.role !== 'superadmin') {
       return res.status(403).json({
         success: false,
         message: 'Access denied. You can only delete your own forms.'
@@ -883,8 +1026,8 @@ export const updateFormVisibility = async (req, res) => {
     }
 
     // Check permissions
-    if (form.createdBy && req.user._id && form.createdBy.toString() !== req.user._id.toString() && 
-        req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+    if (form.createdBy && req.user._id && form.createdBy.toString() !== req.user._id.toString() &&
+      req.user.role !== 'admin' && req.user.role !== 'superadmin') {
       return res.status(403).json({
         success: false,
         message: 'Access denied. You can only modify your own forms.'
@@ -945,8 +1088,8 @@ export const updateFormLocationEnabled = async (req, res) => {
       });
     }
 
-    if (form.createdBy && req.user._id && form.createdBy.toString() !== req.user._id.toString() && 
-        req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+    if (form.createdBy && req.user._id && form.createdBy.toString() !== req.user._id.toString() &&
+      req.user.role !== 'admin' && req.user.role !== 'superadmin') {
       return res.status(403).json({
         success: false,
         message: 'Access denied. You can only modify your own forms.'
@@ -1000,7 +1143,7 @@ export const getFormLocationEnabled = async (req, res) => {
 
     // Check permissions
     if (form.createdBy && req.user._id && form.createdBy.toString() !== req.user._id.toString() &&
-        req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      req.user.role !== 'admin' && req.user.role !== 'superadmin') {
       return res.status(403).json({
         success: false,
         message: 'Access denied. You can only view your own forms.'
@@ -1048,7 +1191,7 @@ export const updateFormActiveStatus = async (req, res) => {
 
     // Check permissions
     if (form.createdBy && req.user._id && form.createdBy.toString() !== req.user._id.toString() &&
-        req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      req.user.role !== 'admin' && req.user.role !== 'superadmin') {
       return res.status(403).json({
         success: false,
         message: 'Access denied. You can only modify your own forms.'
@@ -1085,7 +1228,7 @@ export const updateFormViewType = async (req, res) => {
   try {
     const { id } = req.params;
     const { viewType } = req.body;
-    
+
     console.log(`[updateFormViewType] Attempting to update form ${id} to viewType: ${viewType}`);
 
     if (!['section-wise', 'question-wise'].includes(viewType)) {
@@ -1108,7 +1251,7 @@ export const updateFormViewType = async (req, res) => {
 
     // Check permissions
     if (form.createdBy && req.user._id && form.createdBy.toString() !== req.user._id.toString() &&
-        req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      req.user.role !== 'admin' && req.user.role !== 'superadmin') {
       return res.status(403).json({
         success: false,
         message: 'Access denied. You can only modify your own forms.'
@@ -1159,7 +1302,7 @@ export const duplicateForm = async (req, res) => {
     const duplicateData = originalForm.toObject();
     delete duplicateData._id;
     delete duplicateData.__v;
-    
+
     duplicateData.id = uuidv4();
     duplicateData.title = `${duplicateData.title} (Copy)`;
     duplicateData.isVisible = false;
@@ -1205,7 +1348,7 @@ export const getFormAnalytics = async (req, res) => {
     // Calculate date range
     const now = new Date();
     let startDate;
-    
+
     switch (period) {
       case '7d':
         startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -1229,11 +1372,11 @@ export const getFormAnalytics = async (req, res) => {
 
     // Calculate analytics
     const totalResponses = responses.length;
-    const averageResponseTime = responses.length > 0 
+    const averageResponseTime = responses.length > 0
       ? responses.reduce((acc, curr, index) => {
-          if (index === 0) return 0;
-          return acc + (new Date(curr.createdAt) - new Date(responses[index - 1].createdAt));
-        }, 0) / (responses.length - 1) 
+        if (index === 0) return 0;
+        return acc + (new Date(curr.createdAt) - new Date(responses[index - 1].createdAt));
+      }, 0) / (responses.length - 1)
       : 0;
 
     // Group responses by day
@@ -1305,7 +1448,7 @@ export const createFormWithFollowUp = async (req, res) => {
 
     // Create follow-up questions for options that need them
     const followUpQuestions = [];
-    
+
     options.forEach((option, index) => {
       const config = followUpConfig[option];
       if (config && config.hasFollowUp) {
@@ -1354,7 +1497,7 @@ export const createFormWithFollowUp = async (req, res) => {
     res.status(201).json({
       success: true,
       message: 'Form with follow-up questions created successfully',
-      data: { 
+      data: {
         form,
         followUpConfig
       }
@@ -1362,14 +1505,14 @@ export const createFormWithFollowUp = async (req, res) => {
 
   } catch (error) {
     console.error('Create form with follow-up error:', error);
-    
+
     if (error.code === 11000) {
       return res.status(400).json({
         success: false,
         message: 'Form with this ID already exists'
       });
     }
-    
+
     res.status(500).json({
       success: false,
       message: 'Internal server error'
@@ -1394,8 +1537,8 @@ export const updateFollowUpConfig = async (req, res) => {
     }
 
     // Check permissions
-    if (form.createdBy && req.user._id && form.createdBy.toString() !== req.user._id.toString() && 
-        req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+    if (form.createdBy && req.user._id && form.createdBy.toString() !== req.user._id.toString() &&
+      req.user.role !== 'admin' && req.user.role !== 'superadmin') {
       return res.status(403).json({
         success: false,
         message: 'Access denied. You can only modify your own forms.'
@@ -1412,10 +1555,10 @@ export const updateFollowUpConfig = async (req, res) => {
 
     // Update follow-up questions based on new configuration
     const updatedFollowUpQuestions = [];
-    
+
     if (form.sections.length > 0 && form.sections[0].questions.length > 0) {
       const mainQuestion = form.sections[0].questions[0];
-      
+
       if (mainQuestion.options) {
         mainQuestion.options.forEach(option => {
           const config = followUpConfig[option];
@@ -1424,7 +1567,7 @@ export const updateFollowUpConfig = async (req, res) => {
             const existingFollowUp = form.followUpQuestions.find(
               fq => fq.showWhen && fq.showWhen.value === option
             );
-            
+
             if (existingFollowUp) {
               existingFollowUp.required = config.required;
               existingFollowUp.description = `This follow-up question is ${config.required ? 'mandatory' : 'optional'} for ${option}`;
@@ -1461,7 +1604,7 @@ export const updateFollowUpConfig = async (req, res) => {
     res.json({
       success: true,
       message: 'Follow-up configuration updated successfully',
-      data: { 
+      data: {
         form,
         followUpConfig
       }
@@ -1492,16 +1635,16 @@ export const getFollowUpConfig = async (req, res) => {
     }
 
     const followUpConfig = {};
-    
+
     if (form.sections.length > 0 && form.sections[0].questions.length > 0) {
       const mainQuestion = form.sections[0].questions[0];
-      
+
       if (mainQuestion.options) {
         mainQuestion.options.forEach(option => {
           const followUpQuestion = form.followUpQuestions.find(
             fq => fq.showWhen && fq.showWhen.value === option
           );
-          
+
           followUpConfig[option] = {
             hasFollowUp: !!followUpQuestion,
             required: followUpQuestion ? followUpQuestion.required : false
@@ -1569,7 +1712,7 @@ export const linkChildForm = async (req, res) => {
 
     // Check permissions
     if (parentForm.createdBy.toString() !== req.user._id.toString() &&
-        req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      req.user.role !== 'admin' && req.user.role !== 'superadmin') {
       return res.status(403).json({
         success: false,
         message: 'Access denied. You can only modify your own forms.'
@@ -1606,7 +1749,7 @@ export const linkChildForm = async (req, res) => {
     res.json({
       success: true,
       message: 'Child form linked successfully',
-      data: { 
+      data: {
         parentForm,
         childForm: {
           formId: childForm.id,
@@ -1640,7 +1783,7 @@ export const unlinkChildForm = async (req, res) => {
 
     // Check permissions
     if (parentForm.createdBy.toString() !== req.user._id.toString() &&
-        req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      req.user.role !== 'admin' && req.user.role !== 'superadmin') {
       return res.status(403).json({
         success: false,
         message: 'Access denied. You can only modify your own forms.'
@@ -1764,7 +1907,7 @@ export const reorderChildForms = async (req, res) => {
 
     // Check permissions
     if (parentForm.createdBy.toString() !== req.user._id.toString() &&
-        req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      req.user.role !== 'admin' && req.user.role !== 'superadmin') {
       return res.status(403).json({
         success: false,
         message: 'Access denied. You can only modify your own forms.'
@@ -2011,15 +2154,15 @@ export const importFormFromCSV = async (req, res) => {
     const normalizeQuestionTypes = (question) => {
       const typeMap = {
         // Legacy/UI type names - without spaces/slashes
-        'shorttext': 'text', 'shortint': 'text', 
-        'multiplechoice': 'radio', 
+        'shorttext': 'text', 'shortint': 'text',
+        'multiplechoice': 'radio',
         'longtext': 'paragraph', 'longinput': 'paragraph',
-        'dropdown': 'select', 'checkboxes': 'checkbox', 
+        'dropdown': 'select', 'checkboxes': 'checkbox',
         'fileupload': 'file', 'file upload': 'file',
-        
+
         // Yes/No variations
         'yesnona': 'yesNoNA', 'yesno': 'yesNoNA',
-        
+
         // Core types - pass through
         'email': 'email', 'url': 'url', 'tel': 'tel',
         'date': 'date', 'time': 'time', 'file': 'file', 'range': 'range',
@@ -2028,18 +2171,18 @@ export const importFormFromCSV = async (req, res) => {
         'radio-image': 'radio-image', 'radioimage': 'radio-image',
         'search-select': 'search-select', 'searchselect': 'search-select',
         'number': 'number', 'location': 'location',
-        'boolean': 'boolean', 'textarea': 'textarea', 
-        'text': 'text', 'radio': 'radio', 'paragraph': 'paragraph', 
+        'boolean': 'boolean', 'textarea': 'textarea',
+        'text': 'text', 'radio': 'radio', 'paragraph': 'paragraph',
         'select': 'select', 'checkbox': 'checkbox', 'productnpstgwbuckets': 'productNPSTGWBuckets'
       };
-      
+
       if (question?.type) {
         let normalizedType = String(question.type)
           .toLowerCase()
           .trim()
           .replace(/\s+/g, ' ')
           .replace(/\s*\/\s*/g, '');
-        
+
         question.type = typeMap[normalizedType] || typeMap[normalizedType.replace(/\s/g, '')] || question.type;
       }
 
@@ -2137,7 +2280,7 @@ export const getGlobalFormStats = async (req, res) => {
   try {
     const { id } = req.params;
     console.log('[DEBUG] getGlobalFormStats - formId:', id);
-    
+
     const form = await findFormByIdentifier(id);
 
     if (!form) {
@@ -2150,9 +2293,9 @@ export const getGlobalFormStats = async (req, res) => {
 
     const formMongoId = form._id;
     const formCustomId = form.id;
-    console.log('[DEBUG] getGlobalFormStats - Form found:', { 
-      mongoId: formMongoId.toString(), 
-      customId: formCustomId 
+    console.log('[DEBUG] getGlobalFormStats - Form found:', {
+      mongoId: formMongoId.toString(),
+      customId: formCustomId
     });
 
     const matchOrConditions = [];
@@ -2165,11 +2308,11 @@ export const getGlobalFormStats = async (req, res) => {
     console.log('[DEBUG] getGlobalFormStats - matchOrConditions:', JSON.stringify(matchOrConditions));
 
     const stats = await Response.aggregate([
-      { 
-        $match: { 
+      {
+        $match: {
           $or: matchOrConditions,
           isSectionSubmit: { $ne: true }
-        } 
+        }
       },
       {
         $group: {
@@ -2204,8 +2347,8 @@ export const getGlobalFormStats = async (req, res) => {
 
     res.json({
       success: true,
-      data: { 
-        stats: stats || [] 
+      data: {
+        stats: stats || []
       }
     });
   } catch (error) {
@@ -2216,14 +2359,74 @@ export const getGlobalFormStats = async (req, res) => {
     });
   }
 };
+
+// Start a form session for time tracking
+export const startFormSession = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { formTitle } = req.body;
+
+    const Form = mongoose.model('Form');
+    const FormSession = mongoose.model('FormSession');
+
+    // Find the form - use 'id' field which is a custom UUID
+    // Check if it's a valid ObjectId first
+    let query = { id: id };
+    if (mongoose.Types.ObjectId.isValid(id) && id.length === 24) {
+      query = { $or: [{ id: id }, { _id: id }] };
+    }
+    const form = await Form.findOne(query);
+
+    if (!form) {
+      return res.status(404).json({
+        success: false,
+        message: 'Form not found'
+      });
+    }
+
+    // Get tenant ID
+    const tenantId = req.user?.tenantId || form.tenantId;
+
+    // Create a new session
+    const sessionId = uuidv4();
+    const startedAt = new Date();
+
+    const formSession = new FormSession({
+      sessionId,
+      formId: id,
+      tenantId,
+      userId: req.user?._id,
+      startedAt,
+      status: 'in-progress',
+      lastActivityAt: startedAt
+    });
+
+    await formSession.save();
+
+    console.log(`[TIME TRACKING] Form session started: ${sessionId} for form ${id}`);
+
+    res.json({
+      success: true,
+      sessionId,
+      startedAt: startedAt.toISOString()
+    });
+  } catch (error) {
+    console.error('[ERROR] startFormSession:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Internal server error'
+    });
+  }
+};
+
 export const submitPublicResponse = async (req, res) => {
   try {
     const { id } = req.params;
-    const { 
-      inviteId, 
-      answers, 
-      location, 
-      isSectionSubmit, 
+    const {
+      inviteId,
+      answers,
+      location,
+      isSectionSubmit,
       sectionIndex,
       submissionMetadata,
       startedAt,
@@ -2242,73 +2445,71 @@ export const submitPublicResponse = async (req, res) => {
     console.log("Location:", location);
     console.log("Metadata:", submissionMetadata);
 
-    if (!inviteId) {
-      console.log("❌ No inviteId provided");
-      return res.status(400).json({
-        success: false,
-        message: 'Invite ID is required'
-      });
-    }
-
     // Import models
     const FormInvite = mongoose.model('FormInvite');
     const Form = mongoose.model('Form');
-    
-    console.log("🔍 Searching for invite with:");
-    console.log("  formId:", id);
-    console.log("  inviteId:", inviteId);
 
-    // First, find the invite (don't filter by status yet)
-    const invite = await FormInvite.findOne({
-      formId: id,
-      inviteId: inviteId
-    });
+    let invite = null;
 
-    console.log("📊 Invite found:", invite ? "YES" : "NO");
-    
-    if (invite) {
-      console.log("  Invite details:");
-      console.log("    - Status:", invite.status);
-      console.log("    - Email:", invite.email);
-      console.log("    - Created:", invite.createdAt);
-      console.log("    - Sent:", invite.sentAt);
-      console.log("    - Responded:", invite.respondedAt);
-    } else {
-      // Check if any invites exist for this form
-      const allInvites = await FormInvite.find({ formId: id }).limit(5);
-      console.log(`📋 Total invites for this form: ${allInvites.length}`);
-      if (allInvites.length > 0) {
-        console.log("Sample invite IDs in DB:");
-        allInvites.forEach((inv, idx) => {
-          console.log(`  ${idx + 1}. ${inv.inviteId} (${inv.status})`);
+    if (inviteId) {
+      console.log("🔍 Searching for invite with:");
+      console.log("  formId:", id);
+      console.log("  inviteId:", inviteId);
+
+      // First, find the invite (don't filter by status yet)
+      invite = await FormInvite.findOne({
+        formId: id,
+        inviteId: inviteId
+      });
+
+      console.log("📊 Invite found:", invite ? "YES" : "NO");
+
+      if (invite) {
+        console.log("  Invite details:");
+        console.log("    - Status:", invite.status);
+        console.log("    - Email:", invite.email);
+        console.log("    - Created:", invite.createdAt);
+        console.log("    - Sent:", invite.sentAt);
+        console.log("    - Responded:", invite.respondedAt);
+      } else {
+        // Check if any invites exist for this form
+        const allInvites = await FormInvite.find({ formId: id }).limit(5);
+        console.log(`📋 Total invites for this form: ${allInvites.length}`);
+        if (allInvites.length > 0) {
+          console.log("Sample invite IDs in DB:");
+          allInvites.forEach((inv, idx) => {
+            console.log(`  ${idx + 1}. ${inv.inviteId} (${inv.status})`);
+          });
+        }
+      }
+
+      if (!invite) {
+        return res.status(403).json({
+          success: false,
+          message: 'Invalid invite'
         });
       }
-    }
 
-    if (!invite) {
-      return res.status(403).json({
-        success: false,
-        message: 'Invalid invite'
-      });
-    }
-
-    // Check if already responded
-    if (invite.status === 'responded' && !isSectionSubmit) {
-      console.log("⚠️ Invite already responded at:", invite.respondedAt);
-      return res.status(409).json({
-        success: false,
-        message: 'ALREADY_SUBMITTED',
-        data: {
-          email: invite.email,
-          submittedAt: invite.respondedAt
-        }
-      });
+      // Check if already responded
+      if (invite.status === 'responded' && !isSectionSubmit) {
+        console.log("⚠️ Invite already responded at:", invite.respondedAt);
+        return res.status(409).json({
+          success: false,
+          message: 'ALREADY_SUBMITTED',
+          data: {
+            email: invite.email,
+            submittedAt: invite.respondedAt
+          }
+        });
+      }
+    } else {
+      console.log("ℹ️ No inviteId provided - allowing public/preview submission");
     }
 
     // Get the form
     const form = await Form.findOne({ id: id });
     console.log("📋 Form found:", form ? "YES" : "NO");
-    
+
     if (!form) {
       return res.status(404).json({
         success: false,
@@ -2322,18 +2523,18 @@ export const submitPublicResponse = async (req, res) => {
     let formSession = null;
     let actualStartedAt = startedAt ? new Date(startedAt) : null;
     let actualCompletedAt = completedAt ? new Date(completedAt) : new Date();
-    
+
     // Calculate time if we have start time
     if (actualStartedAt) {
       submissionTimeSpent = Math.floor((actualCompletedAt - actualStartedAt) / 1000);
     }
-    
+
     // Try to find FormSession if we have sessionId
     if (sessionId) {
       try {
         const FormSession = mongoose.model('FormSession');
         formSession = await FormSession.findOne({ sessionId });
-        
+
         if (formSession) {
           // Use session data for more accurate timing
           if (formSession.startedAt) {
@@ -2341,7 +2542,7 @@ export const submitPublicResponse = async (req, res) => {
             actualCompletedAt = new Date();
             submissionTimeSpent = Math.floor((actualCompletedAt - formSession.startedAt) / 1000);
           }
-          
+
           // Update session as completed (only for final submission, not partial)
           if (!isSectionSubmit) {
             formSession.completedAt = actualCompletedAt;
@@ -2394,22 +2595,24 @@ export const submitPublicResponse = async (req, res) => {
     await response.save();
     console.log("✅ Response saved with ID:", response._id);
 
-    // Update invite status only on final submission
-    if (!isSectionSubmit) {
+    // Update invite status only on final submission (if invite exists)
+    if (!isSectionSubmit && invite) {
       invite.status = 'responded';
       invite.respondedAt = new Date();
       await invite.save();
       console.log("✅ Invite updated to responded");
-    } else {
+    } else if (isSectionSubmit) {
       console.log("✅ Partial section response saved");
+    } else {
+      console.log("✅ Response saved (no invite to update)");
     }
 
     res.json({
       success: true,
       message: 'SUCCESS',
-      data: { 
+      data: {
         responseId: response._id,
-        inviteId: inviteId
+        inviteId: inviteId || null
       }
     });
 

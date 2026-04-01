@@ -24,6 +24,10 @@ const ALLOWED_FILE_TYPES = {
   'text/csv': 'csv',
   'text/plain': 'txt',
   'application/zip': 'zip',
+  'application/step': 'stp',
+  'application/x-step': 'stp',
+  'application/octet-stream': 'pvz',
+
   'audio/mpeg': 'mp3',
   'video/mp4': 'mp4'
 };

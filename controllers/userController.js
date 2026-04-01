@@ -1,11 +1,44 @@
 import User from '../models/User.js';
 import LoginLog from '../models/LoginLog.js';
+
+// ─── Date Parser Helper ──────────────────────────────────────────────────────
+const parseDateUTC = (dateStr) => {
+  if (!dateStr) return null;
+
+  // Handle YYYY-MM-DD format
+  if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+    return new Date(`${dateStr}T00:00:00.000Z`);
+  }
+
+  // Handle DD-MM-YYYY or DD/MM/YYYY format
+  const parts = dateStr.split(/[-/]/);
+  if (parts.length === 3) {
+    let year, month, day;
+    if (parts[2].length === 4) { // DD-MM-YYYY
+      year = parts[2];
+      month = parts[1];
+      day = parts[0];
+    } else if (parts[0].length === 4) { // YYYY-MM-DD
+      year = parts[0];
+      month = parts[1];
+      day = parts[2];
+    }
+
+    if (year && month && day) {
+      return new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}T00:00:00.000Z`);
+    }
+  }
+
+  return null;
+};
+
 const MODULE_PERMISSIONS = [
   'dashboard:view',
   'analytics:view',
   'requests:view',
   'requests:manage'
 ];
+import mongoose from 'mongoose';
 
 export const createUser = async (req, res) => {
   try {
@@ -67,14 +100,14 @@ export const createUser = async (req, res) => {
 
   } catch (error) {
     console.error('Create user error:', error);
-    
+
     if (error.code === 11000) {
       return res.status(400).json({
         success: false,
         message: 'User with this username or email already exists'
       });
     }
-    
+
     res.status(500).json({
       success: false,
       message: 'Internal server error'
@@ -85,14 +118,14 @@ export const createUser = async (req, res) => {
 export const getAllUsers = async (req, res) => {
   try {
     const { page = 1, limit = 10, role, search } = req.query;
-    
+
     const query = { ...req.tenantFilter };
 
     // Filter by role if provided
     if (role && role !== 'all') {
       query.role = role;
     }
-    
+
     // Search by username, email, firstName, or lastName
     if (search) {
       query.$or = [
@@ -346,16 +379,16 @@ export const resetUserPassword = async (req, res) => {
 export const getAvailableAdmins = async (req, res) => {
   try {
     const { tenantId, role } = req.query;
-    
-    const query = { 
+
+    const query = {
       ...req.tenantFilter,
-      isActive: true 
+      isActive: true
     };
-    
+
     if (tenantId) {
       query.tenantId = tenantId;
     }
-    
+
     if (role) {
       // Handle comma-separated roles like "admin,subadmin"
       const roles = role.split(',');
@@ -363,11 +396,11 @@ export const getAvailableAdmins = async (req, res) => {
     } else {
       query.role = { $in: ['admin', 'subadmin'] };
     }
-    
+
     const users = await User.find(query)
       .select('_id firstName lastName email role')
       .sort({ firstName: 1 });
-    
+
     res.json({
       success: true,
       data: {
@@ -396,16 +429,18 @@ export const getUserActivityLogs = async (req, res) => {
     } else if (req.user.role !== 'superadmin') {
       userQuery.userId = req.user._id;
     }
-    
+
     // Default tenant filtering
     if (req.tenantFilter && req.tenantFilter.tenantId) {
       userQuery.tenantId = req.tenantFilter.tenantId;
     }
 
     if (startDate && endDate) {
-      userQuery.loginTime = { 
-        $gte: new Date(startDate), 
-        $lte: new Date(endDate) 
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      userQuery.loginTime = {
+        $gte: new Date(startDate),
+        $lte: end
       };
     }
 
@@ -450,10 +485,10 @@ export const getUserActivityLogs = async (req, res) => {
 export const getUsersHierarchy = async (req, res) => {
   try {
     const query = { ...req.tenantFilter };
-    
+
     if (req.user.role === 'admin') {
       const subadmins = await User.find({ createdBy: req.user._id })
-         .select('-password').sort({ createdAt: -1 });
+        .select('-password').sort({ createdAt: -1 });
       return res.json({
         success: true,
         data: { users: subadmins }
@@ -476,6 +511,251 @@ export const getUsersHierarchy = async (req, res) => {
     });
   } catch (error) {
     console.error('Get users hierarchy error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// @route   GET /api/users/all-tenants-performance
+// @desc    Get all admin users across all tenants with performance metrics (SuperAdmin only)
+// @access  Private (SuperAdmin only)
+export const getAllTenantsPerformance = async (req, res) => {
+  try {
+    // Only superadmin can access this
+    if (req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. SuperAdmin only.'
+      });
+    }
+
+    const { startDate, endDate, search, role, page = 1, limit = 50 } = req.query;
+
+    // ─── UTC Date Parser Helper ─────────────────────────────────────────
+    const parseDateUTC = (dateStr) => {
+      if (!dateStr) return null;
+
+      // Handle YYYY-MM-DD format
+      if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        return new Date(`${dateStr}T00:00:00.000Z`);
+      }
+
+      // Handle DD-MM-YYYY or DD/MM/YYYY format
+      const parts = dateStr.split(/[-/]/);
+      if (parts.length === 3) {
+        let year, month, day;
+        if (parts[2].length === 4) { // DD-MM-YYYY
+          year = parts[2];
+          month = parts[1];
+          day = parts[0];
+        } else if (parts[0].length === 4) { // YYYY-MM-DD
+          year = parts[0];
+          month = parts[1];
+          day = parts[2];
+        }
+
+        if (year && month && day) {
+          return new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}T00:00:00.000Z`);
+        }
+      }
+
+      return null;
+    };
+
+    // Build query to get all admins/subadmins across all tenants
+    const query = {
+      role: { $in: ['admin', 'subadmin'] }
+    };
+
+    // Search filter
+    if (search) {
+      query.$or = [
+        { firstName: { $regex: search, $options: 'i' } },
+        { lastName: { $regex: search, $options: 'i' } },
+        { email: { $regex: search, $options: 'i' } },
+        { username: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    // Role filter
+    if (role && role !== 'all') {
+      query.role = role;
+    }
+
+    // Fetch users with tenant info
+    const users = await User.find(query)
+      .populate('tenantId', 'name companyName slug')
+      .select('-password')
+      .sort({ createdAt: -1 })
+      .limit(limit * 1)
+      .skip((page - 1) * limit);
+
+    const total = await User.countDocuments(query);
+
+    // For each user, get performance metrics
+    const Response = (await import('../models/Response.js')).default;
+    const LoginLogModel = (await import('../models/LoginLog.js')).default;
+
+    // ─── Date Handling with UTC ─────────────────────────────────────────
+    const parsedStart = startDate ? parseDateUTC(startDate) : null;
+    const parsedEnd = endDate ? parseDateUTC(endDate) : null;
+
+    // Create UTC dates with proper boundaries
+    let start = parsedStart;
+    let end = parsedEnd;
+
+    if (!start) {
+      // Default to 30 days ago
+      const defaultStart = new Date();
+      defaultStart.setMonth(defaultStart.getMonth() - 1);
+      start = new Date(Date.UTC(
+        defaultStart.getUTCFullYear(),
+        defaultStart.getUTCMonth(),
+        defaultStart.getUTCDate(),
+        0, 0, 0, 0
+      ));
+    } else {
+      // Ensure start is at beginning of day UTC
+      start = new Date(Date.UTC(
+        start.getUTCFullYear(),
+        start.getUTCMonth(),
+        start.getUTCDate(),
+        0, 0, 0, 0
+      ));
+    }
+
+    if (!end) {
+      // Default to today
+      const defaultEnd = new Date();
+      end = new Date(Date.UTC(
+        defaultEnd.getUTCFullYear(),
+        defaultEnd.getUTCMonth(),
+        defaultEnd.getUTCDate(),
+        23, 59, 59, 999
+      ));
+    } else {
+      // Ensure end is at end of day UTC
+      end = new Date(Date.UTC(
+        end.getUTCFullYear(),
+        end.getUTCMonth(),
+        end.getUTCDate(),
+        23, 59, 59, 999
+      ));
+    }
+
+    console.log('=== Date Debug (UTC) ===');
+    console.log('startDate:', startDate, 'parsed start:', start.toISOString());
+    console.log('endDate:', endDate, 'parsed end:', end.toISOString());
+
+    const performanceData = await Promise.all(users.map(async (user) => {
+      const tenantId = user.tenantId?._id || user.tenantId;
+      const userEmail = user.email?.toLowerCase();
+
+      // Get form submissions count
+      const formsSubmitted = await Response.countDocuments({
+        $or: [
+          { submittedBy: user.username },
+          { "submitterContact.email": userEmail }
+        ],
+        tenantId,
+        createdAt: { $gte: start, $lte: end }
+      });
+
+      // Get personally submitted forms
+      const personallySubmitted = await Response.countDocuments({
+        $or: [
+          { submittedBy: user.username },
+          { "submitterContact.email": userEmail }
+        ],
+        tenantId,
+        createdAt: { $gte: start, $lte: end }
+      });
+
+      // Get active hours from ActivityLog
+      const ActivityLog = (await import('../models/ActivityLog.js')).default;
+
+      const activities = await ActivityLog.find({
+        userId: user._id,
+        tenantId: tenantId,
+        createdAt: { $gte: start, $lte: end }
+      }).sort({ createdAt: 1 }).lean();
+
+      // Calculate active minutes using session timeout logic (30 min timeout)
+      const SESSION_TIMEOUT = 30 * 60 * 1000;
+      let activeMinutes = 0;
+      if (activities.length > 0) {
+        let sessionStart = activities[0].createdAt;
+        let lastActivity = activities[0].createdAt;
+        console.log(`Session start: ${sessionStart.toISOString()}`);
+
+        for (let i = 1; i < activities.length; i++) {
+          const current = activities[i].createdAt;
+          const gap = current - lastActivity;
+          console.log(`Gap: ${gap / 1000 / 60} minutes`);
+          if (gap <= SESSION_TIMEOUT) {
+            lastActivity = current;
+          } else {
+            const sessionMinutes = Math.ceil((lastActivity - sessionStart) / 60000);
+            console.log(`Session ended, adding ${Math.max(sessionMinutes, 2)} minutes`);
+            activeMinutes += Math.max(sessionMinutes, 2);
+            sessionStart = current;
+            lastActivity = current;
+          }
+        }
+        const lastSessionMinutes = Math.ceil((lastActivity - sessionStart) / 60000);
+        console.log(`Last session adding ${Math.max(lastSessionMinutes, 2)} minutes`);
+        activeMinutes += Math.max(lastSessionMinutes, 2);
+      }
+      console.log(`Total active minutes for ${user.username}: ${activeMinutes}`);
+      const activeHours = activeMinutes / 60;
+
+      // Get last login and logout times
+      const lastSession = await LoginLogModel.findOne({
+        userId: user._id,
+        loginTime: { $gte: start, $lte: end }
+      }).sort({ loginTime: -1 });
+
+      return {
+        userId: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        username: user.username,
+        role: user.role,
+        isActive: user.isActive,
+        tenantId: tenantId,
+        tenantName: user.tenantId?.companyName || user.tenantId?.name || 'N/A',
+        tenantSlug: user.tenantId?.slug || 'N/A',
+        metrics: {
+          formsSubmitted,
+          personallySubmitted,
+          activeHours: Math.round(activeHours * 10) / 10,
+          activeDurationMinutes: activeMinutes,
+          lastActive: lastSession?.loginTime || null,
+          lastLogin: lastSession?.loginTime || null,
+          lastLogout: lastSession?.logoutTime || null
+        }
+      };
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        users: performanceData,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(total / limit),
+          totalUsers: total,
+          hasNextPage: page < Math.ceil(total / limit),
+          hasPrevPage: page > 1
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Get all tenants performance error:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error'

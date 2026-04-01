@@ -65,7 +65,11 @@ const mapQuestionType = (csvType) => {
     'emojireactionfeedback': 'emoji-reaction-feedback',
     'number': 'number',
     'location': 'location',
-    'textarea': 'textarea'
+    'textarea': 'textarea',
+    'chassis-with-zone': 'chassis-with-zone',
+    'chassiswithzone': 'chassis-with-zone',
+    'chassis-without-zone': 'chassis-without-zone',
+    'chassiswithoutzone': 'chassis-without-zone'
   };
   
   // First try exact match after normalization

@@ -8,7 +8,8 @@ import {
   resetUserPassword,
   getAvailableAdmins,
   getUserActivityLogs,
-  getUsersHierarchy
+  getUsersHierarchy,
+  getAllTenantsPerformance
 } from '../controllers/userController.js';
 import { authenticate, adminOnly } from '../middleware/auth.js';
 import { addTenantFilter } from '../middleware/tenantIsolation.js';
@@ -36,6 +37,9 @@ router.get('/available-admins', getAvailableAdmins);
 router.get('/activity-logs', getUserActivityLogs); // Fixed: Added route matching frontend endpoint
 router.get('/:userId/activity', getUserActivityLogs);
 router.get('/hierarchy', getUsersHierarchy);
+
+// SuperAdmin route - get all tenants performance (must be BEFORE /:id to avoid conflict)
+router.get('/all-tenants-performance', getAllTenantsPerformance);
 
 // @route   GET /api/users/:id
 // @desc    Get user by ID

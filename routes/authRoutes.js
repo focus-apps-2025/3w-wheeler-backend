@@ -11,9 +11,9 @@ const router = express.Router();
 router.post('/login', validateLogin, login);
 
 // @route   POST /api/auth/logout
-// @desc    Logout user and record logout time Let Location
-// @access  Private
-router.post('/logout', authenticate, logout);
+// @desc    Logout user and record logout time
+// @access  Public (works even with expired token to ensure logout is always recorded)
+router.post('/logout', logout);
 
 // @route   POST /api/auth/signup
 // @desc    Signup new tenant (Free Trial)

@@ -11,7 +11,7 @@ const parseDate = (dateStr) => {
   if (!dateStr) return null;
   const d = new Date(dateStr);
   if (!isNaN(d.getTime())) return d;
-  
+
   // Try DD-MM-YYYY or DD/MM/YYYY
   const parts = dateStr.split(/[-/]/);
   if (parts.length === 3) {
@@ -23,7 +23,7 @@ const parseDate = (dateStr) => {
     } else if (parts[0].length === 4) { // YYYY-MM-DD (already tried but just in case)
       y = parts[0]; m = parts[1]; d_part = parts[2];
     }
-    
+
     if (y) {
       const isoStr = `${y}-${m.padStart(2, '0')}-${d_part.padStart(2, '0')}`;
       const d2 = new Date(isoStr);
@@ -36,10 +36,9 @@ const parseDate = (dateStr) => {
 // ─── Active Hours Calculator - Session Based (Server Side) ───────────────────
 const calculateActiveMinutes = (activities, adminData = null, dateRange = {}) => {
   const { start, end } = dateRange;
-  // Standardize timestamps
   const startTime = start instanceof Date ? start.getTime() : (parseDate(start)?.getTime() || 0);
   let inclusiveEndTime = end instanceof Date ? end.getTime() : (parseDate(end)?.getTime() || Infinity);
-  
+
   if (inclusiveEndTime !== Infinity) {
     const e = new Date(inclusiveEndTime);
     if (e.getUTCHours() === 0 && e.getUTCMinutes() === 0) {
@@ -48,7 +47,6 @@ const calculateActiveMinutes = (activities, adminData = null, dateRange = {}) =>
     }
   }
 
-  // Filter timestamps to the requested range
   const allTimestamps = activities
     .map(a => new Date(a.verifiedAt || a.updatedAt || a.createdAt).getTime())
     .filter(t => !isNaN(t) && t >= startTime && t <= inclusiveEndTime)
@@ -56,10 +54,9 @@ const calculateActiveMinutes = (activities, adminData = null, dateRange = {}) =>
 
   if (allTimestamps.length === 0) return 0;
 
-  // Split into daily sessions
   let totalMinutes = 0;
   const days = {};
-  
+
   allTimestamps.forEach(t => {
     try {
       const dayStr = new Date(t).toISOString().split('T')[0];
@@ -71,11 +68,12 @@ const calculateActiveMinutes = (activities, adminData = null, dateRange = {}) =>
   for (const day in days) {
     const ts = days[day];
     if (ts.length === 1) {
-      totalMinutes += 2; // Fixed small interaction credit for single action
+      totalMinutes += 1; // ✅ Changed from 2 to 1 minute for single action
     } else {
-      // Span between first and last activity of the day
       const spanMs = ts[ts.length - 1] - ts[0];
-      totalMinutes += Math.floor(spanMs / 60000) + 2; // Add 2 mins buffer
+      // Calculate actual minutes without buffer
+      const actualMinutes = Math.ceil(spanMs / 60000);
+      totalMinutes += Math.max(actualMinutes, 1); // ✅ Minimum 1 minute
     }
   }
 
@@ -118,7 +116,8 @@ export const getDashboardStats = async (req, res) => {
       effectiveFormFilter = {
         $or: [
           { tenantId: tenantId },
-          { sharedWithTenants: tenantId }
+          { sharedWithTenants: tenantId },
+          { "chassisTenantAssignments.assignedTenants": tenantId.toString() }
         ]
       };
     }
@@ -283,20 +282,29 @@ export const getFormAnalytics = async (req, res) => {
     }
 
     // Tenant check: Ensure user has access to this form
+    let isOwner = false;
+    let isShared = false;
+    let hasChassisShare = false;
+
     if (req.user.role !== 'superadmin') {
       const userTenantId = req.user.tenantId instanceof mongoose.Types.ObjectId
         ? req.user.tenantId
         : new mongoose.Types.ObjectId(req.user.tenantId);
 
-      const isOwner = form.tenantId && form.tenantId.toString() === userTenantId.toString();
-      const isShared = form.sharedWithTenants && form.sharedWithTenants.some(t => t.toString() === userTenantId.toString());
+      isOwner = form.tenantId && form.tenantId.toString() === userTenantId.toString();
+      isShared = form.sharedWithTenants && form.sharedWithTenants.some(t => t.toString() === userTenantId.toString());
+      hasChassisShare = Array.isArray(form.chassisTenantAssignments) && form.chassisTenantAssignments.some(
+        a => a.assignedTenants && a.assignedTenants.includes(userTenantId.toString())
+      );
 
-      if (!isOwner && !isShared) {
+      if (!isOwner && !isShared && !hasChassisShare) {
         return res.status(403).json({
           success: false,
           message: 'Access denied. You do not have permission to view analytics for this form.'
         });
       }
+    } else {
+      isOwner = true; // Superadmin sees everything
     }
 
     // Calculate date range
@@ -317,14 +325,49 @@ export const getFormAnalytics = async (req, res) => {
         startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     }
 
-    // Get all responses for this form (not just period) with tenant filter
-    const allResponses = await Response.find({
-      ...req.tenantFilter,
+    // Get all responses for this form (not just period) 
+    // If it's a chassis share, we need to bypass the tenantFilter and manually filter by chassis
+    const baseQuery = {
       $or: [{ questionId: formId }, { questionId: form._id?.toString() }]
-    })
+    };
+    
+    // If not owner/superadmin, and only have chassis share or regular share
+    // We only need to bypass tenantFilter if we are NOT the owner.
+    let responseQuery = { ...baseQuery };
+    if (!isOwner && req.user.role !== 'superadmin') {
+       // We can't use req.tenantFilter because the responses belong to the owner
+    } else {
+       responseQuery = { ...responseQuery, ...req.tenantFilter };
+    }
+
+    let allResponses = await Response.find(responseQuery)
       .sort({ createdAt: -1 })
       .populate('assignedTo', 'firstName lastName email')
       .lean();
+
+    // Filter responses for chassis sharing if applicable
+    if (!isOwner && req.user.role !== 'superadmin' && hasChassisShare && !isShared) {
+      const userTenantIdStr = req.user.tenantId.toString();
+      const myAssignedChassis = (form.chassisTenantAssignments || [])
+        .filter(a => a.assignedTenants && a.assignedTenants.includes(userTenantIdStr))
+        .map(a => a.chassisNumber)
+        .filter(Boolean);
+
+      if (myAssignedChassis.length > 0) {
+        // Find the question ID that has type 'chassisNumber'
+        const chassisQuestion = form.sections?.flatMap(s => s.questions || []).find(q => q.type === 'chassisNumber') 
+                              || form.followUpQuestions?.find(q => q.type === 'chassisNumber');
+        const chassisFieldId = chassisQuestion?.id || 'chassis_number';
+
+        allResponses = allResponses.filter(r => {
+          const rAnswers = r.answers instanceof Map ? Object.fromEntries(r.answers) : (r.answers || {});
+          // Specifically check for the detected chassis field ID or 'chassis_number' fallback
+          return myAssignedChassis.includes(rAnswers[chassisFieldId] || rAnswers['chassis_number']);
+        });
+      } else {
+        allResponses = [];
+      }
+    }
 
     // Filter responses for timeline (within period)
     const periodResponses = allResponses.filter(r => new Date(r.createdAt) >= startDate);
@@ -642,10 +685,10 @@ export const getAdminPerformance = async (req, res) => {
     // 2. Count all responses this admin has touched:
     //    - Responses currently assigned to them (their active workload)
     //    - Responses they verified/processed (their completed work)
-    const adminObjectId = mongoose.Types.ObjectId.isValid(adminId) 
-                         ? new mongoose.Types.ObjectId(adminId) 
-                         : null;
-    
+    const adminObjectId = mongoose.Types.ObjectId.isValid(adminId)
+      ? new mongoose.Types.ObjectId(adminId)
+      : null;
+
     if (!adminObjectId && adminId.length === 24) {
       // Fallback if it's 24 chars but not 'valid' ObjectId for some reason
       try {
@@ -720,8 +763,8 @@ export const getAdminPerformance = async (req, res) => {
       totalSessionDurationMs += (lastActivity - sessionStart);
     }
 
-    const avgSessionDuration = sessionCount > 0 
-      ? Math.round((totalSessionDurationMs / 60000) / sessionCount) 
+    const avgSessionDuration = sessionCount > 0
+      ? Math.round((totalSessionDurationMs / 60000) / sessionCount)
       : 0;
 
     res.json({
@@ -735,7 +778,7 @@ export const getAdminPerformance = async (req, res) => {
         averageResponseTime: avgResponseTime,
         lastActive: (allLogs.length > 0 ? allLogs[allLogs.length - 1].createdAt : admin.lastLogin) || admin.updatedAt,
         totalCustomersAssigned: stats.totalFormsProcessed + stats.pendingForms,
-        activeDurationMinutes: activeMinutes, 
+        activeDurationMinutes: activeMinutes,
         activeHours: activeMinutes / 60,
         sessionCount,
         avgSessionDuration
@@ -758,8 +801,8 @@ export const getAdminActivity = async (req, res) => {
     const adminEmail = adminUser?.email;
 
     // Find responses where the admin ACTED (verified/rejected) OR SUBMITTED OR ASSIGNED
-    const match = { 
-      ...req.tenantFilter, 
+    const match = {
+      ...req.tenantFilter,
       $or: [
         { verifiedBy: new mongoose.Types.ObjectId(adminId) }, // Reviews they performed
         { assignedTo: new mongoose.Types.ObjectId(adminId) }, // Assigned to them
@@ -775,7 +818,7 @@ export const getAdminActivity = async (req, res) => {
         // Apply date filter to the specific timestamp of each activity type
         return { ...cond };
       });
-      
+
       // We'll filter the whole query by updatedAt/verifiedAt range for simplicity
       match.$or = match.$or.map(cond => {
         const dateFilter = {};
@@ -785,7 +828,7 @@ export const getAdminActivity = async (req, res) => {
           end.setHours(23, 59, 59, 999);
           dateFilter.$lte = end;
         }
-        
+
         // Use a generic updatedAt check for date range since verifiedAt/createdAt 
         // will both be reflected in updatedAt
         return { ...cond, updatedAt: dateFilter };
@@ -812,24 +855,24 @@ export const getAdminActivity = async (req, res) => {
     // Enrich activities with FormSession data for precise timing
     const recentActivity = await Promise.all(recentResponses.map(async (r) => {
       let durationMinutes = 0;
-      
+
       // NEW: Improved matching logic
       let session = null;
       const metaSessionId = r.submissionMetadata?.formSessionId;
-      
+
       if (metaSessionId) {
         session = await FormSession.findOne({ sessionId: metaSessionId }).lean();
       }
-      
+
       if (!session) {
         // Fallback to existing timestamp-based logic
         session = await FormSession.findOne({
           userId: new mongoose.Types.ObjectId(adminId),
           formId: r.questionId,
           // Match approximate time (within 1 hour of response creation)
-          startedAt: { 
+          startedAt: {
             $lte: new Date(r.createdAt),
-            $gte: new Date(new Date(r.createdAt).getTime() - 60 * 60 * 1000) 
+            $gte: new Date(new Date(r.createdAt).getTime() - 60 * 60 * 1000)
           }
         }).lean();
       }
@@ -875,9 +918,23 @@ export const getAdminActivity = async (req, res) => {
 
 export const getTenantSubmissionStats = async (req, res) => {
   try {
+    const { startDate, endDate } = req.query;
     const match = { ...req.tenantFilter };
 
-    const totalForms = await Form.countDocuments(match);
+    // Add date filtering if provided
+    if (startDate || endDate) {
+      match.createdAt = {};
+      if (startDate) {
+        match.createdAt.$gte = new Date(startDate);
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        match.createdAt.$lte = end;
+      }
+    }
+
+    const totalForms = await Form.countDocuments({ ...req.tenantFilter });
     const totalSubmissions = await Response.countDocuments(match);
 
     // Group by WHO ACTUALLY SUBMITTED (submittedBy or submitterContact.email)
@@ -891,7 +948,7 @@ export const getTenantSubmissionStats = async (req, res) => {
             email: "$submitterContact.email"
           },
           count: { $sum: 1 },
-          responses: { 
+          responses: {
             $push: {
               id: "$id",
               formId: "$questionId",
@@ -908,11 +965,13 @@ export const getTenantSubmissionStats = async (req, res) => {
           userEmail: "$_id.email",
           userName: {
             $cond: {
-              if: { $and: [
-                { $ne: ["$_id.submittedBy", null] },
-                { $ne: ["$_id.submittedBy", ""] },
-                { $ne: ["$_id.submittedBy", "undefined"] }
-              ]},
+              if: {
+                $and: [
+                  { $ne: ["$_id.submittedBy", null] },
+                  { $ne: ["$_id.submittedBy", ""] },
+                  { $ne: ["$_id.submittedBy", "undefined"] }
+                ]
+              },
               then: "$_id.submittedBy",
               else: {
                 $cond: {
@@ -945,14 +1004,149 @@ export const getTenantSubmissionStats = async (req, res) => {
   }
 };
 
+
+const extractFollowUpTree = (forms) => {
+  const result = {};
+
+  forms.forEach(form => {
+    const formKey = form.id || form._id.toString();
+    const formFollowUpData = {
+      formId: formKey,
+      formTitle: form.title,
+      mainQuestion: null,
+      followUpTree: [] // [{questionText, triggeredBy, level, children:[]}]
+    };
+
+    if (!form.sections || form.sections.length === 0) {
+      result[formKey] = formFollowUpData;
+      return;
+    }
+
+    // Find main question (first question with options, no showWhen)
+    let mainQuestion = null;
+    for (const section of form.sections) {
+      if (!section.questions) continue;
+      mainQuestion = section.questions.find(q =>
+        q.options && q.options.length > 0 && !q.showWhen
+      );
+      if (mainQuestion) break;
+    }
+
+    if (!mainQuestion) {
+      result[formKey] = formFollowUpData;
+      return;
+    }
+
+    formFollowUpData.mainQuestion = {
+      id: mainQuestion.id,
+      text: mainQuestion.text,
+      options: mainQuestion.options || []
+    };
+
+    // Target options: anything that is NOT the first option (usually "Approved")
+    // i.e. Rejected, Rework, No, etc.
+    const triggerOptions = (mainQuestion.options || []).filter((_, idx) => idx > 0);
+
+    // Build a flat map of ALL questions across all sections
+    const allQuestionsMap = {};
+    for (const section of form.sections) {
+      for (const q of (section.questions || [])) {
+        allQuestionsMap[q.id] = { ...q, _sectionId: section.id };
+        // Also include nested followUpQuestions
+        const processNested = (questions, parentId) => {
+          (questions || []).forEach(fq => {
+            allQuestionsMap[fq.id] = { ...fq, _parentId: parentId };
+            processNested(fq.followUpQuestions, fq.id);
+          });
+        };
+        processNested(q.followUpQuestions, q.id);
+      }
+    }
+
+    // Also process form-level followUpQuestions
+    (form.followUpQuestions || []).forEach(fq => {
+      allQuestionsMap[fq.id] = { ...fq };
+      const processNested = (questions, parentId) => {
+        (questions || []).forEach(nested => {
+          allQuestionsMap[nested.id] = { ...nested, _parentId: parentId };
+          processNested(nested.followUpQuestions, nested.id);
+        });
+      };
+      processNested(fq.followUpQuestions, fq.id);
+    });
+
+    // Recursively build tree for a given parentQuestionId + triggerValue
+    const buildTree = (parentQuestionId, triggerValue, level) => {
+      const children = [];
+
+      Object.values(allQuestionsMap).forEach(q => {
+        if (
+          q.showWhen &&
+          q.showWhen.questionId === parentQuestionId &&
+          (
+            q.showWhen.value === triggerValue ||
+            (Array.isArray(q.showWhen.value) && q.showWhen.value.includes(triggerValue)) ||
+            triggerValue === null // no trigger filter — include all
+          )
+        ) {
+          const node = {
+            id: q.id,
+            text: q.text || q.id,
+            type: q.type,
+            options: q.options || [],
+            triggeredBy: triggerValue,
+            level,
+            children: buildTree(q.id, null, level + 1) // nested follow-ups
+          };
+          children.push(node);
+        }
+
+        // Also check inline followUpQuestions on the parent
+        const parentQ = allQuestionsMap[parentQuestionId];
+        if (parentQ && Array.isArray(parentQ.followUpQuestions)) {
+          parentQ.followUpQuestions.forEach(fq => {
+            if (!children.find(c => c.id === fq.id)) {
+              children.push({
+                id: fq.id,
+                text: fq.text || fq.id,
+                type: fq.type,
+                options: fq.options || [],
+                triggeredBy: triggerValue,
+                level,
+                children: []
+              });
+            }
+          });
+        }
+      });
+
+      return children;
+    };
+
+    // Build tree per trigger option
+    triggerOptions.forEach(option => {
+      const tree = buildTree(mainQuestion.id, option, 1);
+      if (tree.length > 0) {
+        formFollowUpData.followUpTree.push({
+          triggerOption: option,
+          questions: tree
+        });
+      }
+    });
+
+    result[formKey] = formFollowUpData;
+  });
+
+  return result;
+};
 export const getAdminResponseDetails = async (req, res) => {
   try {
     const { adminId } = req.params;
-    
+
     if (!mongoose.Types.ObjectId.isValid(adminId)) {
       return res.status(400).json({ success: false, message: 'Invalid admin ID' });
     }
-    
+
     const adminObjectId = new mongoose.Types.ObjectId(adminId);
     const admin = await User.findById(adminId).select('firstName lastName email');
     if (!admin) {
@@ -972,14 +1166,13 @@ export const getAdminResponseDetails = async (req, res) => {
         match.createdAt.$lte = end;
       }
     } else {
-      // Default to last 30 days IF no range is provided, matching getAdminPerformance
+      // Default to last 30 days
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
       match.createdAt = { $gte: thirtyDaysAgo };
     }
 
-    // Fetch all responses this admin has touched 
-    // (assigned, verified, OR submitted by them)
+    // Fetch all responses this admin has touched
     const responses = await Response.find({
       ...match,
       $or: [
@@ -1000,43 +1193,83 @@ export const getAdminResponseDetails = async (req, res) => {
       else if (r.status === 'rejected') statusBreakdown.rejected++;
     });
 
-    // Yes / No / N/A answer counts — scan every answer value in each response
-    const yesNoNA = { yes: 0, no: 0, na: 0 };
-    const formMap = {}; // formId -> { formId, formTitle, yes, no, na, total, avgTimeSpent, sessionCount }
+    // ========== FIX: Only count MAIN QUESTION answers ==========
+    const overallAnswerDistribution = {};
+    const formMap = {};
 
-    // Group sessions by formId for all users in the tenant
-    // Include both completed and in-progress sessions to recover from previous tracking bug
+    // Get all forms to identify main questions
+    const formIds = [...new Set(responses.map(r => r.questionId))];
+    const forms = await Form.find(
+      { $or: [{ id: { $in: formIds } }, { _id: { $in: formIds.filter(id => mongoose.Types.ObjectId.isValid(id)) } }] },
+      { id: 1, _id: 1, title: 1, sections: 1 }
+    ).lean();
+
+    // Create a map of formId -> main question ID and options
+    const formMainQuestionMap = {};
+    forms.forEach(form => {
+      const formKey = form.id || form._id.toString();
+      
+      // Find the main question (first question in first section that has options)
+      let mainQuestionId = null;
+      let mainQuestionOptions = [];
+      
+      if (form.sections && form.sections.length > 0) {
+        for (const section of form.sections) {
+          if (section.questions && section.questions.length > 0) {
+            // Find the first question that has options (main question)
+            const mainQuestion = section.questions.find(q => 
+              q.options && q.options.length > 0 && !q.showWhen
+            );
+            if (mainQuestion) {
+              mainQuestionId = mainQuestion.id;
+              mainQuestionOptions = mainQuestion.options;
+              break;
+            }
+          }
+        }
+      }
+      
+      formMainQuestionMap[formKey] = {
+        mainQuestionId,
+        mainQuestionOptions,
+        title: form.title
+      };
+    });
+
+    // Get sessions for time tracking
     const sessions = await FormSession.find({
       tenantId: req.user.tenantId,
       status: { $in: ['completed', 'in-progress'] },
-      // Use startDate if provided, else fallback to 30 days ago for performance
-      // Add a 1-hour buffer (3600000ms) to startDate to catch sessions that started just before the window
       startedAt: { $gte: startDate ? new Date(new Date(startDate).getTime() - 60 * 60 * 1000) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }
     }).lean();
 
     const sessionMap = {};
     sessions.forEach(s => {
       if (!sessionMap[s.formId]) sessionMap[s.formId] = [];
-      
-      // For in-progress sessions, calculate timeSpent if not set
       if (s.status === 'in-progress' && (!s.timeSpent || s.timeSpent === 0)) {
         const end = s.completedAt || s.lastActivityAt || s.updatedAt || new Date();
         const start = s.startedAt;
         s.timeSpent = Math.max(1, Math.floor((new Date(end) - new Date(start)) / 1000));
       }
-      
       sessionMap[s.formId].push(s);
     });
 
     responses.forEach(r => {
       const formId = r.questionId;
+      const formKey = formId;
+      const formInfo = formMainQuestionMap[formKey];
+      
+      // Only process if we have main question info
+      if (!formInfo || !formInfo.mainQuestionId) {
+        console.log(`No main question found for form: ${formId}`);
+        return;
+      }
+
       if (!formMap[formId]) {
-        formMap[formId] = { 
-          formId, 
-          formTitle: formId, 
-          yes: 0, 
-          no: 0, 
-          na: 0, 
+        formMap[formId] = {
+          formId,
+          formTitle: formInfo.title || formId,
+          answerDistribution: {},
           responseCount: 0,
           totalDuration: 0,
           durationCount: 0,
@@ -1046,71 +1279,62 @@ export const getAdminResponseDetails = async (req, res) => {
 
       formMap[formId].responseCount++;
 
-      // Try to find the specific submission session for this response
-      const formSessions = sessionMap[formId] || [];
+      // ========== ONLY process the MAIN QUESTION answer ==========
+      const answers = r.answers instanceof Map ? Object.fromEntries(r.answers) : (r.answers || {});
       
-      // NEW: Improved matching logic
+      // Get the answer for the main question only
+      const mainAnswer = answers[formInfo.mainQuestionId];
+      
+      if (mainAnswer !== null && mainAnswer !== undefined) {
+        const answerValue = String(mainAnswer).trim();
+        
+        // Count in overall distribution
+        overallAnswerDistribution[answerValue] = (overallAnswerDistribution[answerValue] || 0) + 1;
+        
+        // Count in form-specific distribution
+        formMap[formId].answerDistribution[answerValue] = 
+          (formMap[formId].answerDistribution[answerValue] || 0) + 1;
+      }
+
+      // Time tracking (keep existing logic)
+      const formSessions = sessionMap[formId] || [];
+      const metaSessionId = r.submissionMetadata?.formSessionId;
       let matchingSession = null;
       
-      // 1. Try explicit sessionId match from metadata
-      const metaSessionId = r.submissionMetadata?.formSessionId;
       if (metaSessionId) {
         matchingSession = formSessions.find(s => s.sessionId === metaSessionId);
       }
-      
-      // 2. Fallback to existing timestamp-based logic
       if (!matchingSession) {
         matchingSession = formSessions.find(s => {
           const sessionTime = new Date(s.completedAt || s.lastActivityAt || s.updatedAt).getTime();
           const responseTime = new Date(r.createdAt || r.timestamp).getTime();
           const timeDiff = Math.abs(sessionTime - responseTime);
-          
-          // Original logic for threshold
           const isSameUser = s.userId && adminObjectId && s.userId.toString() === adminObjectId.toString();
           const isAdminSubmission = r.submittedBy === adminName || r.submitterContact?.email === adminEmail;
-          
           if (isSameUser || isAdminSubmission) {
-             return timeDiff < 60 * 1000; // 60s for direct/admin match
+            return timeDiff < 60 * 1000;
           }
-          return timeDiff < 10 * 1000; // 10s for anonymous match
+          return timeDiff < 10 * 1000;
         });
       }
 
       if (matchingSession && matchingSession.timeSpent > 0) {
         formMap[formId].totalDuration += matchingSession.timeSpent;
         formMap[formId].durationCount++;
-      } else {
-        // Log individual response duration for reviews if it's an admin review
-        if (r.status !== 'pending' && r.verifiedBy && r.verifiedBy.toString() === adminObjectId.toString() && r.verifiedAt) {
-          const start = r.assignedAt || r.createdAt;
-          const diffSeconds = Math.floor((new Date(r.verifiedAt) - new Date(start)) / 1000);
-          if (diffSeconds > 0) {
-            // We'll track this as a secondary metric or combined for now
-            // The user asked for "submitting the form", but if no session exists, 
-            // the review time is better than nothing in an admin dashboard.
-            formMap[formId].totalDuration += Math.min(diffSeconds, 1800); // capped at 30m
-            formMap[formId].durationCount++;
-          }
+      } else if (r.status !== 'pending' && r.verifiedBy && r.verifiedBy.toString() === adminObjectId.toString() && r.verifiedAt) {
+        const start = r.assignedAt || r.createdAt;
+        const diffSeconds = Math.floor((new Date(r.verifiedAt) - new Date(start)) / 1000);
+        if (diffSeconds > 0) {
+          formMap[formId].totalDuration += Math.min(diffSeconds, 1800);
+          formMap[formId].durationCount++;
         }
       }
-
-      // answers processing (same as before)
-      const answers = r.answers instanceof Map ? Object.fromEntries(r.answers) : (r.answers || {});
-      Object.values(answers).forEach(val => {
-        if (val === null || val === undefined) return;
-        const strVal = String(val).toLowerCase().trim();
-        if (strVal === 'yes') { yesNoNA.yes++; formMap[formId].yes++; } 
-        else if (strVal === 'no') { yesNoNA.no++; formMap[formId].no++; } 
-        else if (strVal === 'n/a' || strVal === 'na' || strVal === 'n or na') { yesNoNA.na++; formMap[formId].na++; }
-      });
     });
 
-    // Calculate average and total time for each form
+    // Calculate average time for each form
     Object.keys(formMap).forEach(id => {
       const f = formMap[id];
       f.totalTimeSpent = f.totalDuration;
-      
-      // If we still have no duration count, try to use the global average for this form in the tenant
       if (f.durationCount === 0) {
         const globalSessions = sessionMap[id] || [];
         const completedSessions = globalSessions.filter(s => s.timeSpent > 0);
@@ -1123,7 +1347,227 @@ export const getAdminResponseDetails = async (req, res) => {
       }
     });
 
-    // Enrich form titles by looking up form documents
+    // Sort by response count descending
+    const formBreakdown = Object.values(formMap).sort((a, b) => b.responseCount - a.responseCount);
+     const followUpAnswers = {};
+
+responses.forEach(r => {
+  const formId = r.questionId;
+  const formInfo = formMainQuestionMap[formId];
+  if (!formInfo || !formInfo.mainQuestionId) return;
+
+  const answers = r.answers instanceof Map ? Object.fromEntries(r.answers) : (r.answers || {});
+  const mainAnswer = answers[formInfo.mainQuestionId];
+  if (!mainAnswer) return;
+
+  const mainAnswerStr = String(mainAnswer).trim();
+
+  // Only collect follow-up answers for non-first-option answers (Rejected/Rework etc.)
+  const mainOptions = formInfo.mainQuestionOptions || [];
+  const isNonApproved = mainOptions.indexOf(mainAnswerStr) > 0;
+  if (!isNonApproved) return;
+
+  if (!followUpAnswers[formId]) followUpAnswers[formId] = [];
+
+  // Collect all answers for this response (excluding main question)
+  const followUpData = {};
+  Object.entries(answers).forEach(([questionId, value]) => {
+    if (questionId !== formInfo.mainQuestionId) {
+      followUpData[questionId] = value;
+    }
+  });
+
+  followUpAnswers[formId].push({
+    responseId: r._id.toString(),
+    mainAnswer: mainAnswerStr,
+    followUpData,
+    submittedBy: r.submittedBy || r.submitterContact?.email || 'Unknown',
+    createdAt: r.createdAt
+  });
+});
+    // Personal submissions (only count main question responses)
+    const personalSubmissions = responses
+      .filter(r => (r.submittedBy === adminName || r.submitterContact?.email === adminEmail))
+      .slice(0, 10)
+      .map(r => ({
+        id: r._id.toString(),
+        formTitle: formMainQuestionMap[r.questionId]?.title || r.questionId,
+        submittedAt: r.createdAt,
+        status: r.status
+      }));
+
+    // Return the updated response with ONLY main question answers
+    const followUpTreeData = extractFollowUpTree(forms);
+
+    res.json({
+      success: true,
+      data: {
+        totalResponses,
+        statusBreakdown,
+        answerDistribution: overallAnswerDistribution,
+        formBreakdown,
+        followUpTree: followUpTreeData, 
+        personalSubmissions,
+        followUpAnswers,  
+      }
+    });
+    
+  } catch (error) {
+    console.error('getAdminResponseDetails error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+// SuperAdmin: Get response details for a specific tenant
+export const getTenantResponseDetails = async (req, res) => {
+  try {
+    const { tenantId } = req.params;
+    const { startDate, endDate } = req.query;
+
+    if (!tenantId) {
+      return res.status(400).json({ success: false, message: 'Tenant ID is required' });
+    }
+
+    // Build date filter
+    const start = startDate ? new Date(startDate) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const end = endDate ? new Date(endDate) : new Date();
+    end.setHours(23, 59, 59, 999);
+
+    // Get all responses for this tenant in the date range
+    const responses = await Response.find({
+      tenantId: tenantId,
+      createdAt: { $gte: start, $lte: end }
+    }).sort({ createdAt: -1 }).lean();
+
+    const totalResponses = responses.length;
+
+    // Status breakdown
+    const statusBreakdown = { pending: 0, verified: 0, rejected: 0 };
+    responses.forEach(r => {
+      if (r.status === 'pending') statusBreakdown.pending++;
+      else if (r.status === 'verified') statusBreakdown.verified++;
+      else if (r.status === 'rejected') statusBreakdown.rejected++;
+    });
+
+    // Yes / No / N/A answer counts
+    const yesNoNA = { yes: 0, no: 0, na: 0 };
+    const formMap = {};
+
+    // Get sessions for all users in this tenant
+    const sessions = await FormSession.find({
+      tenantId: tenantId,
+      status: { $in: ['completed', 'in-progress'] },
+      startedAt: { $gte: new Date(start.getTime() - 60 * 60 * 1000) }
+    }).lean();
+
+    const sessionMap = {};
+    sessions.forEach(s => {
+      if (!sessionMap[s.formId]) sessionMap[s.formId] = [];
+
+      if (s.status === 'in-progress' && (!s.timeSpent || s.timeSpent === 0)) {
+        const endTime = s.completedAt || s.lastActivityAt || s.updatedAt || new Date();
+        const startTime = s.startedAt;
+        s.timeSpent = Math.max(1, Math.floor((new Date(endTime) - new Date(startTime)) / 1000));
+      }
+
+      sessionMap[s.formId].push(s);
+    });
+
+   responses.forEach(r => {
+      const formId = r.questionId;
+      const formMainQuestionMap = {};
+      const formKey = formId;
+      const formInfo = formMainQuestionMap[formKey];
+
+      // ✅ Always initialize formMap entry FIRST
+      if (!formMap[formId]) {
+        formMap[formId] = {
+          formId,
+          formTitle: formInfo?.title || formId,
+          answerDistribution: {},
+          responseCount: 0,
+          totalDuration: 0,
+          durationCount: 0,
+          avgTimeSpent: 0
+        };
+      }
+
+      // ✅ Always increment responseCount BEFORE early return
+      formMap[formId].responseCount++;
+
+      // Now safe to return early if no main question found
+      if (!formInfo || !formInfo.mainQuestionId) {
+        console.log(`No main question found for form: ${formId}`);
+        return;
+      }
+      // Try to match with session for time tracking
+      const formSessions = sessionMap[formId] || [];
+      const metaSessionId = r.submissionMetadata?.formSessionId;
+
+      let matchingSession = null;
+      if (metaSessionId) {
+        matchingSession = formSessions.find(s => s.sessionId === metaSessionId);
+      }
+
+      if (!matchingSession) {
+        matchingSession = formSessions.find(s => {
+          const sessionTime = new Date(s.completedAt || s.lastActivityAt || s.updatedAt).getTime();
+          const responseTime = new Date(r.createdAt || r.timestamp).getTime();
+          return Math.abs(sessionTime - responseTime) < 60 * 1000;
+        });
+      }
+
+      let timeSpent = 0;
+
+      // Try to get time from various sources
+      if (matchingSession && matchingSession.timeSpent > 0) {
+        timeSpent = matchingSession.timeSpent;
+      } else if (r.timeSpent > 0) {
+        // Use response's own timeSpent field
+        timeSpent = r.timeSpent;
+      } else if (r.startedAt && r.completedAt) {
+        // Calculate from startedAt and completedAt
+        timeSpent = Math.floor((new Date(r.completedAt) - new Date(r.startedAt)) / 1000);
+      } else if (r.startedAt) {
+        // If only startedAt exists, calculate until submission
+        timeSpent = Math.floor((new Date(r.createdAt) - new Date(r.startedAt)) / 1000);
+      }
+
+      if (timeSpent > 0) {
+        formMap[formId].totalDuration += timeSpent;
+        formMap[formId].durationCount++;
+      }
+
+      // Process answers - handle various formats
+      const answers = r.answers instanceof Map ? Object.fromEntries(r.answers) : (r.answers || {});
+      Object.values(answers).forEach(val => {
+        if (val === null || val === undefined) return;
+        const strVal = String(val).toLowerCase().trim();
+        if (strVal === 'yes' || strVal === 'y' || strVal === 'true' || strVal === '1') {
+          yesNoNA.yes++;
+          formMap[formId].yes++;
+        }
+        else if (strVal === 'no' || strVal === 'n' || strVal === 'false' || strVal === '0') {
+          yesNoNA.no++;
+          formMap[formId].no++;
+        }
+        else if (strVal === 'n/a' || strVal === 'na' || strVal === 'n or na' || strVal === 'not applicable') {
+          yesNoNA.na++;
+          formMap[formId].na++;
+        }
+      });
+    });
+
+    // Calculate average time for each form
+    Object.keys(formMap).forEach(id => {
+      const f = formMap[id];
+      f.totalTimeSpent = f.totalDuration;
+      if (f.durationCount > 0) {
+        f.avgTimeSpent = Math.round(f.totalDuration / f.durationCount);
+      }
+    });
+
+    // Enrich form titles
     const formIds = Object.keys(formMap);
     if (formIds.length > 0) {
       const forms = await Form.find(
@@ -1139,18 +1583,8 @@ export const getAdminResponseDetails = async (req, res) => {
       });
     }
 
-    // Sort by response count descending
+    // Sort by response count
     const formBreakdown = Object.values(formMap).sort((a, b) => b.responseCount - a.responseCount);
-
-    const personalSubmissions = responses
-      .filter(r => r.submittedBy === adminName || r.submitterContact?.email === adminEmail)
-      .slice(0, 10) // Top 10 recent
-      .map(r => ({
-        id: r._id.toString(),
-        formTitle: formMap[r.questionId]?.formTitle || r.questionId,
-        submittedAt: r.createdAt,
-        status: r.status
-      }));
 
     res.json({
       success: true,
@@ -1158,15 +1592,15 @@ export const getAdminResponseDetails = async (req, res) => {
         totalResponses,
         statusBreakdown,
         yesNoNA,
-        formBreakdown,
-        personalSubmissions
+        formBreakdown
       }
     });
   } catch (error) {
-    console.error('getAdminResponseDetails error:', error);
+    console.error('getTenantResponseDetails error:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
+
 export const getResponseTimeAnalytics = async (req, res) => {
   try {
     const { formId } = req.params;
@@ -1203,10 +1637,10 @@ export const getResponseTimeAnalytics = async (req, res) => {
     const stats = {
       totalResponses: responses.length,
       responsesWithTiming: times.length,
-      averageTime: times.length > 0 
+      averageTime: times.length > 0
         ? Math.round(times.reduce((a, b) => a + b, 0) / times.length)
         : 0,
-      medianTime: times.length > 0 
+      medianTime: times.length > 0
         ? calculateMedian(times)
         : 0,
       minTime: times.length > 0 ? Math.min(...times) : 0,
@@ -1249,7 +1683,7 @@ export const getResponseTimeAnalytics = async (req, res) => {
 
     // Calculate averages for questions
     Object.values(questionTimings).forEach(q => {
-      q.averageTime = q.responseCount > 0 
+      q.averageTime = q.responseCount > 0
         ? Math.round(q.totalTime / q.responseCount)
         : 0;
       q.timeSpentSeconds = q.averageTime;
@@ -1319,7 +1753,7 @@ function calculateMedian(arr) {
 
 function calculateTimeDistribution(times) {
   if (times.length === 0) return {};
-  
+
   const buckets = {
     '0-30s': 0,
     '30s-1m': 0,
@@ -1330,7 +1764,7 @@ function calculateTimeDistribution(times) {
     '20-30m': 0,
     '30m+': 0
   };
-  
+
   times.forEach(time => {
     if (time <= 30) buckets['0-30s']++;
     else if (time <= 60) buckets['30s-1m']++;
@@ -1341,17 +1775,17 @@ function calculateTimeDistribution(times) {
     else if (time <= 1800) buckets['20-30m']++;
     else buckets['30m+']++;
   });
-  
+
   return buckets;
 }
 
 function groupResponsesByDay(responses, groupBy) {
   const grouped = {};
-  
+
   responses.forEach(response => {
     const date = new Date(response.createdAt);
     let key;
-    
+
     if (groupBy === 'hour') {
       key = `${date.toISOString().split('T')[0]} ${date.getHours()}:00`;
     } else if (groupBy === 'week') {
@@ -1361,7 +1795,7 @@ function groupResponsesByDay(responses, groupBy) {
     } else {
       key = date.toISOString().split('T')[0];
     }
-    
+
     if (!grouped[key]) {
       grouped[key] = {
         date: key,
@@ -1371,43 +1805,43 @@ function groupResponsesByDay(responses, groupBy) {
         responses: []
       };
     }
-    
+
     const timeSpent = response.submissionMetadata?.timeSpent || 0;
     grouped[key].count++;
     grouped[key].totalTime += timeSpent;
     grouped[key].responses.push(timeSpent);
   });
-  
+
   // Calculate averages
   Object.values(grouped).forEach(day => {
     day.averageTime = day.count > 0 ? Math.round(day.totalTime / day.count) : 0;
     day.averageTimeFormatted = formatTimeDuration(day.averageTime);
     delete day.responses;
   });
-  
+
   return Object.values(grouped).sort((a, b) => new Date(a.date) - new Date(b.date));
 }
 
 function groupResponsesByHour(responses) {
   const hourly = {};
-  
+
   for (let i = 0; i < 24; i++) {
     hourly[i] = { hour: i, count: 0, totalTime: 0, averageTime: 0 };
   }
-  
+
   responses.forEach(response => {
     const hour = new Date(response.createdAt).getHours();
     const timeSpent = response.submissionMetadata?.timeSpent || 0;
-    
+
     hourly[hour].count++;
     hourly[hour].totalTime += timeSpent;
   });
-  
+
   // Calculate averages
   Object.values(hourly).forEach(h => {
     h.averageTime = h.count > 0 ? Math.round(h.totalTime / h.count) : 0;
     h.averageTimeFormatted = formatTimeDuration(h.averageTime);
   });
-  
+
   return Object.values(hourly);
 }

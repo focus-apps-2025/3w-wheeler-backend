@@ -25,7 +25,8 @@ import {
   getSectionBranchingPublic,
   importFormFromCSV,
   getGlobalFormStats,
-  submitPublicResponse
+  submitPublicResponse,
+  startFormSession
 } from '../controllers/formController.js';
 import { authenticate, adminOnly, teacherOrAdmin, superAdminOnly } from '../middleware/auth.js';
 import { addTenantFilter } from '../middleware/tenantIsolation.js';
@@ -42,6 +43,32 @@ router.get('/:id/public/:tenantSlug', getFormById);  // Get specific form for a 
 router.get('/:id/section-branching/public/:tenantSlug', getSectionBranchingPublic);
 
 router.post('/:id/public/submit', submitPublicResponse);
+
+// Form session tracking (needs to be after public routes but before auth)
+router.post('/:id/track/start', startFormSession);
+
+// Track individual question time (non-critical, always 200)
+router.post('/:id/track/question', (req, res) => {
+  const { sessionId, questionId, questionText, timeSpent } = req.body;
+  console.log(`[TIME TRACKING] Question "${questionText || questionId}" - ${timeSpent}s (session: ${sessionId})`);
+  return res.status(200).json({ success: true, message: 'Question time tracked' });
+});
+
+// Track section completion progress (non-critical, always 200)
+router.post('/:id/track/progress', (req, res) => {
+  const { sessionId, sectionTitle, timeSpent, questionCount } = req.body;
+  console.log(`[TIME TRACKING] Section "${sectionTitle}" completed - ${timeSpent}s, ${questionCount} questions (session: ${sessionId})`);
+  return res.status(200).json({ success: true, message: 'Section progress tracked' });
+});
+
+// Mark session as complete before form submission (non-critical, always 200)
+router.post('/:id/track/complete', (req, res) => {
+  const { sessionId } = req.body;
+  const formId = req.params.id;
+  console.log(`[TIME TRACKING] Session ${sessionId} completed for form ${formId}`);
+  return res.status(200).json({ success: true, message: 'Session marked complete' });
+});
+
 // Protected routes
 router.use(authenticate);
 router.use(addTenantFilter);

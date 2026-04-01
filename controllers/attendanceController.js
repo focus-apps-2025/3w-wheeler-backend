@@ -118,7 +118,9 @@ export const getAttendance = async (req, res) => {
                 query.loginTime.$gte = new Date(startDate);
             }
             if (endDate) {
-                query.loginTime.$lte = new Date(endDate);
+                const end = new Date(endDate);
+                end.setHours(23, 59, 59, 999);
+                query.loginTime.$lte = end;
             }
         }
 
@@ -358,7 +360,9 @@ export const getMyAttendance = async (req, res) => {
                 query.loginTime.$gte = new Date(startDate);
             }
             if (endDate) {
-                query.loginTime.$lte = new Date(endDate);
+                const end = new Date(endDate);
+                end.setHours(23, 59, 59, 999);
+                query.loginTime.$lte = end;
             }
         }
 
@@ -450,7 +454,9 @@ export const exportAttendance = async (req, res) => {
                 query.loginTime.$gte = new Date(startDate);
             }
             if (endDate) {
-                query.loginTime.$lte = new Date(endDate);
+                const end = new Date(endDate);
+                end.setHours(23, 59, 59, 999);
+                query.loginTime.$lte = end;
             }
         }
 

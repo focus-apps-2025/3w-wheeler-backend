@@ -182,6 +182,14 @@ export const canAccessForm = async (req, res, next) => {
       return next();
     }
 
+    // Check if the tenant has any chassis assignments for this form
+    const hasChassisAssignment = Array.isArray(form.chassisTenantAssignments) && form.chassisTenantAssignments.some(
+      assignment => assignment.assignedTenants && assignment.assignedTenants.includes(user.tenantId.toString())
+    );
+    if (hasChassisAssignment) {
+      return next();
+    }
+
     if (form.createdBy.toString() === user._id.toString()) {
       return next();
     }

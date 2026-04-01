@@ -2,6 +2,7 @@ import express from 'express';
 import {
   createTenant,
   getAllTenants,
+  getTenantsMinimal,
   getTenantBySlug,
   updateTenant,
   toggleTenantStatus,
@@ -23,6 +24,7 @@ router.use(authenticate);
 router.use(addTenantFilter);
 
 // SuperAdmin-only routes for tenant management
+router.get('/minimal', getTenantsMinimal); // Minimal list accessible to all authenticated users
 router.post('/', superAdminOnly, createTenant);
 router.get('/', superAdminOnly, getAllTenants);
 router.get('/slug/:slug', superAdminOnly, getTenantBySlug);

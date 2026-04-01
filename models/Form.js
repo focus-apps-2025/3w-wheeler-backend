@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 
-const ALLOWED_FILE_TYPES = ['image', 'pdf', 'excel'];
+const ALLOWED_FILE_TYPES = ['image', 'pdf', 'excel', 'stp', 'pvz', 'doc', 'docx'];
 
 const GridOptionSchema = new mongoose.Schema({
   rows: [String],
@@ -59,10 +59,14 @@ const FollowUpQuestionSchema = new mongoose.Schema({
     enum: [
       'text', 'radio', 'checkbox', 'email', 'url', 'tel', 'date', 'time',
       'file', 'range', 'rating', 'scale', 'radio-grid', 'checkbox-grid',
-      'radio-image', 'paragraph', 'search-select', 'number', 'location', 
+      'radio-image', 'paragraph', 'search-select', 'number', 'location',
       'yesNoNA',
       // Hierarchy types
       'productNPSTGWBuckets',
+       // Chassis types
+      'chassis-with-zone', 'chassis-without-zone',
+      // Chassis number type for multi-tenant response sharing
+      'chassisNumber',
       // Feedback types
       'slider-feedback', 'emoji-star-feedback', 'emoji-reaction-feedback', 'rating-number', 'satisfaction-rating',
       // Legacy types for backward compatibility (will be migrated)
@@ -107,6 +111,18 @@ const FollowUpQuestionSchema = new mongoose.Schema({
   },
   description: String,
   suggestion: String,
+  trackResponseRank: {
+    type: Boolean,
+    default: false
+  },
+  trackResponseRankLabel: String,
+  trackResponseRankType: String,
+  trackResponseQuestion: {
+    type: Boolean,
+    default: false
+  },
+  trackResponseQuestionLabel: String,
+  trackResponseQuestionType: String,
   subParam1: String,
   subParam2: String,
   sectionId: String,
@@ -122,7 +138,7 @@ const SectionSchema = new mongoose.Schema({
   },
   title: {
     type: String,
-    required: true
+    required: false
   },
   description: String,
   weightage: {
@@ -152,7 +168,7 @@ const FormSchema = new mongoose.Schema({
   },
   description: {
     type: String,
-    required: true
+    required: false
   },
   logoUrl: String,
   imageUrl: String,
@@ -211,7 +227,15 @@ const FormSchema = new mongoose.Schema({
     canEdit: [String],
     canAddFollowUp: [String],
     canDelete: [String]
-  }
+  },
+  chassisNumbers: [{
+    chassisNumber: String,
+    partDescription: String
+  }],
+  chassisTenantAssignments: [{
+    chassisNumber: String,
+    assignedTenants: [String]
+  }]
 }, {
   timestamps: true
 });
@@ -221,14 +245,14 @@ const FormSchema = new mongoose.Schema({
  */
 const normalizeQuestionType = (type) => {
   if (!type) return type;
-  
+
   // Normalize: lowercase, trim, remove extra spaces, replace slashes with nothing
   let normalizedType = String(type)
     .toLowerCase()
     .trim()
     .replace(/\s+/g, ' ') // normalize multiple spaces to single space
     .replace(/\s*\/\s*/g, ''); // remove slashes and surrounding spaces
-  
+
   const typeMap = {
     // Legacy/UI type names - without spaces/slashes
     'shorttext': 'text',
@@ -240,10 +264,10 @@ const normalizeQuestionType = (type) => {
     'checkboxes': 'checkbox',
     'fileupload': 'file',
     'file upload': 'file',
-    
+
     // Yes/No variations
     'yesnona': 'yesNoNA',
-    
+
     // Core types - pass through
     'text': 'text',
     'radio': 'radio',
@@ -251,7 +275,7 @@ const normalizeQuestionType = (type) => {
     'select': 'select',
     'checkbox': 'checkbox',
     'yesnona': 'yesNoNA',  // lowercase pass-through
-    
+
     // Extended types - supported by schema
     'email': 'email',
     'url': 'url',
@@ -273,7 +297,7 @@ const normalizeQuestionType = (type) => {
     'number': 'number',
     'location': 'location',
     'textarea': 'textarea',
-    
+
     // Feedback types
     'slider-feedback': 'slider-feedback',
     'sliderfeedback': 'slider-feedback',
@@ -285,21 +309,25 @@ const normalizeQuestionType = (type) => {
     'ratingnumber': 'rating-number',
     'satisfaction-rating': 'satisfaction-rating',
     'satisfactionrating': 'satisfaction-rating',
+    'chassis-with-zone': 'chassis-with-zone',
+    'chassiswithzone': 'chassis-with-zone',
+    'chassis-without-zone': 'chassis-without-zone',
+    'chassiswithoutzone': 'chassis-without-zone',
     'productnpstgwbuckets': 'productNPSTGWBuckets',
     'product-nps-tgw-buckets': 'productNPSTGWBuckets'
   };
-  
+
   // First try exact match after normalization
   if (typeMap[normalizedType]) {
     return typeMap[normalizedType];
   }
-  
+
   // If not found, try with spaces removed entirely
   const noSpaces = normalizedType.replace(/\s/g, '');
   if (typeMap[noSpaces]) {
     return typeMap[noSpaces];
   }
-  
+
   return type; // Return original if no match found
 };
 
@@ -308,13 +336,13 @@ const normalizeQuestionTypes = (question) => {
     if (question.type) {
       question.type = normalizeQuestionType(question.type);
     }
-    
+
     // Recursively normalize follow-up questions
     if (Array.isArray(question.followUpQuestions)) {
       question.followUpQuestions = question.followUpQuestions.map(fq => normalizeQuestionTypes(fq));
     }
   }
-  
+
   return question;
 };
 
@@ -332,7 +360,18 @@ FormSchema.pre('save', function(next) {
               question.type = normalizedType;
               modified = true;
             }
-            
+            // Filter allowedFileTypes
+            if (question.type === 'file' && Array.isArray(question.allowedFileTypes)) {
+              const originalCount = question.allowedFileTypes.length;
+              question.allowedFileTypes = question.allowedFileTypes.filter(t => ALLOWED_FILE_TYPES.includes(t));
+              if (question.allowedFileTypes.length !== originalCount) {
+                modified = true;
+              }
+            } else if (question.type !== 'file' && question.allowedFileTypes && question.allowedFileTypes.length > 0) {
+              question.allowedFileTypes = [];
+              modified = true;
+            }
+
             // Recursively normalize follow-up questions
             if (Array.isArray(question.followUpQuestions)) {
               question.followUpQuestions.forEach(fq => {
@@ -340,6 +379,17 @@ FormSchema.pre('save', function(next) {
                 const fqNormalizedType = normalizeQuestionType(fq.type);
                 if (fqOriginalType !== fqNormalizedType) {
                   fq.type = fqNormalizedType;
+                  modified = true;
+                }
+                 // Filter allowedFileTypes for follow-up
+                if (fq.type === 'file' && Array.isArray(fq.allowedFileTypes)) {
+                  const fqOriginalCount = fq.allowedFileTypes.length;
+                  fq.allowedFileTypes = fq.allowedFileTypes.filter(t => ALLOWED_FILE_TYPES.includes(t));
+                  if (fq.allowedFileTypes.length !== fqOriginalCount) {
+                    modified = true;
+                  }
+                } else if (fq.type !== 'file' && fq.allowedFileTypes && fq.allowedFileTypes.length > 0) {
+                  fq.allowedFileTypes = [];
                   modified = true;
                 }
               });
@@ -351,7 +401,7 @@ FormSchema.pre('save', function(next) {
         this.markModified('sections');
       }
     }
-    
+
     // Normalize top-level follow-up questions
     if (Array.isArray(this.followUpQuestions)) {
       let modified = false;
@@ -362,12 +412,23 @@ FormSchema.pre('save', function(next) {
           q.type = normalizedType;
           modified = true;
         }
+            // Filter allowedFileTypes for top-level follow-ups
+        if (q.type === 'file' && Array.isArray(q.allowedFileTypes)) {
+          const qOriginalCount = q.allowedFileTypes.length;
+          q.allowedFileTypes = q.allowedFileTypes.filter(t => ALLOWED_FILE_TYPES.includes(t));
+          if (q.allowedFileTypes.length !== qOriginalCount) {
+            modified = true;
+          }
+        } else if (q.type !== 'file' && q.allowedFileTypes && q.allowedFileTypes.length > 0) {
+          q.allowedFileTypes = [];
+          modified = true;
+        }
       });
       if (modified) {
         this.markModified('followUpQuestions');
       }
     }
-    
+
     next();
   } catch (error) {
     next(error);

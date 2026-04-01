@@ -6,11 +6,12 @@ import {
   getAdminPerformance,
   getAdminActivity,
   getAdminResponseDetails,
+  getTenantResponseDetails,
   getTenantSubmissionStats,
   exportAnalytics,
-  getResponseTimeAnalytics  
+  getResponseTimeAnalytics
 } from '../controllers/analyticsController.js';
-import { authenticate, adminOnly } from '../middleware/auth.js';
+import { authenticate, adminOnly, superAdminOnly } from '../middleware/auth.js';
 import { addTenantFilter } from '../middleware/tenantIsolation.js';
 
 const router = express.Router();
@@ -26,6 +27,8 @@ router.get('/users', adminOnly, getUserAnalytics);
 router.get('/admin/:adminId/performance', getAdminPerformance);
 router.get('/admin/:adminId/activity', getAdminActivity);
 router.get('/admin/:adminId/response-details', getAdminResponseDetails);
+// Superadmin route - bypasses tenant filter to get any tenant's data
+router.get('/superadmin/tenant/:tenantId/response-details', authenticate, superAdminOnly, getTenantResponseDetails);
 router.get('/tenant/stats', getTenantSubmissionStats);
 router.get('/export', exportAnalytics);
 // Add this new route

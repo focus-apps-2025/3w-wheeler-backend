@@ -7,6 +7,7 @@ import Parameter from '../models/Parameter.js';
 import Profile from '../models/Profile.js';
 import Settings from '../models/Settings.js';
 import bcrypt from 'bcryptjs';
+import mongoose from 'mongoose';
 
 // Create a new tenant (SuperAdmin only)
 export const createTenant = async (req, res) => {
@@ -186,7 +187,28 @@ export const getAllTenants = async (req, res) => {
   }
 };
 
-// Get tenant by slug
+// Get minimal list of tenants for sharing/linking (any authenticated user)
+export const getTenantsMinimal = async (req, res) => {
+  try {
+    const tenants = await Tenant.find({ isActive: true })
+      .select('_id name companyName')
+      .sort({ companyName: 1 })
+      .lean();
+
+    res.json({
+      success: true,
+      data: { tenants }
+    });
+  } catch (error) {
+    console.error('Get minimal tenants error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// Update tenant
 export const getTenantBySlug = async (req, res) => {
   try {
     const { slug } = req.params;

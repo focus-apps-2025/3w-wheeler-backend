@@ -299,14 +299,12 @@ export const calculateUserActiveMinutes = async (userId, tenantId, startDate, en
     const gap = current - lastActivity;
 
     if (gap <= SESSION_TIMEOUT) {
-      // Same session
       lastActivity = current;
     } else {
       // Session ended
       const sessionMinutes = Math.ceil((lastActivity - sessionStart) / 60000);
-      totalMinutes += Math.max(sessionMinutes, 2); // Minimum 2 minutes per session
+      totalMinutes += Math.max(sessionMinutes, 1); // ✅ Minimum 1 minute
       
-      // Start new session
       sessionStart = current;
       lastActivity = current;
     }
@@ -314,7 +312,7 @@ export const calculateUserActiveMinutes = async (userId, tenantId, startDate, en
 
   // Add last session
   const lastSessionMinutes = Math.ceil((lastActivity - sessionStart) / 60000);
-  totalMinutes += Math.max(lastSessionMinutes, 2);
+  totalMinutes += Math.max(lastSessionMinutes, 1); // ✅ Minimum 1 minute
 
   return totalMinutes;
 };

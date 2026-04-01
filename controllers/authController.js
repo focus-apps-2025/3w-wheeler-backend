@@ -1,3 +1,4 @@
+import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
 import Tenant from '../models/Tenant.js';
 import LoginLog from '../models/LoginLog.js';
@@ -405,16 +406,33 @@ export const logout = async (req, res) => {
   try {
     const { sessionLogId } = req.body;
 
+    // Update specific session if sessionLogId is provided
     if (sessionLogId) {
       await LoginLog.findByIdAndUpdate(sessionLogId, {
         logoutTime: new Date()
       });
-    } else if (req.user) {
-      // Fallback: update latest open session for user
-      await LoginLog.findOneAndUpdate(
-        { userId: req.user._id, logoutTime: null },
-        { logoutTime: new Date() },
-        { sort: { loginTime: -1 } }
+    }
+
+    // Get userId from authenticated user, or decode from expired token
+    let userId = req.user?._id;
+    if (!userId) {
+      const authHeader = req.header('Authorization');
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        try {
+          const token = authHeader.substring(7);
+          const decoded = jwt.decode(token);
+          if (decoded?.userId) {
+            userId = decoded.userId;
+          }
+        } catch {}
+      }
+    }
+
+    // Close ALL open sessions for this user
+    if (userId) {
+      await LoginLog.updateMany(
+        { userId, logoutTime: null },
+        { logoutTime: new Date() }
       );
     }
 
