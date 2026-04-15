@@ -50,6 +50,43 @@ class SMSService {
         return `+${cleaned}`;
     }
 
+    async sendOTP(phone, otp) {
+        try {
+            console.log(`[SMS] sendOTP called for phone: ${phone}`);
+            if (!this.isConfigured) {
+                console.warn('[SMS] Twilio not configured - returning success for development');
+                // For development, we might want to still proceed as if it was sent
+                return { success: true, message: 'SMS service not configured (Dev Mode)', otp };
+            }
+
+            const customerPhone = this.formatPhoneNumber(phone);
+            if (!customerPhone) {
+                return { success: false, error: 'Invalid phone number' };
+            }
+
+            const message = `Your 3W-WHEELER Forms verification code is: ${otp}. Valid for 5 minutes.`;
+
+            const result = await this.client.messages.create({
+                from: this.smsNumber,
+                to: customerPhone,
+                body: message
+            });
+
+            console.log('✅ [SMS] OTP sent success:', result.sid);
+            return {
+                success: true,
+                messageSid: result.sid
+            };
+
+        } catch (error) {
+            console.error('❌ Failed to send OTP SMS:', error);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
     async sendFormInvite(phone, formTitle, inviteLink, tenantName) {
         try {
             console.log(`[SMS] sendFormInvite called for phone: ${phone}`);

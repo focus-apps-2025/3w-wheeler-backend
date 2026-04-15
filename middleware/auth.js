@@ -45,6 +45,7 @@ export const authenticate = async (req, res, next) => {
     user.lastLogin = new Date();
     await user.save();
 
+    console.log('authenticate - user logged in:', user.firstName, user.lastName, 'role:', user.role, 'tenantId:', user.tenantId);
     req.user = user;
     next();
   } catch (error) {
@@ -120,9 +121,10 @@ export const authorize = (...roles) => {
 };
 
 export const superAdminOnly = authorize('superadmin');
-export const adminOnly = authorize('admin', 'superadmin');
+export const adminOnly = authorize('admin', 'superadmin', 'subadmin');
 export const teacherOrAdmin = authorize('teacher', 'admin', 'superadmin');
 export const staffOrAdmin = authorize('staff', 'admin', 'superadmin');
+export const inspectorOrAdmin = authorize('inspector', 'admin', 'superadmin');
 
 export const generateToken = (userId) => {
   return jwt.sign({ userId }, getJwtSecret(), { 
@@ -136,6 +138,19 @@ export const hasPermission = (permission) => {
     
     // SuperAdmin and Admin always have all permissions
     if (user.role === 'superadmin' || user.role === 'admin') {
+      return next();
+    }
+
+    // Inspector role has view_all_responses, view_analytics, export_data permissions
+    if (user.role === 'inspector') {
+      const inspectorPermissions = ['view_all_responses', 'view_analytics', 'export_data'];
+      if (inspectorPermissions.includes(permission)) {
+        return next();
+      }
+    }
+
+    // Subadmin has all permissions
+    if (user.role === 'subadmin') {
       return next();
     }
 
@@ -163,6 +178,11 @@ export const canAccessForm = async (req, res, next) => {
 
     // SuperAdmin can access all forms
     if (user.role === 'superadmin') {
+      return next();
+    }
+
+    // Inspector can access all forms within their tenant
+    if (user.role === 'inspector' || user.role === 'subadmin') {
       return next();
     }
 

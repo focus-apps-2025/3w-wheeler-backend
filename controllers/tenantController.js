@@ -20,6 +20,7 @@ export const createTenant = async (req, res) => {
       adminPassword,
       adminFirstName,
       adminLastName,
+      adminMobile,
       settings,
       subscription
     } = req.body;
@@ -57,6 +58,7 @@ export const createTenant = async (req, res) => {
       password: adminPassword,
       firstName: adminFirstName,
       lastName: adminLastName,
+      mobile: adminMobile,
       role: 'admin',
       isActive: true,
       createdBy: req.user._id
@@ -155,7 +157,7 @@ export const getAllTenants = async (req, res) => {
       tenants.map(async (tenant) => {
         const allAdmins = await User.find({
           tenantId: tenant._id,
-          role: { $in: ['admin', 'subadmin'] }
+          role: { $in: ['admin', 'subadmin', 'inspector'] }
         }).select('_id firstName lastName email isActive lastLogin role createdAt').lean();
         
         return {
@@ -296,7 +298,7 @@ export const toggleTenantStatus = async (req, res) => {
 
     // Update ALL admin/subadmin users status for this tenant
     await User.updateMany(
-      { tenantId: tenant._id, role: { $in: ['admin', 'subadmin'] } },
+      { tenantId: tenant._id, role: { $in: ['admin', 'subadmin', 'inspector'] } },
       { isActive: tenant.isActive }
     );
 
@@ -405,7 +407,7 @@ export const getTenantStats = async (req, res) => {
 export const addAdminToTenant = async (req, res) => {
   try {
     const { tenantId } = req.params;
-    const { email, password, firstName, lastName } = req.body;
+    const { email, password, firstName, lastName, mobile } = req.body;
     const requestingUser = req.user;
 
     console.log("📥 Adding admin to tenant:", { tenantId, email, firstName, lastName });
@@ -439,6 +441,7 @@ export const addAdminToTenant = async (req, res) => {
       password: password,
       firstName: firstName,
       lastName: lastName,
+      mobile: mobile,
       role: "admin",
       tenantId: tenantId,
       isActive: true,
@@ -547,7 +550,7 @@ export const removeAdminFromTenant = async (req, res) => {
     // Check if this is the last admin/subadmin
     const adminCount = await User.countDocuments({ 
       tenantId: tenantId, 
-      role: { $in: ['admin', 'subadmin'] },
+      role: { $in: ['admin', 'subadmin', 'inspector'] },
       isActive: true
     });
 

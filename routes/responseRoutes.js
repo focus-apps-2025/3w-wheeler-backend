@@ -18,7 +18,7 @@
     getSuggestedAnswers,
     getQuestionPreviousAnswers,
   } from '../controllers/responseController.js';
-  import { authenticate, adminOnly, teacherOrAdmin } from '../middleware/auth.js';
+  import { authenticate, authenticateOptional, adminOnly, teacherOrAdmin } from '../middleware/auth.js';
   import { addTenantFilter } from '../middleware/tenantIsolation.js';
   import { processResponseImages, processGoogleDriveImage } from '../services/googleDriveService.js';
 
@@ -123,8 +123,8 @@
     }
   });
 
-  // 6. SINGLE RESPONSE CREATION
-  router.post('/:tenantSlug/forms/:formId/responses', createResponse);
+  // 6. SINGLE RESPONSE CREATION (optional auth - allows public with token if provided)
+  router.post('/:tenantSlug/forms/:formId/responses', authenticateOptional, createResponse);
 
   // 7. GET RANK (PUBLIC)
   router.get('/rank', getRank);
@@ -152,6 +152,8 @@ router.get('/:tenantSlug/forms/:formId/previous-answers', getQuestionPreviousAns
   // Response management
   router.get('/', getAllResponses);
   router.post('/', createResponse);
+  // Also handle POST /responses/:formId for internal submissions
+  router.post('/:formId', createResponse);
   router.get('/:id', getResponseById);
   router.put('/:id', updateResponse);
   router.patch('/:id/assign', assignResponse);

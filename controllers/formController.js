@@ -491,14 +491,20 @@ export const getAllForms = async (req, res) => {
       page: parseInt(page),
       limit: parseInt(limit),
       sort: { createdAt: -1 },
-      populate: {
-        path: 'createdBy',
-        select: 'username firstName lastName email'
-      }
+      populate: [
+        {
+          path: 'createdBy',
+          select: 'username firstName lastName email'
+        },
+        {
+          path: 'tenantId',
+          select: 'companyName name slug'
+        }
+      ]
     };
 
     const forms = await Form.find(query)
-      .populate(options.populate.path, options.populate.select)
+      .populate(options.populate)
       .sort(options.sort)
       .limit(options.limit * 1)
       .skip((options.page - 1) * options.limit);
@@ -2421,6 +2427,12 @@ export const startFormSession = async (req, res) => {
 
 export const submitPublicResponse = async (req, res) => {
   try {
+    console.log('[PUBLIC SUBMIT] === DEBUG START ===');
+    console.log('[PUBLIC SUBMIT] req.user:', req.user);
+    console.log('[PUBLIC SUBMIT] req.user?._id:', req.user?._id);
+    console.log('[PUBLIC SUBMIT] req.user?.role:', req.user?.role);
+    console.log('[PUBLIC SUBMIT] auth header:', !!req.header('Authorization'));
+    
     const { id } = req.params;
     const {
       inviteId,
@@ -2563,8 +2575,8 @@ export const submitPublicResponse = async (req, res) => {
       }
     }
 
-    // Create the response
-    const response = new Response({
+    // Create the response - include createdBy if user is authenticated
+    const responseData = {
       id: uuidv4(),
       questionId: id,
       tenantId: form.tenantId,
@@ -2590,7 +2602,15 @@ export const submitPublicResponse = async (req, res) => {
       sectionIndex: sectionIndex || null,
       submittedAt: new Date(),
       createdAt: new Date()
-    });
+    };
+
+    // If user is authenticated (not a public submission), set createdBy
+    if (req.user && req.user._id) {
+      responseData.createdBy = req.user._id;
+      console.log('[PUBLIC SUBMIT] Setting createdBy to user ID:', req.user._id);
+    }
+
+    const response = new Response(responseData);
 
     await response.save();
     console.log("✅ Response saved with ID:", response._id);

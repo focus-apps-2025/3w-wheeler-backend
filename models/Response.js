@@ -33,6 +33,11 @@ const ResponseSchema = new mongoose.Schema({
     enum: ['pending', 'verified', 'rejected'],
     default: 'pending'
   },
+  createdBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    index: true
+  },
   notes: String,
   isSectionSubmit: {
     type: Boolean,

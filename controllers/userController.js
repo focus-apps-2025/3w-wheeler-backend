@@ -42,7 +42,7 @@ import mongoose from 'mongoose';
 
 export const createUser = async (req, res) => {
   try {
-    const { username, email, password, firstName, lastName, role, permissions } = req.body;
+    const { username, email, password, firstName, lastName, role, mobile, permissions } = req.body;
 
     if (req.user.role === 'admin' && role === 'admin') {
       return res.status(403).json({
@@ -76,11 +76,12 @@ export const createUser = async (req, res) => {
       firstName,
       lastName,
       role,
+      mobile,
       createdBy: req.user._id,
       tenantId: req.user.role === 'superadmin' ? req.body.tenantId : req.user.tenantId
     };
 
-    if (role === 'subadmin') {
+    if (role === 'subadmin' || role === 'inspector') {
       newUserData.permissions = sanitizedPermissions;
     } else if (sanitizedPermissions.length > 0) {
       newUserData.permissions = sanitizedPermissions;
@@ -566,7 +567,7 @@ export const getAllTenantsPerformance = async (req, res) => {
 
     // Build query to get all admins/subadmins across all tenants
     const query = {
-      role: { $in: ['admin', 'subadmin'] }
+      role: { $in: ['admin', 'subadmin', 'inspector'] }
     };
 
     // Search filter

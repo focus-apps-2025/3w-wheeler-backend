@@ -16,7 +16,7 @@ const activityLogSchema = new mongoose.Schema({
   },
   userRole: {
     type: String,
-    enum: ['superadmin', 'admin', 'subadmin', 'teacher', 'student', 'staff', 'editor', 'viewer'],
+    enum: ['superadmin', 'admin', 'subadmin', 'teacher', 'student', 'staff', 'editor', 'viewer', 'inspector'],
     required: true
   },
   action: {

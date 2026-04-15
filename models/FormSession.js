@@ -22,7 +22,7 @@ const formSessionSchema = new mongoose.Schema({
   },
   userRole: {
     type: String,
-    enum: ['superadmin', 'admin', 'subadmin', 'teacher', 'student', 'staff', 'editor', 'viewer', 'anonymous'],
+    enum: ['superadmin', 'admin', 'subadmin', 'teacher', 'student', 'staff', 'editor', 'viewer', 'inspector', 'anonymous'],
     default: 'anonymous'
   },
   formId: {

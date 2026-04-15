@@ -28,7 +28,7 @@ import {
   submitPublicResponse,
   startFormSession
 } from '../controllers/formController.js';
-import { authenticate, adminOnly, teacherOrAdmin, superAdminOnly } from '../middleware/auth.js';
+import { authenticate, authenticateOptional, adminOnly, teacherOrAdmin, superAdminOnly } from '../middleware/auth.js';
 import { addTenantFilter } from '../middleware/tenantIsolation.js';
 import formInviteRoutes from './formInviteRoutes.js';
 import multer from 'multer';
@@ -42,7 +42,7 @@ router.get('/public/:tenantSlug', getPublicForms);  // Get all public forms for 
 router.get('/:id/public/:tenantSlug', getFormById);  // Get specific form for a tenant
 router.get('/:id/section-branching/public/:tenantSlug', getSectionBranchingPublic);
 
-router.post('/:id/public/submit', submitPublicResponse);
+router.post('/:id/public/submit', authenticateOptional, submitPublicResponse);
 
 // Form session tracking (needs to be after public routes but before auth)
 router.post('/:id/track/start', startFormSession);

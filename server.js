@@ -32,6 +32,8 @@ import formInviteRoutes from './routes/formInviteRoutes.js';
 import uploadRoutes from './routes/upload.js';
 import activityRoutes from './routes/activityRoutes.js';
 import attendanceRoutes from './routes/attendanceRoutes.js';
+import otpRoutes from './routes/otpRoutes.js';
+import hrRoutes from './routes/hrRoutes.js';
 
 // Connect to database
 await connectDB();
@@ -128,6 +130,8 @@ app.use('/api/pdf', pdfRoutes);
 app.use('/api/forms', formInviteRoutes);
 app.use('/api/activity', activityRoutes);
 app.use('/api/attendance', attendanceRoutes);
+app.use('/api/hr', hrRoutes);
+app.use('/api/otp', otpRoutes);
 
 
 process.on('SIGTERM', async () => {

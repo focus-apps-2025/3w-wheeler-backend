@@ -11,7 +11,7 @@ import {
   exportAnalytics,
   getResponseTimeAnalytics
 } from '../controllers/analyticsController.js';
-import { authenticate, adminOnly, superAdminOnly } from '../middleware/auth.js';
+import { authenticate, adminOnly, superAdminOnly, inspectorOrAdmin } from '../middleware/auth.js';
 import { addTenantFilter } from '../middleware/tenantIsolation.js';
 
 const router = express.Router();
@@ -21,17 +21,17 @@ router.use(authenticate);
 router.use(addTenantFilter);
 
 // Analytics routes
-router.get('/dashboard', getDashboardStats);
-router.get('/form/:formId', getFormAnalytics);
+router.get('/dashboard', inspectorOrAdmin, getDashboardStats);
+router.get('/form/:formId', inspectorOrAdmin, getFormAnalytics);
 router.get('/users', adminOnly, getUserAnalytics);
 router.get('/admin/:adminId/performance', getAdminPerformance);
 router.get('/admin/:adminId/activity', getAdminActivity);
 router.get('/admin/:adminId/response-details', getAdminResponseDetails);
 // Superadmin route - bypasses tenant filter to get any tenant's data
 router.get('/superadmin/tenant/:tenantId/response-details', authenticate, superAdminOnly, getTenantResponseDetails);
-router.get('/tenant/stats', getTenantSubmissionStats);
-router.get('/export', exportAnalytics);
+router.get('/tenant/stats', inspectorOrAdmin, getTenantSubmissionStats);
+router.get('/export', inspectorOrAdmin, exportAnalytics);
 // Add this new route
-router.get('/forms/:formId/response-times', authenticate, getResponseTimeAnalytics);
+router.get('/forms/:formId/response-times', inspectorOrAdmin, getResponseTimeAnalytics);
 
 export default router;

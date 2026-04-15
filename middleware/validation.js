@@ -59,11 +59,11 @@ export const validateUserCreation = (req, res, next) => {
     errors.push('Last name is required');
   }
   
-  if (!role) {
-    errors.push('Role is required');
-  } else if (!['admin', 'subadmin', 'teacher', 'student', 'staff'].includes(role)) {
-    errors.push('Role must be one of: admin, subadmin, teacher, student, staff');
-  }
+if (!role) {
+      errors.push('Role is required');
+    } else if (!['admin', 'subadmin', 'teacher', 'student', 'staff', 'inspector'].includes(role)) {
+      errors.push('Role must be one of: admin, subadmin, teacher, student, staff, inspector');
+    }
 
   if (req.body.permissions !== undefined) {
     if (!Array.isArray(req.body.permissions)) {
