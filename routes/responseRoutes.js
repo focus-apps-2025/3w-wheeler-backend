@@ -18,16 +18,37 @@
     getSuggestedAnswers,
     getQuestionPreviousAnswers,
   } from '../controllers/responseController.js';
-  import { authenticate, authenticateOptional, adminOnly, teacherOrAdmin } from '../middleware/auth.js';
+  import {
+    authenticate,
+    authenticateOptional,
+    adminOnly,
+    teacherOrAdmin,
+    authenticateGuest,
+  } from '../middleware/auth.js';
   import { addTenantFilter } from '../middleware/tenantIsolation.js';
   import { processResponseImages, processGoogleDriveImage } from '../services/googleDriveService.js';
 
   const router = express.Router();
 
+  // Middleware for guest access control
+  const guestAccessControl = (req, res, next) => {
+    if (req.user && req.user.isGuest) {
+      const { formId } = req.params;
+      if (formId && req.user.accessibleFormId !== formId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. You can only view data for your assigned form.'
+        });
+      }
+      return next();
+    }
+    return next();
+  };
+
   // DEBUG: Log when this router is loaded
   console.log('Response router loaded');
 
-  // ========== PUBLIC ROUTES (No Auth) ==========
+// ========== PUBLIC & GUEST ROUTES ==========
 
   // 1. Add a test route first
   router.get('/test-route', (req, res) => {
@@ -35,7 +56,11 @@
     res.json({ success: true, message: 'Test route works!' });
   });
 
-  // 2. BATCH IMPORT route - define it clearly
+  // 2. Form-specific responses (Allowed for guests)
+  router.get('/form/:formId', authenticateGuest, guestAccessControl, getResponsesByForm);
+  router.get('/form/:formId/export', authenticateGuest, guestAccessControl, exportResponses);
+
+  // 3. BATCH IMPORT route - define it clearly
 
   // 3. BULK IMAGE PROCESSING
   router.post('/process-bulk-images', processBulkImages);
@@ -145,9 +170,9 @@ router.get('/:tenantSlug/forms/:formId/previous-answers', getQuestionPreviousAns
 
   router.post('/batch/import', batchImportResponses);
 
-  // Form-specific responses
-  router.get('/form/:formId', getResponsesByForm);
-  router.get('/form/:formId/export', exportResponses);
+  // Form-specific responses (Already defined in public section)
+  // router.get('/form/:formId', getResponsesByForm);
+  // router.get('/form/:formId/export', exportResponses);
 
   // Response management
   router.get('/', getAllResponses);

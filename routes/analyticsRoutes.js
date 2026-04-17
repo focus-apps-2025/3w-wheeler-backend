@@ -11,18 +11,39 @@ import {
   exportAnalytics,
   getResponseTimeAnalytics
 } from '../controllers/analyticsController.js';
-import { authenticate, adminOnly, superAdminOnly, inspectorOrAdmin } from '../middleware/auth.js';
+import { authenticate, adminOnly, superAdminOnly, inspectorOrAdmin, authenticateGuest } from '../middleware/auth.js';
 import { addTenantFilter } from '../middleware/tenantIsolation.js';
 
 const router = express.Router();
 
-// All routes require authentication
+// Middleware
+const accessControl = (req, res, next) => {
+  // If it's a guest, they can only access their assigned formId
+  if (req.user.isGuest) {
+    const { formId } = req.params;
+    if (formId && req.user.accessibleFormId !== formId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. You can only view analytics for your assigned form.'
+      });
+    }
+    return next();
+  }
+  
+  // Standard user roles
+  return inspectorOrAdmin(req, res, next);
+};
+
+// Routes requiring guest or standard authentication
+router.get('/form/:formId', authenticateGuest, accessControl, getFormAnalytics);
+
+// All other routes require standard authentication
 router.use(authenticate);
 router.use(addTenantFilter);
 
 // Analytics routes
 router.get('/dashboard', inspectorOrAdmin, getDashboardStats);
-router.get('/form/:formId', inspectorOrAdmin, getFormAnalytics);
+// router.get('/form/:formId', inspectorOrAdmin, getFormAnalytics); // Moved above
 router.get('/users', adminOnly, getUserAnalytics);
 router.get('/admin/:adminId/performance', getAdminPerformance);
 router.get('/admin/:adminId/activity', getAdminActivity);

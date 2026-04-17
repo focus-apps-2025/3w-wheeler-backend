@@ -26,8 +26,13 @@ export const ensureTenantIsolation = (req, res, next) => {
 export const addTenantFilter = (req, res, next) => {
   const user = req.user;
 
-  // Only SuperAdmin doesn't need tenant filter
-  if (user.role === 'superadmin') {
+  if (!user) {
+    req.tenantFilter = {};
+    return next();
+  }
+
+  // SuperAdmin and Guests don't need tenant filter
+  if (user.role === 'superadmin' || user.isGuest) {
     req.tenantFilter = {};
   } else {
     // All other users (including admin) are filtered by their tenantId

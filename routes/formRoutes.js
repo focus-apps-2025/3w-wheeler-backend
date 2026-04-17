@@ -28,7 +28,14 @@ import {
   submitPublicResponse,
   startFormSession
 } from '../controllers/formController.js';
-import { authenticate, authenticateOptional, adminOnly, teacherOrAdmin, superAdminOnly } from '../middleware/auth.js';
+import {
+  authenticate,
+  authenticateOptional,
+  adminOnly,
+  teacherOrAdmin,
+  superAdminOnly,
+  authenticateGuest,
+} from '../middleware/auth.js';
 import { addTenantFilter } from '../middleware/tenantIsolation.js';
 import formInviteRoutes from './formInviteRoutes.js';
 import multer from 'multer';
@@ -36,6 +43,21 @@ import multer from 'multer';
 const upload = multer({ storage: multer.memoryStorage() });
 
 const router = express.Router();
+
+// Middleware for guest access control
+const guestAccessControl = (req, res, next) => {
+  if (req.user && req.user.isGuest) {
+    const { id } = req.params;
+    if (id && req.user.accessibleFormId !== id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. You can only view data for your assigned form.'
+      });
+    }
+    return next();
+  }
+  return next();
+};
 
 // Public routes (no authentication required)
 router.get('/public/:tenantSlug', getPublicForms);  // Get all public forms for a tenant
@@ -69,7 +91,11 @@ router.post('/:id/track/complete', (req, res) => {
   return res.status(200).json({ success: true, message: 'Session marked complete' });
 });
 
-// Protected routes
+// Routes requiring guest or standard authentication
+router.get('/:id', authenticateGuest, guestAccessControl, getFormById);
+router.get('/:id/analytics', authenticateGuest, guestAccessControl, getFormAnalytics);
+
+// Protected routes (require standard authentication)
 router.use(authenticate);
 router.use(addTenantFilter);
 
@@ -78,7 +104,7 @@ router.post('/', createForm);
 router.post('/import/csv', upload.single('file'), importFormFromCSV);
 router.get('/', getAllForms);
 router.get('/public', getPublicForms);  // Moved here for tenant isolation
-router.get('/:id', getFormById);
+// router.get('/:id', getFormById); // Moved above
 router.put('/:id', updateForm);
 router.delete('/:id', deleteForm);
 
@@ -91,7 +117,7 @@ router.patch('/:id/active', updateFormActiveStatus);
 router.post('/:id/duplicate', duplicateForm);
 
 // Analytics
-router.get('/:id/analytics', getFormAnalytics);
+// router.get('/:id/analytics', getFormAnalytics); // Moved above
 router.get('/:id/global-stats', superAdminOnly, getGlobalFormStats);
 
 // Follow-up question management

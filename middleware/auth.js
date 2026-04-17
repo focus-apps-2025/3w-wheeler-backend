@@ -132,6 +132,43 @@ export const generateToken = (userId) => {
   });
 };
 
+export const generateGuestToken = (email, formId) => {
+  return jwt.sign({ guestEmail: email, formId, isGuest: true }, getJwtSecret(), { 
+    expiresIn: '7d' 
+  });
+};
+
+export const authenticateGuest = async (req, res, next) => {
+  try {
+    const authHeader = req.header('Authorization');
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      // Fallback to standard authenticate if no guest token
+      return authenticate(req, res, next);
+    }
+
+    const token = authHeader.substring(7);
+    const decoded = jwt.verify(token, getJwtSecret());
+    
+    if (decoded.isGuest) {
+      req.user = {
+        email: decoded.guestEmail,
+        role: 'guest',
+        isGuest: true,
+        accessibleFormId: decoded.formId
+      };
+      return next();
+    }
+
+    // If not guest, try standard authentication
+    return authenticate(req, res, next);
+  } catch (error) {
+    console.error('Guest Authentication error:', error);
+    // Try standard authentication as last resort
+    return authenticate(req, res, next);
+  }
+};
+
 export const hasPermission = (permission) => {
   return (req, res, next) => {
     const user = req.user;

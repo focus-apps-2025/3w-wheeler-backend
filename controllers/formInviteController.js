@@ -285,7 +285,7 @@ export const uploadInvites = async (req, res) => {
     const tenantSlug = tenant?.slug || 'public';
 
     // Use environment variable for frontend URL, with fallback
-    const inviteBaseUrl = process.env.INVITE_FRONTEND_URL || 'https://forms.focusengineeringapp.com';
+    const inviteBaseUrl = process.env.INVITE_FRONTEND_URL || 'https://3wheelertvs.focusengineeringapp.com/';
 
     res.json({
       success: true,
@@ -296,7 +296,7 @@ export const uploadInvites = async (req, res) => {
         invalid: invalidRecords.length,
         duplicateEmails: records.length - seenEmails.size,
         preview: preview.slice(0, 10), // First 10 for preview
-        sampleLink: `${inviteBaseUrl}/${tenantSlug}/forms/${formId}?inviteId=SAMPLE_INVITE_ID`,
+        sampleLink: `${inviteBaseUrl}${tenantSlug}/forms/${formId}?inviteId=SAMPLE_INVITE_ID`,
         form: {
           id: form.id,
           title: form.title,
@@ -1023,8 +1023,8 @@ export const getInviteList = async (req, res) => {
 
 const sendInviteEmail = async ({ email, inviteId, formId, formTitle, tenantSlug }) => {
   try {
-    const baseUrl = process.env.INVITE_FRONTEND_URL || 'https://forms.focusengineeringapp.com';
-    const inviteLink = `${baseUrl}/${tenantSlug}/forms/${formId}?inviteId=${inviteId}`;
+    const baseUrl = process.env.INVITE_FRONTEND_URL || 'https://3wheelertvs.focusengineeringapp.com/';
+    const inviteLink = `${baseUrl}${tenantSlug}/forms/${formId}?inviteId=${inviteId}`;
 
     // Use MailService (SMTP)
     const result = await mailService.sendFormInvite(email, formTitle, inviteLink, tenantSlug);
@@ -1057,7 +1057,7 @@ const sendInviteEmail = async ({ email, inviteId, formId, formTitle, tenantSlug 
 
 /*const sendInviteEmail = async ({ email, inviteId, formId, formTitle, tenantSlug }) => {
   // Generate links
-  const productionLink = `https://forms.focusengineeringapp.com/${tenantSlug}/forms/${formId}?inviteId=${inviteId}`;
+  const productionLink = `https://3wheelertvs.focusengineeringapp.com/${tenantSlug}/forms/${formId}?inviteId=${inviteId}`;
   const localhostLink = `http://localhost:5174/${tenantSlug}/forms/${formId}?inviteId=${inviteId}`;
   
   console.log(`
@@ -1091,8 +1091,8 @@ To test:
 // Helper: Send SMS invite
 const sendInviteSMS = async ({ phone, inviteId, formId, formTitle, tenantName, tenantSlug }) => {
   try {
-    const baseUrl = process.env.INVITE_FRONTEND_URL || 'https://forms.focusengineeringapp.com';
-    const inviteLink = `${baseUrl}/${tenantSlug}/forms/${formId}?inviteId=${inviteId}`;
+    const baseUrl = process.env.INVITE_FRONTEND_URL || 'https://3wheelertvs.focusengineeringapp.com/';
+    const inviteLink = `${baseUrl}${tenantSlug}/forms/${formId}?inviteId=${inviteId}`;
 
     const result = await smsService.sendFormInvite(phone, formTitle, inviteLink, tenantName);
 
@@ -1122,8 +1122,8 @@ const sendInviteSMS = async ({ phone, inviteId, formId, formTitle, tenantName, t
 // Helper: Send WhatsApp invite  
 const sendInviteWhatsApp = async ({ phone, inviteId, formId, formTitle, tenantName, tenantSlug }) => {
   try {
-    const baseUrl = process.env.INVITE_FRONTEND_URL || 'https://forms.focusengineeringapp.com';
-    const inviteLink = `${baseUrl}/${tenantSlug}/forms/${formId}?inviteId=${inviteId}`;
+    const baseUrl = process.env.INVITE_FRONTEND_URL || 'https://3wheelertvs.focusengineeringapp.com/';
+    const inviteLink = `${baseUrl}${tenantSlug}/forms/${formId}?inviteId=${inviteId}`;
 
     // Import WhatsApp service dynamically
     const whatsappServiceModule = await import('../services/whatsappService.js');

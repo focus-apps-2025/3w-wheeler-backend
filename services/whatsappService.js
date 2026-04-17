@@ -2,8 +2,9 @@ import twilio from 'twilio';
 
 class WhatsAppService {
   constructor() {
-    const accountSid = process.env.TWILIO_ACCOUNT_SID;
-    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    // Use Production (WA_) credentials if available, otherwise fallback to standard/sandbox ones
+    const accountSid = process.env.WA_TWILIO_ACCOUNT_SID || process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.WA_TWILIO_AUTH_TOKEN || process.env.TWILIO_AUTH_TOKEN;
     
     this.isConfigured = !!(accountSid && authToken);
     
@@ -17,8 +18,10 @@ class WhatsAppService {
       this.client = twilio(accountSid, authToken);
     }
     
-    this.twilioPhoneNumber = process.env.TWILIO_WHATSAPP_NUMBER || '';
-    this.inviteTemplateSid = process.env.TWILIO_INVITE_TEMPLATE_SID || '';
+    // Prioritize Production WhatsApp number and template
+    this.twilioPhoneNumber = process.env.WA_TWILIO_WHATSAPP_NUMBER || process.env.TWILIO_WHATSAPP_NUMBER || '';
+    this.inviteTemplateSid = process.env.WA_TWILIO_INVITE_TEMPLATE_SID || process.env.TWILIO_INVITE_TEMPLATE_SID || '';
+    this.analyticsTemplateSid = process.env.WA_TWILIO_ANALYTICS_TEMPLATE_SID || process.env.TWILIO_ANALYTICS_TEMPLATE_SID || '';
   }
 
   formatPhoneNumber(phone) {
@@ -175,20 +178,20 @@ Request ID: ${serviceRequest.id || 'N/A'}
             .substring(0, max);
         };
 
-        const v1 = safe(tenantName, 60);
-        const v2 = safe(formTitle, 150);
-        let v3 = String(inviteLink || "").trim();
+        let v1 = String(inviteLink || "").trim();
+        const v2 = safe(tenantName, 60);
+        const v3 = safe(formTitle, 150);
 
         // FIX: WhatsApp rejects localhost links. Replace with a valid domain for testing if needed.
-        if (v3.includes('localhost') || v3.includes('127.0.0.1')) {
+        if (v1.includes('localhost') || v1.includes('127.0.0.1')) {
           console.warn('⚠️ WARNING: Localhost link detected. Replacing with placeholder to avoid Error 63005.');
-          v3 = 'https://focus-auto.com/form-link-placeholder'; 
+          v1 = 'https://3wheelertvs.focusengineeringapp.com/analytics-placeholder';
         }
 
         console.log('📱 WhatsApp Variable Values:');
-        console.log('   {{1}} (Tenant):', v1);
-        console.log('   {{2}} (Form):', v2);
-        console.log('   {{3}} (Link):', v3);
+        console.log('   {{1}} (Link):', v1);
+        console.log('   {{2}} (Tenant):', v2);
+        console.log('   {{3}} (Form):', v3);
 
         const attempts = [
           { name: 'Standard Keys', vars: { "1": v1, "2": v2, "3": v3 } },
@@ -255,6 +258,7 @@ Request ID: ${serviceRequest.id || 'N/A'}
 
 Hello! You have been invited by *${tenantName}* to fill out the following form:
 
+*Form Name:*
 *${formTitle}*
 
 Please click the link below to complete the form:
@@ -274,6 +278,130 @@ Thank you!
       return { success: true, messageId: messageData.sid };
     } catch (error) {
       console.error('Error sending form invite via WhatsApp:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // Send analytics dashboard invite via WhatsApp
+  async sendAnalyticsInvite(phone, formTitle, inviteLink, otp, tenantName, email, customMessage = "", isOTPRequest = false) {
+    try {
+      if (!this.isConfigured) {
+        return { success: false, error: 'Twilio WhatsApp service not configured' };
+      }
+
+      const customerPhone = this.formatPhoneNumber(phone);
+      if (!customerPhone) {
+        return { success: false, error: 'Invalid phone number' };
+      }
+
+      // In production, we MUST use a template to initiate conversation.
+      const templateSid = this.analyticsTemplateSid || this.inviteTemplateSid;
+      if (templateSid) {
+        // WhatsApp is extremely strict about variables.
+        // We remove characters that often cause template rejection.
+        const safe = (val, max = 200) => {
+          if (!val) return "";
+          return String(val)
+            .replace(/[\r\n\t]/g, " ") // No newlines
+            .replace(/[\\\"']/g, "")   // No quotes or backslashes
+            .trim()
+            .substring(0, max);
+        };
+
+        let v1 = String(inviteLink || "").trim();
+        const v2 = safe(tenantName || '3W-WHEELER', 60);
+        const v3 = safe(formTitle || 'Analytics', 150);
+        
+        // FIX: WhatsApp rejects localhost links. Replace with a valid domain for testing if needed.
+        if (v1.includes('localhost') || v1.includes('127.0.0.1')) {
+          console.warn('⚠️ WARNING: Localhost link detected. Replacing with placeholder to avoid Error 63005.');
+          v1 = 'https://3wheelertvs.focusengineeringapp.com/analytics-placeholder';
+        }
+
+        const v4 = safe(email || '(Your Email)', 100);
+        const v5 = safe(otp || 'Requested on Login', 50);
+
+        console.log('📱 Sending Analytics Invite via Template:', templateSid);
+        
+        const baseVars = { "1": v1, "2": v2, "3": v3 };
+        if (this.analyticsTemplateSid) {
+          Object.assign(baseVars, { "4": v4, "5": v5 });
+        }
+
+        const attempts = [
+          { name: 'Standard Keys', vars: baseVars },
+          { name: 'Mustache Keys', vars: Object.keys(baseVars).reduce((acc, k) => ({ ...acc, [`{{${k}}}`]: baseVars[k] }), {}) }
+        ];
+
+        let messageData;
+        let lastError;
+
+        for (const attempt of attempts) {
+          try {
+            console.log(`📱 Testing Analytics Strategy: ${attempt.name}`);
+            messageData = await this.client.messages.create({
+              from: `whatsapp:${this.twilioPhoneNumber}`,
+              to: `whatsapp:${customerPhone}`,
+              contentSid: templateSid.trim(),
+              contentVariables: JSON.stringify(attempt.vars)
+            });
+            
+            console.log(`✅ Analytics Strategy ${attempt.name} accepted. SID: ${messageData.sid}`);
+            return { success: true, messageId: messageData.sid, strategy: attempt.name };
+          } catch (err) {
+            console.error(`❌ Analytics Strategy ${attempt.name} Error:`, err.code, err.message);
+            lastError = err;
+          }
+        }
+
+        throw lastError || new Error('All analytics template strategies failed');
+      }
+
+      // Fallback for non-template (sandbox or open window)
+      let message = "";
+      
+      if (isOTPRequest) {
+        message = `
+🔐 *VERIFICATION CODE*
+
+Hello! Your verification code for *${tenantName}* analytics is below.
+
+*Form:* ${formTitle}
+*Email:* ${email}
+*Code:* *${otp}*
+
+Note: This code will expire in 5 minutes.
+
+Click below to verify:
+${inviteLink}
+        `.trim();
+      } else {
+        message = `
+📊 *ANALYTICS DASHBOARD INVITE*
+
+Hello! You have been invited by *${tenantName}* to view the analytics for the following form:
+
+*Form Name:*
+*${formTitle}*
+
+${customMessage ? `_"${customMessage}"_\n` : ""}
+Click the link below to view the dashboard:
+${inviteLink}
+
+Thank you!
+        `.trim();
+      }
+
+      const messageData = await this.client.messages.create({
+        from: `whatsapp:${this.twilioPhoneNumber}`,
+        to: `whatsapp:${customerPhone}`,
+        body: message,
+      });
+
+      console.log('Analytics invite sent via WhatsApp:', messageData.sid);
+      return { success: true, messageId: messageData.sid };
+    } catch (error) {
+      console.error('Error sending analytics invite via WhatsApp:', error);
       return { success: false, error: error.message };
     }
   }
@@ -350,15 +478,15 @@ Reference your request ID
       const message = `
 📊 *RESPONSE REPORT*
 
-${subject}
+Hello! Please find the latest dashboard data and response details summary below.
 
-Report Contents:
-📈 Dashboard Summary & Statistics
-📋 Detailed Responses by Sections
+*Report Contents:*
+📈 *Sheet 1 — Dashboard:* Summary statistics, percentages, and weighted data
+📋 *Sheet 2 — Responses:* Detailed responses organized by sections
+
+_Please check your email for the attached Excel file with complete details._
 
 Report Generated: ${new Date().toLocaleString()}
-
-Please check your email for the attached Excel file with complete details.
       `.trim();
 
       const messageData = await this.client.messages.create({

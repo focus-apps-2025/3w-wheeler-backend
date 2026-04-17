@@ -286,7 +286,7 @@ export const getFormAnalytics = async (req, res) => {
     let isShared = false;
     let hasChassisShare = false;
 
-    if (req.user.role !== 'superadmin') {
+    if (req.user.role !== 'superadmin' && !req.user.isGuest) {
       const userTenantId = req.user.tenantId instanceof mongoose.Types.ObjectId
         ? req.user.tenantId
         : new mongoose.Types.ObjectId(req.user.tenantId);
@@ -303,6 +303,9 @@ export const getFormAnalytics = async (req, res) => {
           message: 'Access denied. You do not have permission to view analytics for this form.'
         });
       }
+    } else if (req.user.isGuest) {
+      // Guest already verified via guestAccessControl middleware
+      isOwner = false;
     } else {
       isOwner = true; // Superadmin sees everything
     }

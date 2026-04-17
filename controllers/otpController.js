@@ -1,5 +1,6 @@
 import Otp from '../models/Otp.js';
 import smsService from '../services/smsService.js';
+import mailService from '../services/mailService.js';
 
 /**
  * @desc    Send OTP to mobile number
@@ -8,39 +9,64 @@ import smsService from '../services/smsService.js';
  */
 export const sendOtp = async (req, res) => {
     try {
-        const { mobile } = req.body;
+        const { mobile, email } = req.body;
 
-        if (!mobile) {
+        if (!mobile && !email) {
             return res.status(400).json({
                 success: false,
-                message: 'Mobile number is required'
+                message: 'Mobile number or email is required'
             });
         }
 
         // Generate 6-digit OTP
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-        // Check if there is an existing OTP for this mobile and remove it
-        await Otp.deleteMany({ mobile });
+        if (mobile) {
+            // Check if there is an existing OTP for this mobile and remove it
+            await Otp.deleteMany({ mobile });
 
-        // Save new OTP to database
-        const newOtp = new Otp({
-            mobile,
-            otp,
-            expiresAt: new Date(Date.now() + 5 * 60 * 1000) // 5 minutes expiry
-        });
-
-        await newOtp.save();
-
-        // Send OTP via SMS
-        const smsResult = await smsService.sendOTP(mobile, otp);
-
-        if (!smsResult.success) {
-            return res.status(500).json({
-                success: false,
-                message: 'Failed to send OTP SMS',
-                error: smsResult.error
+            // Save new OTP to database
+            const newOtp = new Otp({
+                mobile,
+                otp,
+                expiresAt: new Date(Date.now() + 5 * 60 * 1000) // 5 minutes expiry
             });
+
+            await newOtp.save();
+
+            // Send OTP via SMS
+            const smsResult = await smsService.sendOTP(mobile, otp);
+
+            if (!smsResult.success) {
+                return res.status(500).json({
+                    success: false,
+                    message: 'Failed to send OTP SMS',
+                    error: smsResult.error
+                });
+            }
+        } else if (email) {
+            // Check if there is an existing OTP for this email and remove it
+            await Otp.deleteMany({ email: email.toLowerCase() });
+
+            // Save new OTP to database
+            const newOtp = new Otp({
+                email: email.toLowerCase(),
+                otp,
+                expiresAt: new Date(Date.now() + 5 * 60 * 1000) // 5 minutes expiry
+            });
+
+            await newOtp.save();
+
+            // Send OTP via Email
+            const mailResult = await mailService.sendOTP(email.toLowerCase(), otp);
+
+            if (!mailResult.success) {
+                return res.status(500).json({
+                    success: false,
+                    message: 'Failed to send OTP email',
+                    error: mailResult.error
+                });
+            }
         }
 
         res.status(200).json({
@@ -70,16 +96,17 @@ export const sendOtp = async (req, res) => {
  */
 export const verifyOtp = async (req, res) => {
     try {
-        const { mobile, otp } = req.body;
+        const { mobile, email, otp } = req.body;
 
-        if (!mobile || !otp) {
+        if ((!mobile && !email) || !otp) {
             return res.status(400).json({
                 success: false,
-                message: 'Mobile number and OTP are required'
+                message: 'Mobile number/email and OTP are required'
             });
         }
 
-        const otpRecord = await Otp.findOne({ mobile, otp });
+        const query = mobile ? { mobile, otp } : { email: email.toLowerCase(), otp };
+        const otpRecord = await Otp.findOne(query);
 
         if (!otpRecord) {
             return res.status(400).json({

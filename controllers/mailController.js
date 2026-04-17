@@ -75,11 +75,25 @@ export const testMailConnection = async (req, res) => {
   try {
     const result = await MailService.testConnection();
     
-    res.json({
-      success: result.success,
-      message: result.success ? 'Mail service is working correctly' : 'Mail service connection failed',
-      data: result
-    });
+    if (result.success) {
+      res.json({
+        success: true,
+        message: 'Mail service is working correctly',
+        data: result
+      });
+    } else {
+      let advice = "Please check your SMTP credentials in .env.";
+      if (result.error?.includes('BadCredentials') || result.error?.includes('Invalid login')) {
+        advice = "Gmail rejected your credentials. Ensure you are using a 16-character App Password (with no spaces) and that 2FA is enabled on your Google account.";
+      }
+
+      res.status(500).json({
+        success: false,
+        message: result.message || 'Mail service connection failed',
+        error: result.error,
+        advice
+      });
+    }
 
   } catch (error) {
     console.error('Error testing mail connection:', error);

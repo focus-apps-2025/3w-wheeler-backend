@@ -2068,9 +2068,8 @@ export const getResponsesByForm = async (req, res) => {
     // Verify form exists
     let formSearchQuery = { id: formId };
 
-    // If not superadmin, check if form belongs to or is shared with this tenant
-    // If not superadmin, check if form belongs to or is shared with this tenant
-    if (req.user.role !== 'superadmin' && req.user.tenantId) {
+    // If not superadmin and not guest, check if form belongs to or is shared with this tenant
+    if (req.user.role !== 'superadmin' && !req.user.isGuest && req.user.tenantId) {
       const tenantId = req.user.tenantId instanceof mongoose.Types.ObjectId
         ? req.user.tenantId
         : new mongoose.Types.ObjectId(req.user.tenantId);
@@ -2093,12 +2092,13 @@ export const getResponsesByForm = async (req, res) => {
     }
 
     // Determine access level
-    const userIdStr = req.user._id.toString();
-    const userTenantIdStr = req.user.tenantId?.toString();
+    const isGuest = !!req.user.isGuest;
+    const userIdStr = req.user._id ? req.user._id.toString() : 'guest';
+    const userTenantIdStr = req.user.tenantId ? req.user.tenantId.toString() : null;
     const isSuperAdmin = req.user.role === 'superadmin';
-    const isOwner = form.tenantId && form.tenantId.toString() === userTenantIdStr;
-    const isShared = form.sharedWithTenants && form.sharedWithTenants.some(t => t.toString() === userTenantIdStr);
-    const hasChassisShare = Array.isArray(form.chassisTenantAssignments) && form.chassisTenantAssignments.some(
+    const isOwner = !isGuest && form.tenantId && form.tenantId.toString() === userTenantIdStr;
+    const isShared = !isGuest && form.sharedWithTenants && form.sharedWithTenants.some(t => t.toString() === userTenantIdStr);
+    const hasChassisShare = !isGuest && Array.isArray(form.chassisTenantAssignments) && form.chassisTenantAssignments.some(
       a => a.assignedTenants && a.assignedTenants.includes(userTenantIdStr)
     );
 

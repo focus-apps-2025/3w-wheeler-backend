@@ -698,7 +698,15 @@ export const getFormById = async (req, res) => {
     }
 
     // Permission check for authenticated users (not public slug access)
-    if (!tenantSlug && req.user && req.user.role !== 'superadmin') {
+    // Guests are already verified by guestAccessControl middleware
+    if (!tenantSlug && req.user && req.user.role !== 'superadmin' && !req.user.isGuest) {
+      if (!req.user.tenantId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. Organization identification required.'
+        });
+      }
+      
       const userTenantId = req.user.tenantId.toString();
       const isOwnedByTenant = form.tenantId && form.tenantId.toString() === userTenantId;
       const isSharedWithTenant = form.sharedWithTenants && form.sharedWithTenants.some(tId => tId && tId.toString() === userTenantId);

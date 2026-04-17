@@ -3,8 +3,15 @@ import mongoose from 'mongoose';
 const otpSchema = new mongoose.Schema({
     mobile: {
         type: String,
-        required: true,
+        required: false,
         index: true
+    },
+    email: {
+        type: String,
+        required: false,
+        index: true,
+        lowercase: true,
+        trim: true
     },
     otp: {
         type: String,
@@ -13,7 +20,7 @@ const otpSchema = new mongoose.Schema({
     expiresAt: {
         type: Date,
         required: true,
-        index: { expires: '5m' } // TTL index: documents expire 5 minutes after expiresAt
+        index: { expires: '0s' } // TTL index: documents expire at expiresAt
     },
     isVerified: {
         type: Boolean,

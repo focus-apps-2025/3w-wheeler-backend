@@ -4,16 +4,25 @@ class MailService {
   constructor() {
     const host = process.env.SMTP_HOST || 'smtp.gmail.com';
     const isGmail = host.includes('gmail.com');
-    const port = isGmail ? 465 : (process.env.SMTP_PORT || 587);
+    
+    const transportConfig = isGmail ? {
+      service: 'gmail',
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS
+      }
+    } : {
+      host: host,
+      port: process.env.SMTP_PORT || 587,
+      secure: (process.env.SMTP_PORT == 465),
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS
+      }
+    };
 
     this.transporter = nodemailer.createTransport({
-      host: host,
-      port: port,
-      secure: port == 465 || port === '465',
-      auth: {
-        user: process.env.SMTP_USER || 'your-email@gmail.com',
-        pass: process.env.SMTP_PASS || 'your-app-password'
-      },
+      ...transportConfig,
       pool: true,
       maxConnections: 5,
       maxMessages: 100,
@@ -315,6 +324,112 @@ class MailService {
       return { success: true, messageId: result.messageId };
     } catch (error) {
       console.error('❌ Error sending email invite:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // Send analytics dashboard invite
+  async sendAnalyticsInvite(recipientEmail, formTitle, inviteLink, otp, tenantName, customMessage, isOTPRequest = false) {
+    try {
+      console.log('📧 Sending analytics invite to:', recipientEmail);
+
+      const body = `
+        <p style="font-size: 16px; color: #111827; margin: 0 0 6px;">Hello,</p>
+        <p style="font-size: 15px; color: #374151; margin: 0 0 20px;">
+          ${isOTPRequest 
+            ? `Your verification code for <strong>${tenantName}</strong> analytics is below.`
+            : `You have been invited by <strong>${tenantName}</strong> to view the analytics for the following form:`
+          }
+        </p>
+
+        ${customMessage && !isOTPRequest ? `
+        <div style="background: #f9fafb; border: 1px solid #e5e7eb; padding: 16px; border-radius: 8px; margin-bottom: 24px; color: #4b5563; font-style: italic;">
+          "${customMessage}"
+        </div>
+        ` : ''}
+
+        <div style="background: #eff6ff; border-left: 4px solid #2563eb; padding: 20px; border-radius: 0 8px 8px 0; margin-bottom: 28px;">
+          <p style="font-size: 13px; font-weight: bold; color: #1e40af; text-transform: uppercase; margin: 0 0 8px; letter-spacing: 1px;">Form Name</p>
+          <p style="font-size: 18px; font-weight: bold; color: #1e40af; margin: 0;">${formTitle}</p>
+        </div>
+
+        ${isOTPRequest ? `
+        <div style="background: #fffbeb; border-left: 4px solid #f59e0b; padding: 20px; border-radius: 0 8px 8px 0; margin-bottom: 28px;">
+          <p style="font-size: 13px; font-weight: bold; color: #92400e; text-transform: uppercase; margin: 0 0 8px; letter-spacing: 1px;">Verification Details</p>
+          <p style="margin: 4px 0; color: #111827;"><strong>Email:</strong> ${recipientEmail}</p>
+          <p style="margin: 4px 0; color: #111827;"><strong>Code:</strong> <span style="font-size: 24px; font-weight: bold; color: #b45309; letter-spacing: 2px;">${otp}</span></p>
+          <p style="font-size: 12px; color: #92400e; margin-top: 8px;">Note: This code will expire in 5 minutes.</p>
+        </div>
+        ` : `
+        <div style="text-align: center; margin: 28px 0;">
+          <a href="${inviteLink}" 
+             style="display: inline-block; background-color: #2563eb; color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: bold; font-size: 16px; transition: background-color 0.2s;">
+            View Analytics Dashboard
+          </a>
+        </div>
+        `}
+
+        <p style="font-size: 14px; color: #6b7280; line-height: 1.5;">
+          ${isOTPRequest 
+            ? 'If you did not request this code, please ignore this email.'
+            : `If the button above doesn't work, copy and paste this link into your browser:<br>
+               <span style="color: #2563eb; word-break: break-all;">${inviteLink}</span>`
+          }
+        </p>
+      `;
+
+      const mailOptions = {
+        from: process.env.SMTP_USER,
+        to: recipientEmail,
+        subject: isOTPRequest ? `Verification Code: ${otp}` : `📊 Analytics Dashboard Invite - ${formTitle}`,
+        html: this._baseWrapper(isOTPRequest ? 'Email Verification' : 'Analytics Access Invited', '#2563eb', '#f5c518', body)
+      };
+
+      const result = await this.transporter.sendMail(mailOptions);
+      console.log('✅ Analytics invite sent successfully!');
+      console.log('   Message ID:', result.messageId);
+      console.log('   Accepted:', result.accepted);
+      console.log('   Rejected:', result.rejected);
+      console.log('   Envelope:', result.envelope);
+      return { success: true, messageId: result.messageId };
+    } catch (error) {
+      console.error('❌ Error sending analytics invite:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // Send generic OTP email
+  async sendOTP(recipientEmail, otp) {
+    try {
+      console.log('📧 Sending OTP to:', recipientEmail);
+
+      const body = `
+        <p style="font-size: 16px; color: #111827; margin: 0 0 6px;">Hello,</p>
+        <p style="font-size: 15px; color: #374151; margin: 0 0 20px;">
+          Your verification code is:
+        </p>
+
+        <div style="background: #eff6ff; border-left: 4px solid #2563eb; padding: 20px; border-radius: 0 8px 8px 0; margin-bottom: 28px; text-align: center;">
+          <span style="font-size: 32px; font-weight: bold; color: #2563eb; letter-spacing: 5px;">${otp}</span>
+        </div>
+
+        <p style="font-size: 14px; color: #6b7280; line-height: 1.5;">
+          This code will expire in 5 minutes. If you did not request this code, please ignore this email.
+        </p>
+      `;
+
+      const mailOptions = {
+        from: process.env.SMTP_USER,
+        to: recipientEmail,
+        subject: `Verification Code: ${otp}`,
+        html: this._baseWrapper('Verify Your Email', '#2563eb', '#f5c518', body)
+      };
+
+      const result = await this.transporter.sendMail(mailOptions);
+      console.log('✅ OTP email sent successfully!');
+      return { success: true, messageId: result.messageId };
+    } catch (error) {
+      console.error('❌ Error sending OTP email:', error);
       return { success: false, error: error.message };
     }
   }
