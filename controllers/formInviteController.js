@@ -1023,7 +1023,8 @@ export const getInviteList = async (req, res) => {
 
 const sendInviteEmail = async ({ email, inviteId, formId, formTitle, tenantSlug }) => {
   try {
-    const baseUrl = process.env.INVITE_FRONTEND_URL || 'https://3wheelertvs.focusengineeringapp.com/';
+    const baseUrlRaw = process.env.INVITE_FRONTEND_URL || 'https://3wheelertvs.focusengineeringapp.com/';
+    const baseUrl = baseUrlRaw.endsWith('/') ? baseUrlRaw : `${baseUrlRaw}/`;
     const inviteLink = `${baseUrl}${tenantSlug}/forms/${formId}?inviteId=${inviteId}`;
 
     // Use MailService (SMTP)
@@ -1091,7 +1092,8 @@ To test:
 // Helper: Send SMS invite
 const sendInviteSMS = async ({ phone, inviteId, formId, formTitle, tenantName, tenantSlug }) => {
   try {
-    const baseUrl = process.env.INVITE_FRONTEND_URL || 'https://3wheelertvs.focusengineeringapp.com/';
+    const baseUrlRaw = process.env.INVITE_FRONTEND_URL || 'https://3wheelertvs.focusengineeringapp.com/';
+    const baseUrl = baseUrlRaw.endsWith('/') ? baseUrlRaw : `${baseUrlRaw}/`;
     const inviteLink = `${baseUrl}${tenantSlug}/forms/${formId}?inviteId=${inviteId}`;
 
     const result = await smsService.sendFormInvite(phone, formTitle, inviteLink, tenantName);
@@ -1122,7 +1124,8 @@ const sendInviteSMS = async ({ phone, inviteId, formId, formTitle, tenantName, t
 // Helper: Send WhatsApp invite  
 const sendInviteWhatsApp = async ({ phone, inviteId, formId, formTitle, tenantName, tenantSlug }) => {
   try {
-    const baseUrl = process.env.INVITE_FRONTEND_URL || 'https://3wheelertvs.focusengineeringapp.com/';
+    const baseUrlRaw = process.env.INVITE_FRONTEND_URL || 'https://3wheelertvs.focusengineeringapp.com/';
+    const baseUrl = baseUrlRaw.endsWith('/') ? baseUrlRaw : `${baseUrlRaw}/`;
     const inviteLink = `${baseUrl}${tenantSlug}/forms/${formId}?inviteId=${inviteId}`;
 
     // Import WhatsApp service dynamically

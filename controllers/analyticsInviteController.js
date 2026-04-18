@@ -110,7 +110,8 @@ export const sendAnalyticsInvites = async (req, res) => {
     const baseUrl = process.env.INVITE_FRONTEND_URL || process.env.FRONTEND_URL || 'http://localhost:5173';
     // Handle comma-separated FRONTEND_URL
     const singleBaseUrl = baseUrl.split(',')[0].trim();
-    const inviteLink = `${singleBaseUrl}forms/${formId}/analytics/login`;
+    const formattedBaseUrl = singleBaseUrl.endsWith('/') ? singleBaseUrl : `${singleBaseUrl}/`;
+    const inviteLink = `${formattedBaseUrl}forms/${formId}/analytics/login`;
     
     for (const inviteData of invites) {
       const { email, phone } = inviteData;
@@ -243,7 +244,8 @@ export const requestGuestOTP = async (req, res) => {
 
     const baseUrl = process.env.INVITE_FRONTEND_URL || process.env.FRONTEND_URL || 'http://localhost:5173';
     const singleBaseUrl = baseUrl.split(',')[0].trim();
-    const inviteLink = `${singleBaseUrl}forms/${formId}/analytics/login`;
+    const formattedBaseUrl = singleBaseUrl.endsWith('/') ? singleBaseUrl : `${singleBaseUrl}/`;
+    const inviteLink = `${formattedBaseUrl}forms/${formId}/analytics/login`;
 
     let emailSent = false;
     let smsSent = false;

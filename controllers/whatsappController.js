@@ -141,7 +141,8 @@ export const uploadWhatsAppInvites = async (req, res) => {
     
     const tenant = await Tenant.findById(form.tenantId);
     const tenantSlug = tenant?.slug || 'public';
-    const baseUrl = process.env.INVITE_FRONTEND_URL || 'https://3wheelertvs.focusengineeringapp.com/';
+    const baseUrlRaw = process.env.INVITE_FRONTEND_URL || 'https://3wheelertvs.focusengineeringapp.com/';
+    const baseUrl = baseUrlRaw.endsWith('/') ? baseUrlRaw : `${baseUrlRaw}/`;
     
     res.json({
       success: true,
@@ -215,7 +216,8 @@ export const sendWhatsAppInvites = async (req, res) => {
         // If already responded, we create a NEW invite record to allow tracking a new submission
         const isResponded = invite && invite.status === 'responded';
         const inviteId = isResponded || !invite ? uuidv4() : invite.inviteId;
-        const baseUrl = process.env.INVITE_FRONTEND_URL || 'https://3wheelertvs.focusengineeringapp.com/';
+        const baseUrlRaw = process.env.INVITE_FRONTEND_URL || 'https://3wheelertvs.focusengineeringapp.com/';
+        const baseUrl = baseUrlRaw.endsWith('/') ? baseUrlRaw : `${baseUrlRaw}/`;
         const inviteLink = `${baseUrl}${tenant.slug}/forms/${formId}?inviteId=${inviteId}`;
         
         const whatsappResult = await WhatsAppService.sendFormInvite(

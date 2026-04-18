@@ -185,7 +185,7 @@ Request ID: ${serviceRequest.id || 'N/A'}
         // FIX: WhatsApp rejects localhost links. Replace with a valid domain for testing if needed.
         if (v1.includes('localhost') || v1.includes('127.0.0.1')) {
           console.warn('⚠️ WARNING: Localhost link detected. Replacing with placeholder to avoid Error 63005.');
-          v1 = 'https://3wheelertvs.focusengineeringapp.com/analytics-placeholder';
+          v1 = 'https://3wheelertvs.focusengineeringapp.com/analytics-placeholder/';
         }
 
         console.log('📱 WhatsApp Variable Values:');
@@ -315,7 +315,7 @@ Thank you!
         // FIX: WhatsApp rejects localhost links. Replace with a valid domain for testing if needed.
         if (v1.includes('localhost') || v1.includes('127.0.0.1')) {
           console.warn('⚠️ WARNING: Localhost link detected. Replacing with placeholder to avoid Error 63005.');
-          v1 = 'https://3wheelertvs.focusengineeringapp.com/analytics-placeholder';
+          v1 = 'https://3wheelertvs.focusengineeringapp.com/analytics-placeholder/';
         }
 
         const v4 = safe(email || '(Your Email)', 100);
