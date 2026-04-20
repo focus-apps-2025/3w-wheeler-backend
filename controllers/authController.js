@@ -102,6 +102,25 @@ export const login = async (req, res) => {
       });
     }
 
+    // Check access type
+    const appType = (req.header('X-App-Type') || 'website').toLowerCase();
+    const userAccessType = user.accessType || 'both';
+    
+    if (userAccessType !== 'both') {
+      if (userAccessType === 'website' && appType === 'mobile') {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. This account is only allowed on website.'
+        });
+      }
+      if (userAccessType === 'mobile' && appType === 'website') {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. This account is only allowed on mobile app.'
+        });
+      }
+    }
+
     // For non-superadmin users (including admin), validate tenant
     let tenant = null;
     if (user.role !== 'superadmin') {

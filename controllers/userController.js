@@ -42,7 +42,7 @@ import mongoose from 'mongoose';
 
 export const createUser = async (req, res) => {
   try {
-    const { username, email, password, firstName, lastName, role, mobile, permissions } = req.body;
+    const { username, email, password, firstName, lastName, role, mobile, permissions, accessType } = req.body;
 
     if (req.user.role === 'admin' && role === 'admin') {
       return res.status(403).json({
@@ -80,6 +80,11 @@ export const createUser = async (req, res) => {
       createdBy: req.user._id,
       tenantId: req.user.role === 'superadmin' ? req.body.tenantId : req.user.tenantId
     };
+
+    // Add accessType for inspector role
+    if (role === 'inspector' && accessType) {
+      newUserData.accessType = accessType;
+    }
 
     if (role === 'subadmin' || role === 'inspector') {
       newUserData.permissions = sanitizedPermissions;
@@ -210,7 +215,7 @@ export const getUserById = async (req, res) => {
 export const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const { username, email, firstName, lastName, role, isActive, permissions } = req.body;
+    const { username, email, firstName, lastName, role, isActive, permissions, accessType } = req.body;
 
     const user = await User.findOne({ _id: id, ...req.tenantFilter });
 
@@ -219,6 +224,11 @@ export const updateUser = async (req, res) => {
         success: false,
         message: 'User not found'
       });
+    }
+
+    // Update accessType if provided (only for inspector role)
+    if (accessType && user.role === 'inspector') {
+      user.accessType = accessType;
     }
 
     if (role && req.user.role !== 'superadmin' && role === 'admin' && req.user._id.toString() !== user._id.toString()) {

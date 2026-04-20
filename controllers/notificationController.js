@@ -50,3 +50,28 @@ export const markAllAsRead = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+/**
+ * Delete a notification
+ */
+export const deleteNotification = async (req, res) => {
+  try {
+    const { id } = req.params;
+    await Notification.deleteOne({ _id: id, user: req.user._id });
+    res.json({ success: true, message: 'Notification deleted' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * Delete all notifications
+ */
+export const deleteAllNotifications = async (req, res) => {
+  try {
+    await Notification.deleteMany({ user: req.user._id });
+    res.json({ success: true, message: 'All notifications deleted' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};

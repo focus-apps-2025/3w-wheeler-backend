@@ -13,6 +13,11 @@ const getJwtSecret = () => {
 export const authenticate = async (req, res, next) => {
   try {
     const authHeader = req.header('Authorization');
+    const appType = (req.header('X-App-Type') || 'website').toLowerCase(); // 'website' or 'mobile'
+    
+    console.log('=== AUTH CHECK ===');
+    console.log('X-App-Type header:', req.header('X-App-Type'));
+    console.log('Using appType:', appType);
     
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ 
@@ -35,6 +40,12 @@ export const authenticate = async (req, res, next) => {
       });
     }
 
+    console.log('=== Access Type Check ===');
+    console.log('User:', user.firstName, user.lastName);
+    console.log('Role:', user.role);
+    console.log('accessType field:', user.accessType);
+    console.log('appType:', appType);
+
     if (!user.isActive) {
       return res.status(401).json({ 
         success: false, 
@@ -42,10 +53,32 @@ export const authenticate = async (req, res, next) => {
       });
     }
 
+    // Check access type (only if explicitly set and not 'both')
+    const userAccessType = user.accessType || 'both';
+    console.log('userAccessType:', userAccessType);
+    console.log('Should block?', userAccessType !== 'both' && userAccessType === 'mobile' && appType === 'website');
+    
+    if (userAccessType !== 'both') {
+      if (userAccessType === 'website' && appType === 'mobile') {
+        console.log('BLOCKING: mobile access tries website');
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. This account is only allowed on website.'
+        });
+      }
+      if (userAccessType === 'mobile' && appType === 'website') {
+        console.log('BLOCKING: website access tries mobile');
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. This account is only allowed on mobile app.'
+        });
+      }
+    }
+
     user.lastLogin = new Date();
     await user.save();
 
-    console.log('authenticate - user logged in:', user.firstName, user.lastName, 'role:', user.role, 'tenantId:', user.tenantId);
+    console.log('authenticate - user logged in:', user.firstName, user.lastName, 'role:', user.role, 'tenantId:', user.tenantId, 'accessType:', user.accessType);
     req.user = user;
     next();
   } catch (error) {
@@ -143,7 +176,6 @@ export const authenticateGuest = async (req, res, next) => {
     const authHeader = req.header('Authorization');
     
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      // Fallback to standard authenticate if no guest token
       return authenticate(req, res, next);
     }
 
@@ -160,11 +192,9 @@ export const authenticateGuest = async (req, res, next) => {
       return next();
     }
 
-    // If not guest, try standard authentication
     return authenticate(req, res, next);
   } catch (error) {
     console.error('Guest Authentication error:', error);
-    // Try standard authentication as last resort
     return authenticate(req, res, next);
   }
 };

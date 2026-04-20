@@ -1,23 +1,34 @@
 import Attendance from '../models/Attendance.js';
 import Shift from '../models/Shift.js';
+import User from '../models/User.js';
 import { reverseGeocode } from '../utils/geocode.js';
 import mongoose from 'mongoose';
 import XLSX from 'xlsx';
+import smsService from '../services/smsService.js';
 
-// Helper to get current date in IST (UTC+5:30)
+// Helper to get current exact Date
 const getISTDate = () => {
-  const now = new Date();
-  return new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
+  return new Date();
 };
 
-// Helper to get today's date in IST as UTC Date for MongoDB storage
+// Helper to get today's date boundary in IST timezone (Midnight IST)
 const getISTToday = () => {
-  const ist = getISTDate();
-  // Create UTC date from IST date components to avoid timezone conversion
-  const year = ist.getFullYear();
-  const month = ist.getMonth();
-  const date = ist.getDate();
-  return new Date(Date.UTC(year, month, date, 0, 0, 0, 0));
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  const parts = formatter.formatToParts(now);
+  const getPart = (type) => parts.find(p => p.type === type).value;
+
+  const year = parseInt(getPart('year'), 10);
+  const month = parseInt(getPart('month'), 10) - 1;
+  const day = parseInt(getPart('day'), 10);
+
+  // Midnight IST is exactly UTC - 5 hours and 30 minutes
+  return new Date(Date.UTC(year, month, day, -5, -30, 0, 0));
 };
 
 /**
@@ -25,14 +36,26 @@ const getISTToday = () => {
  */
 export const checkIn = async (req, res) => {
   try {
-    const { lat, lng, accuracy } = req.body;
+    const { lat, lng, accuracy, otp } = req.body;
     const inspectorId = req.user._id;
     const tenantId = req.user.tenantId;
+    
+    // Verify OTP if provided
+    if (otp) {
+      const user = await User.findById(inspectorId);
+      if (user.attendanceOTP !== otp) {
+        return res.status(400).json({ success: false, message: 'Invalid OTP' });
+      }
+      // Clear OTP after use
+      user.attendanceOTP = null;
+      user.attendanceOTPVerified = true;
+      await user.save();
+    }
 
     // 2. Check for existing attendance today
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    
+    const now = getISTDate();
+    const today = getISTToday();
+
     let existingAttendance = await Attendance.findOne({
       inspector: inspectorId,
       date: { $gte: today }
@@ -42,9 +65,20 @@ export const checkIn = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Already checked in today' });
     }
 
+    // 2.5 Find assigned shift
+    const shift = await Shift.findOne({
+      tenantId,
+      assignedInspectors: inspectorId,
+      isActive: true
+    });
+
+    if (!shift) {
+      return res.status(400).json({ success: false, message: 'No active shift assigned to you' });
+    }
+
     // 3. Validate timing against shift
     const currentTimeStr = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
-    
+
     const timeToMins = (t) => {
       const [h, m] = t.split(':').map(Number);
       return h * 60 + m;
@@ -52,25 +86,49 @@ export const checkIn = async (req, res) => {
 
     const currentMins = timeToMins(currentTimeStr);
     const shiftStartMins = timeToMins(shift.startTime);
-    
+
     let status = 'present';
     let isLate = false;
     let isHalfDay = false;
 
-    const diff = currentMins - shiftStartMins;
+const diff = currentMins - shiftStartMins;
 
-    if (diff < -shift.gracePeriod && !shift.isNightShift) {
-       return res.status(400).json({ success: false, message: 'Too early to check-in' });
-    } else if (diff <= shift.gracePeriod) {
-       status = 'present';
-    } else if (diff <= shift.lateMarkingAfter) {
-       status = 'late';
-       isLate = true;
-    } else if (diff <= shift.halfDayMarkingAfter) {
-       status = 'half-day';
-       isHalfDay = true;
-    } else if (!shift.isNightShift) {
-       return res.status(400).json({ success: false, message: 'Check-in window closed' });
+    // For night shift (crosses midnight), handle differently
+    let canCheckIn = true;
+  
+
+    if (shift.isNightShift) {
+      // Night shift: check if current time is after shift start (allowing grace period)
+      // currentMins should be > shiftStartMins for night shift (e.g., 19:17 > 18:00)
+      if (currentMins >= shiftStartMins) {
+        // After shift start - normal status
+        if (currentMins > shiftStartMins + shift.lateMarkingAfter) {
+          status = 'late';
+          isLate = true;
+        }
+        if (currentMins > shiftStartMins + shift.halfDayMarkingAfter) {
+          status = 'half-day';
+          isHalfDay = true;
+        }
+      } else {
+        // Before shift start but within grace period - still OK
+        status = 'present';
+      }
+    } else {
+      // Regular shift (same day)
+      if (diff < -shift.gracePeriod) {
+        return res.status(400).json({ success: false, message: 'Too early to check-in' });
+      } else if (diff <= shift.gracePeriod) {
+        status = 'present';
+      } else if (diff <= shift.lateMarkingAfter) {
+        status = 'late';
+        isLate = true;
+      } else if (diff <= shift.halfDayMarkingAfter) {
+        status = 'half-day';
+        isHalfDay = true;
+      } else {
+        return res.status(400).json({ success: false, message: 'Check-in window closed' });
+      }
     }
 
     const place = await reverseGeocode(lat, lng);
@@ -93,12 +151,12 @@ export const checkIn = async (req, res) => {
     console.log('checkIn - creating attendance:', attendanceData);
 
     if (existingAttendance) {
-       Object.assign(existingAttendance, attendanceData);
-       await existingAttendance.save();
-       console.log('checkIn - updated existing attendance:', existingAttendance);
+      Object.assign(existingAttendance, attendanceData);
+      await existingAttendance.save();
+      console.log('checkIn - updated existing attendance:', existingAttendance);
     } else {
-       existingAttendance = await Attendance.create(attendanceData);
-       console.log('checkIn - created new attendance:', existingAttendance);
+      existingAttendance = await Attendance.create(attendanceData);
+      console.log('checkIn - created new attendance:', existingAttendance);
     }
 
     res.status(201).json({ success: true, data: existingAttendance });
@@ -140,8 +198,8 @@ export const checkOut = async (req, res) => {
 
     const shiftEndStr = attendance.shift.endTime;
     const currentTimeStr = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
-    
-    
+
+
     const timeToMins = (t) => {
       const [h, m] = t.split(':').map(Number);
       return h * 60 + m;
@@ -226,13 +284,20 @@ export const getMyHistory = async (req, res) => {
     const { page = 1, limit = 10 } = req.query;
     const skip = (page - 1) * limit;
 
-    const history = await Attendance.find({ inspector: req.user._id })
+    const userId = req.user._id;
+    console.log('=== getMyHistory ===');
+    console.log('User:', req.user.firstName, req.user.lastName);
+    console.log('userId:', userId);
+
+    const history = await Attendance.find({ inspector: userId })
       .populate('shift', 'name displayName startTime endTime')
       .sort({ date: -1 })
       .skip(skip)
       .limit(parseInt(limit));
 
-    const total = await Attendance.countDocuments({ inspector: req.user._id });
+    const total = await Attendance.countDocuments({ inspector: userId });
+
+    console.log('Found history records:', total);
 
     res.json({
       success: true,
@@ -266,9 +331,9 @@ export const exportAttendance = async (req, res) => {
 
     const query = { tenantId };
     if (startDate && endDate) {
-      query.date = { 
-        $gte: new Date(startDate), 
-        $lte: new Date(endDate) 
+      query.date = {
+        $gte: new Date(startDate),
+        $lte: new Date(endDate)
       };
     }
 
@@ -318,11 +383,11 @@ export const getAttendance = async (req, res) => {
     const istNow = getISTDate();
     let start = startDate ? new Date(startDate) : new Date(istNow.getFullYear(), istNow.getMonth(), 1);
     let end = endDate ? new Date(endDate) : new Date(istNow.getFullYear(), istNow.getMonth() + 1, 0);
-    
+
     start.setHours(0, 0, 0, 0);
     end.setHours(23, 59, 59, 999);
     query.date = { $gte: start, $lte: end };
-    
+
     console.log('getAttendance - date range:', start, 'to', end);
     console.log('getAttendance - full query:', JSON.stringify(query));
 
@@ -348,8 +413,7 @@ export const getAttendance = async (req, res) => {
  */
 export const getAttendanceSummary = async (req, res) => {
   try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const today = getISTToday();
     const query = { tenantId: req.user.tenantId, date: { $gte: today } };
 
     const [totalUsers, present, late, halfDay] = await Promise.all([
@@ -387,14 +451,13 @@ export const getAttendanceUsers = async (req, res) => {
  */
 export const updateLastActive = async (req, res) => {
   try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const attendance = await Attendance.findOne({ 
-      inspector: req.user._id, 
-      date: { $gte: today }, 
-      checkOutTime: null 
+    const today = getISTToday();
+    const attendance = await Attendance.findOne({
+      inspector: req.user._id,
+      date: { $gte: today },
+      checkOutTime: null
     });
-    
+
     if (attendance) {
       await attendance.save(); // Just trigger timestamps update or implement lastActive field
     }
@@ -410,12 +473,11 @@ export const updateLastActive = async (req, res) => {
 export const updateLoginLocation = async (req, res) => {
   try {
     const { lat, lng, accuracy } = req.body;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const attendance = await Attendance.findOne({ 
-      inspector: req.user._id, 
-      date: { $gte: today }, 
-      checkOutTime: null 
+    const today = getISTToday();
+    const attendance = await Attendance.findOne({
+      inspector: req.user._id,
+      date: { $gte: today },
+      checkOutTime: null
     });
 
     if (attendance) {
@@ -425,6 +487,38 @@ export const updateLoginLocation = async (req, res) => {
       await attendance.save();
     }
     res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * Send OTP for attendance verification
+ */
+export const sendAttendanceOTP = async (req, res) => {
+  try {
+    const user = req.user;
+    const mobile = user.mobile;
+    
+    if (!mobile) {
+      return res.status(400).json({ success: false, message: 'No mobile number registered' });
+    }
+    
+    // Generate 4-digit OTP
+    const otp = Math.floor(1000 + Math.random() * 9000).toString();
+    
+    // Save OTP to user
+    user.attendanceOTP = otp;
+    await user.save();
+    
+    // Send OTP via SMS
+    const result = await smsService.sendOTP(mobile, otp);
+    
+    if (!result.success) {
+      return res.status(500).json({ success: false, message: 'Failed to send OTP' });
+    }
+    
+    res.json({ success: true, message: 'OTP sent to your mobile number' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

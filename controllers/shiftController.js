@@ -107,16 +107,10 @@ export const deleteShift = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Shift not found' });
     }
 
-    // Check if attendance records exist
-    const attendanceExists = await Attendance.exists({ shift: id, tenantId });
-    if (attendanceExists) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Cannot delete shift with existing attendance records' 
-      });
-    }
-
+    // Soft delete the shift
     shift.isActive = false;
+    shift.assignedInspectors = []; // Free up inspectors
+    shift.name = `${shift.name}_deleted_${Date.now()}`; // Prevent E11000 duplicate key errors if a shift with the same name is created again
     await shift.save();
 
     res.json({ success: true, message: 'Shift deleted successfully' });

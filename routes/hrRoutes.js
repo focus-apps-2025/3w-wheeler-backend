@@ -26,6 +26,7 @@ router.delete('/shifts/:id/remove', authenticate, adminOnly, shiftController.rem
  */
 router.post('/attendance/checkin', authenticate, inspectorOnly, attendanceController.checkIn);
 router.post('/attendance/checkout', authenticate, inspectorOnly, attendanceController.checkOut);
+router.post('/attendance/send-otp', authenticate, inspectorOnly, attendanceController.sendAttendanceOTP);
 router.get('/attendance/my-status', authenticate, inspectorOnly, attendanceController.getMyStatus);
 router.get('/attendance/my-history', authenticate, inspectorOnly, attendanceController.getMyHistory);
 router.get('/attendance/my-shift', authenticate, inspectorOnly, shiftController.getMyShift);
@@ -52,6 +53,8 @@ router.put('/permissions/:id/status', authenticate, adminOnly, permissionControl
 router.get('/notifications/my', authenticate, notificationController.getMyNotifications);
 router.put('/notifications/:id/read', authenticate, notificationController.markAsRead);
 router.put('/notifications/mark-all-read', authenticate, notificationController.markAllAsRead);
+router.delete('/notifications/:id', authenticate, notificationController.deleteNotification);
+router.delete('/notifications', authenticate, notificationController.deleteAllNotifications);
 
 /**
  * REPORTS & STATS (Admin only)

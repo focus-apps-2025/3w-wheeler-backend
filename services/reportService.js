@@ -132,9 +132,14 @@ export const processAttendanceForReport = (logs, inspectors, totalDays) => {
     // Format date as local date string (YYYY-MM-DD) - subtract timezone offset to convert UTC to local
     const localDate = new Date(log.date.getTime() - log.date.getTimezoneOffset() * 60000).toISOString().split('T')[0];
     
+    // Get tenant info if available
+    const tenantName = log.tenantId?.companyName || log.tenantId?.name || null;
+    
     return {
       date: localDate,
       inspector: `${log.inspector.firstName} ${log.inspector.lastName}`,
+      inspectorId: log.inspector._id,
+      tenant: tenantName,
       shift: log.shift.displayName || log.shift.name,
       checkIn: log.checkInTime ? new Date(log.checkInTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) : null,
       checkOut: log.checkOutTime ? new Date(log.checkOutTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) : null,

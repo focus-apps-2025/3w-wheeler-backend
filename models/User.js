@@ -53,10 +53,17 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   },
+  accessType: {
+    type: String,
+    enum: ['website', 'mobile', 'both'],
+    default: 'both'
+  },
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   },
+  attendanceOTP: String,
+  attendanceOTPVerified: { type: Boolean, default: false },
   lastLogin: {
     type: Date
   },
