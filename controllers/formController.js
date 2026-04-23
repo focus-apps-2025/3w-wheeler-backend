@@ -71,6 +71,10 @@ const normalizeQuestionTypes = (question) => {
     'chassiswithzone': 'chassis-with-zone',
     'chassis-without-zone': 'chassis-without-zone',
     'chassiswithoutzone': 'chassis-without-zone',
+    'zone-in': 'zone-in',
+    'zonein': 'zone-in',
+    'zone-out': 'zone-out',
+    'zoneout': 'zone-out',
     'productnpstgwbuckets': 'productNPSTGWBuckets'
   };
   
@@ -265,8 +269,15 @@ export const createForm = async (req, res) => {
         'number': 'number', 'location': 'location',
         'boolean': 'boolean', 'textarea': 'textarea',
         'text': 'text', 'radio': 'radio', 'paragraph': 'paragraph',
-        'select': 'select', 'checkbox': 'checkbox', 'productnpstgwbuckets': 'productNPSTGWBuckets',
-        'yesnona': 'yesNoNA',
+        'select': 'select', 'checkbox': 'checkbox', 
+        'chassis-with-zone': 'chassis-with-zone',
+        'chassiswithzone': 'chassis-with-zone',
+        'chassis-without-zone': 'chassis-without-zone',
+        'chassiswithoutzone': 'chassis-without-zone',
+        'zone-in': 'zone-in',
+        'zonein': 'zone-in',
+        'zone-out': 'zone-out',
+        'zoneout': 'zone-out',
         'productnpstgwbuckets': 'productNPSTGWBuckets'
       };
 

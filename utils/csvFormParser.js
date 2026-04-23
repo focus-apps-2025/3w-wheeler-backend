@@ -69,7 +69,11 @@ const mapQuestionType = (csvType) => {
     'chassis-with-zone': 'chassis-with-zone',
     'chassiswithzone': 'chassis-with-zone',
     'chassis-without-zone': 'chassis-without-zone',
-    'chassiswithoutzone': 'chassis-without-zone'
+    'chassiswithoutzone': 'chassis-without-zone',
+    'zone-in': 'zone-in',
+    'zonein': 'zone-in',
+    'zone-out': 'zone-out',
+    'zoneout': 'zone-out'
   };
   
   // First try exact match after normalization

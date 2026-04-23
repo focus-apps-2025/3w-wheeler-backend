@@ -64,7 +64,7 @@ const FollowUpQuestionSchema = new mongoose.Schema({
       // Hierarchy types
       'productNPSTGWBuckets',
        // Chassis types
-      'chassis-with-zone', 'chassis-without-zone',
+      'chassis-with-zone', 'chassis-without-zone', 'zone-in', 'zone-out',
       // Chassis number type for multi-tenant response sharing
       'chassisNumber',
       // Feedback types
@@ -313,6 +313,10 @@ const normalizeQuestionType = (type) => {
     'chassiswithzone': 'chassis-with-zone',
     'chassis-without-zone': 'chassis-without-zone',
     'chassiswithoutzone': 'chassis-without-zone',
+    'zone-in': 'zone-in',
+    'zonein': 'zone-in',
+    'zone-out': 'zone-out',
+    'zoneout': 'zone-out',
     'productnpstgwbuckets': 'productNPSTGWBuckets',
     'product-nps-tgw-buckets': 'productNPSTGWBuckets'
   };
