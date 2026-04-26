@@ -520,6 +520,13 @@ export const getAllForms = async (req, res) => {
       .limit(options.limit * 1)
       .skip((options.page - 1) * options.limit);
 
+    console.log('[getAllForms] Found forms count:', forms.length);
+    if (forms.length > 0) {
+      forms.forEach(f => {
+        console.log(`[getAllForms] Form: "${f.title}", id: "${f.id}", _id: "${f._id}"`);
+      });
+    }
+
     const total = await Form.countDocuments(query);
 
     const formIdsForCounts = forms
@@ -684,6 +691,7 @@ export const getFormById = async (req, res) => {
   try {
     const { id, tenantSlug } = req.params;
 
+    console.log('[getFormById] Looking for form with ID:', id);
     const populateOptions = req.populateOptions || {
       path: 'createdBy',
       select: 'username firstName lastName email'
@@ -691,17 +699,22 @@ export const getFormById = async (req, res) => {
 
     // Use .lean() directly
     let form = await Form.findOne({ id: id }).populate(populateOptions.path, populateOptions.select).lean();
+    console.log('[getFormById] Found by id field:', !!form);
 
     if (!form && mongoose.Types.ObjectId.isValid(id)) {
       form = await Form.findById(id).populate(populateOptions.path, populateOptions.select).lean();
+      console.log('[getFormById] Found by _id field:', !!form);
     }
 
     if (!form) {
+      console.log('[getFormById] Form not found in database');
       return res.status(404).json({
         success: false,
         message: 'Form not found'
       });
     }
+
+    console.log('[getFormById] Form found:', form.title, 'isVisible:', form.isVisible);
 
     // Ensure viewType has a default value if missing (Mongoose lean() doesn't include defaults for missing fields)
     if (!form.viewType) {

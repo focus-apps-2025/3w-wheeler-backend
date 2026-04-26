@@ -266,15 +266,19 @@ export const getFormAnalytics = async (req, res) => {
     const { formId } = req.params;
     const { period = '30d' } = req.query;
 
+    console.log('[getFormAnalytics] Looking for form with ID:', formId);
     // Verify form exists (support both id and _id)
     let form;
     if (mongoose.Types.ObjectId.isValid(formId)) {
       form = await Form.findById(formId);
+      console.log('[getFormAnalytics] Found by findById:', !!form);
     } else {
       form = await Form.findOne({ id: formId });
+      console.log('[getFormAnalytics] Found by findOne(id):', !!form);
     }
 
     if (!form) {
+      console.log('[getFormAnalytics] Form not found in database');
       return res.status(404).json({
         success: false,
         message: 'Form not found'

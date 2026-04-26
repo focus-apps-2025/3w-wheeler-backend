@@ -2065,6 +2065,7 @@ export const getResponsesByForm = async (req, res) => {
     const { formId } = req.params;
     const { page = 1, limit = 10000, status, includePartial = 'false' } = req.query;
 
+    console.log('[getResponsesByForm] Looking for form with ID:', formId);
     // Verify form exists
     let formSearchQuery = { id: formId };
 
@@ -2083,8 +2084,19 @@ export const getResponsesByForm = async (req, res) => {
       ];
     }
 
-    const form = await Form.findOne(formSearchQuery);
+    let form = await Form.findOne(formSearchQuery);
+    console.log('[getResponsesByForm] Form found by id query:', !!form);
+
+    if (!form && mongoose.Types.ObjectId.isValid(formId)) {
+      console.log('[getResponsesByForm] Trying to find by _id:', formId);
+      const alternateQuery = { _id: formId };
+      if (formSearchQuery.$or) alternateQuery.$or = formSearchQuery.$or;
+      form = await Form.findOne(alternateQuery);
+      console.log('[getResponsesByForm] Form found by _id query:', !!form);
+    }
+
     if (!form) {
+      console.log('[getResponsesByForm] Form not found with query:', JSON.stringify(formSearchQuery));
       return res.status(404).json({
         success: false,
         message: 'Form not found'
