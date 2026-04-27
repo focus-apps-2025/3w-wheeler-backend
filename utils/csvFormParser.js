@@ -176,8 +176,8 @@ export const parseSimplifiedCSVForm = (csvData, formMetadata = {}) => {
       const followUpOption = row['Follow up Option'] ? row['Follow up Option'].toUpperCase() === 'YES' : false;
       const parentQuestion = row['Parent Question'] || '';
       const followUpTrigger = row['Follow Up Trigger'] || ''; // Which option triggers this follow-up
-      const mainParameter = row['Main Parameter'] || row['Main Parameters'] || ''; // Main parameter name
-      const followupParameter = row['Followup Parameter'] || row['Followup Parameters'] || row['Follow up Parameter'] || row['Follow up Parameters'] || ''; // Followup parameter name
+      const mainParameter = row['Main Parameter'] || row['Main Parameters'] || row['SubParam1'] || row['Sub Parameter 1'] || ''; // Main parameter name
+      const followupParameter = row['Followup Parameter'] || row['Followup Parameters'] || row['Follow up Parameter'] || row['Follow up Parameters'] || row['SubParam2'] || row['Sub Parameter 2'] || ''; // Followup parameter name
 
       if (!sectionNum || !question || !questionType) {
         throw new Error(`Row ${rowIndex + 2}: Missing Section Number, Question, or Question Type`);

@@ -247,76 +247,7 @@ export const createForm = async (req, res) => {
     console.log('=== DEBUG: formData before Form creation ===');
     console.log('First question suggestion:', formData.sections?.[0]?.questions?.[0]?.suggestion);
      // Normalize question types before form creation (handles spaces/slashes)
-    const normalizeQuestionTypes = (question) => {
-      const typeMap = {
-        // Legacy/UI type names - without spaces/slashes
-        'shorttext': 'text', 'shortint': 'text',
-        'multiplechoice': 'radio',
-        'longtext': 'paragraph', 'longinput': 'paragraph',
-        'dropdown': 'select', 'checkboxes': 'checkbox',
-        'fileupload': 'file', 'file upload': 'file',
-
-        // Yes/No variations
-        'yesnona': 'yesNoNA', 'yesno': 'yesNoNA',
-
-        // Core types - pass through
-        'email': 'email', 'url': 'url', 'tel': 'tel',
-        'date': 'date', 'time': 'time', 'file': 'file', 'range': 'range',
-        'rating': 'rating', 'scale': 'scale', 'radio-grid': 'radio-grid',
-        'radiogrid': 'radio-grid', 'checkbox-grid': 'checkbox-grid', 'checkboxgrid': 'checkbox-grid',
-        'radio-image': 'radio-image', 'radioimage': 'radio-image',
-        'search-select': 'search-select', 'searchselect': 'search-select',
-        'number': 'number', 'location': 'location',
-        'boolean': 'boolean', 'textarea': 'textarea',
-        'text': 'text', 'radio': 'radio', 'paragraph': 'paragraph',
-        'select': 'select', 'checkbox': 'checkbox', 
-        'chassis-with-zone': 'chassis-with-zone',
-        'chassiswithzone': 'chassis-with-zone',
-        'chassis-without-zone': 'chassis-without-zone',
-        'chassiswithoutzone': 'chassis-without-zone',
-        'zone-in': 'zone-in',
-        'zonein': 'zone-in',
-        'zone-out': 'zone-out',
-        'zoneout': 'zone-out',
-        'productnpstgwbuckets': 'productNPSTGWBuckets'
-      };
-
-      if (question?.type) {
-        let normalizedType = String(question.type)
-          .toLowerCase()
-          .trim()
-          .replace(/\s+/g, ' ')
-          .replace(/\s*\/\s*/g, '');
-
-        const mappedType = typeMap[normalizedType] || typeMap[normalizedType.replace(/\s/g, '')] || question.type;
-        if (question.type !== mappedType) {
-          console.log(`Normalizing question type: "${question.type}" → "${mappedType}"`);
-        }
-        question.type = mappedType;
-      }
-
-      if (question?.type === 'file') {
-        if (Array.isArray(question.allowedFileTypes)) {
-          question.allowedFileTypes = question.allowedFileTypes.filter((type) =>
-            ALLOWED_FILE_TYPES.includes(type)
-          );
-          if (question.allowedFileTypes.length === 0) {
-            delete question.allowedFileTypes;
-          }
-        } else if (question?.allowedFileTypes !== undefined) {
-          delete question.allowedFileTypes;
-        }
-      } else if (question?.allowedFileTypes !== undefined) {
-        delete question.allowedFileTypes;
-      }
-
-      if (Array.isArray(question?.followUpQuestions)) {
-        question.followUpQuestions = question.followUpQuestions.map(fq => normalizeQuestionTypes(fq));
-      }
-      return question;
-    };
-
-        // Normalize all sections
+    // Normalize all sections using global utility
     if (Array.isArray(formData.sections)) {
       formData.sections.forEach(section => {
         if (Array.isArray(section.questions)) {
@@ -325,7 +256,7 @@ export const createForm = async (req, res) => {
       });
     }
 
-    // Normalize top-level follow-up questions
+    // Normalize top-level follow-up questions using global utility
     if (Array.isArray(formData.followUpQuestions)) {
       formData.followUpQuestions = formData.followUpQuestions.map(q => normalizeQuestionTypes(q));
     }
@@ -360,21 +291,6 @@ export const createForm = async (req, res) => {
     });
 
    
-    // Normalize all sections
-    if (Array.isArray(formData.sections)) {
-      formData.sections.forEach(section => {
-        if (Array.isArray(section.questions)) {
-          section.questions = section.questions.map(q => normalizeQuestionTypes(q));
-        }
-      });
-    }
-
-    // Normalize top-level follow-up questions
-    if (Array.isArray(formData.followUpQuestions)) {
-      formData.followUpQuestions = formData.followUpQuestions.map(q => normalizeQuestionTypes(q));
-    }
-
-
     await form.save();
 
     console.log('Form created successfully with ID:', form.id);
@@ -894,66 +810,7 @@ export const updateForm = async (req, res) => {
       throw error;
     }
 
-    // Normalize question types before saving (handles spaces/slashes)
-    const normalizeQuestionTypes = (question) => {
-      const typeMap = {
-        // Legacy/UI type names - without spaces/slashes
-        'shorttext': 'text', 'shortint': 'text',
-        'multiplechoice': 'radio',
-        'longtext': 'paragraph', 'longinput': 'paragraph',
-        'dropdown': 'select', 'checkboxes': 'checkbox',
-        'fileupload': 'file', 'file upload': 'file',
-
-        // Yes/No variations
-        'yesnona': 'yesNoNA', 'yesno': 'yesNoNA',
-
-        // Core types - pass through
-        'email': 'email', 'url': 'url', 'tel': 'tel',
-        'date': 'date', 'time': 'time', 'file': 'file', 'range': 'range',
-        'rating': 'rating', 'scale': 'scale', 'radio-grid': 'radio-grid',
-        'radiogrid': 'radio-grid', 'checkbox-grid': 'checkbox-grid', 'checkboxgrid': 'checkbox-grid',
-        'radio-image': 'radio-image', 'radioimage': 'radio-image',
-        'search-select': 'search-select', 'searchselect': 'search-select',
-        'number': 'number', 'location': 'location',
-        'boolean': 'boolean', 'textarea': 'textarea',
-        'text': 'text', 'radio': 'radio', 'paragraph': 'paragraph',
-        'select': 'select', 'checkbox': 'checkbox', 'productnpstgwbuckets': 'productNPSTGWBuckets',
-        'chassis-with-zone': 'chassis-with-zone',
-        'chassiswithzone': 'chassis-with-zone',
-        'chassis-without-zone': 'chassis-without-zone',
-        'chassiswithoutzone': 'chassis-without-zone'
-      };
-
-      if (question?.type) {
-        let normalizedType = String(question.type)
-          .toLowerCase()
-          .trim()
-          .replace(/\s+/g, ' ')
-          .replace(/\s*\/\s*/g, '');
-
-        question.type = typeMap[normalizedType] || typeMap[normalizedType.replace(/\s/g, '')] || question.type;
-      }
-
-      if (question?.type === 'file') {
-        if (Array.isArray(question.allowedFileTypes)) {
-          question.allowedFileTypes = question.allowedFileTypes.filter((type) =>
-            ALLOWED_FILE_TYPES.includes(type)
-          );
-          if (question.allowedFileTypes.length === 0) {
-            delete question.allowedFileTypes;
-          }
-        } else if (question?.allowedFileTypes !== undefined) {
-          delete question.allowedFileTypes;
-        }
-      } else if (question?.allowedFileTypes !== undefined) {
-        delete question.allowedFileTypes;
-      }
-      if (Array.isArray(question?.followUpQuestions)) {
-        question.followUpQuestions = question.followUpQuestions.map(fq => normalizeQuestionTypes(fq));
-      }
-      return question;
-    };
-
+    // Normalize question types before saving (handles spaces/slashes) using global utility
     if (Array.isArray(form.sections)) {
       form.sections.forEach(section => {
         if (Array.isArray(section.questions)) {
@@ -2188,63 +2045,7 @@ export const importFormFromCSV = async (req, res) => {
       });
     }
 
-    // Normalize all question types before form creation (handles spaces/slashes)
-    const normalizeQuestionTypes = (question) => {
-      const typeMap = {
-        // Legacy/UI type names - without spaces/slashes
-        'shorttext': 'text', 'shortint': 'text',
-        'multiplechoice': 'radio',
-        'longtext': 'paragraph', 'longinput': 'paragraph',
-        'dropdown': 'select', 'checkboxes': 'checkbox',
-        'fileupload': 'file', 'file upload': 'file',
-
-        // Yes/No variations
-        'yesnona': 'yesNoNA', 'yesno': 'yesNoNA',
-
-        // Core types - pass through
-        'email': 'email', 'url': 'url', 'tel': 'tel',
-        'date': 'date', 'time': 'time', 'file': 'file', 'range': 'range',
-        'rating': 'rating', 'scale': 'scale', 'radio-grid': 'radio-grid',
-        'radiogrid': 'radio-grid', 'checkbox-grid': 'checkbox-grid', 'checkboxgrid': 'checkbox-grid',
-        'radio-image': 'radio-image', 'radioimage': 'radio-image',
-        'search-select': 'search-select', 'searchselect': 'search-select',
-        'number': 'number', 'location': 'location',
-        'boolean': 'boolean', 'textarea': 'textarea',
-        'text': 'text', 'radio': 'radio', 'paragraph': 'paragraph',
-        'select': 'select', 'checkbox': 'checkbox', 'productnpstgwbuckets': 'productNPSTGWBuckets'
-      };
-
-      if (question?.type) {
-        let normalizedType = String(question.type)
-          .toLowerCase()
-          .trim()
-          .replace(/\s+/g, ' ')
-          .replace(/\s*\/\s*/g, '');
-
-        question.type = typeMap[normalizedType] || typeMap[normalizedType.replace(/\s/g, '')] || question.type;
-      }
-
-      if (question?.type === 'file') {
-        if (Array.isArray(question.allowedFileTypes)) {
-          question.allowedFileTypes = question.allowedFileTypes.filter((type) =>
-            ALLOWED_FILE_TYPES.includes(type)
-          );
-          if (question.allowedFileTypes.length === 0) {
-            delete question.allowedFileTypes;
-          }
-        } else if (question?.allowedFileTypes !== undefined) {
-          delete question.allowedFileTypes;
-        }
-      } else if (question?.allowedFileTypes !== undefined) {
-        delete question.allowedFileTypes;
-      }
-      if (Array.isArray(question?.followUpQuestions)) {
-        question.followUpQuestions = question.followUpQuestions.map(fq => normalizeQuestionTypes(fq));
-      }
-      return question;
-    };
-
-    // Normalize all sections
+    // Normalize all sections using global utility
     if (Array.isArray(formData.sections)) {
       formData.sections.forEach(section => {
         if (Array.isArray(section.questions)) {
@@ -2253,7 +2054,7 @@ export const importFormFromCSV = async (req, res) => {
       });
     }
 
-    // Normalize top-level follow-up questions
+    // Normalize top-level follow-up questions using global utility
     if (Array.isArray(formData.followUpQuestions)) {
       formData.followUpQuestions = formData.followUpQuestions.map(q => normalizeQuestionTypes(q));
     }
