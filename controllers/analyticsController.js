@@ -4,6 +4,8 @@ import Response from '../models/Response.js';
 import User from '../models/User.js';
 import FormSession from '../models/FormSession.js';
 import ActivityLog from '../models/ActivityLog.js';
+import Tenant from '../models/Tenant.js';
+import Shift from '../models/Shift.js';
 import { calculateUserActiveMinutes } from './activityController.js';
 
 // ─── Date Parser Helper ──────────────────────────────────────────────────────
@@ -1852,3 +1854,277 @@ function groupResponsesByHour(responses) {
 
   return Object.values(hourly);
 }
+
+export const getInspectorSummary = async (req, res) => {
+  try {
+    const { role, _id: userId, tenantId: userTenantId } = req.user;
+    const { startDate, endDate } = req.query;
+
+    // Build the initial match filter
+    let matchFilter = {};
+    if (role === 'superadmin') {
+      // No filter
+    } else if (role === 'admin' || role === 'tenant_admin' || role === 'subadmin') {
+      matchFilter.tenantId = new mongoose.Types.ObjectId(userTenantId);
+    } else if (role === 'inspector') {
+      matchFilter.createdBy = new mongoose.Types.ObjectId(userId);
+    } else {
+      matchFilter.tenantId = new mongoose.Types.ObjectId(userTenantId);
+    }
+
+    // Date filtering - handle inclusive days
+    if (startDate || endDate) {
+      matchFilter.createdAt = {};
+      if (startDate) {
+        const s = new Date(startDate);
+        s.setHours(0, 0, 0, 0);
+        matchFilter.createdAt.$gte = s;
+      }
+      if (endDate) {
+        const e = new Date(endDate);
+        e.setHours(23, 59, 59, 999);
+        matchFilter.createdAt.$lte = e;
+      }
+    }
+
+    // Fetch all relevant responses
+    console.log('getInspectorSummary - matchFilter:', JSON.stringify(matchFilter, null, 2));
+    const responses = await Response.find(matchFilter).sort({ createdAt: 1 }).lean();
+    console.log(`getInspectorSummary - found: ${responses?.length || 0} responses`);
+    
+    if (!responses || responses.length === 0) {
+      return res.json({ success: true, data: [], allStatuses: [] });
+    }
+
+    // Get all unique form IDs from these responses
+    const formIds = [...new Set(responses.map(r => r.questionId?.toString()).filter(Boolean))];
+    const forms = await Form.find({ 
+      $or: [
+        { id: { $in: formIds } },
+        { _id: { $in: formIds.filter(id => mongoose.Types.ObjectId.isValid(id)) } }
+      ]
+    }).lean();
+
+    // Create a map of formId -> chassisQuestionId
+    const formChassisMap = {};
+    forms.forEach(f => {
+      let chassisId = null;
+      if (f.sections) {
+        for (const section of f.sections) {
+          if (section.questions) {
+            for (const q of section.questions) {
+              if (
+                q.type === 'chassis' ||
+                q.type === 'chassisWithZone' ||
+                q.type === 'chassisWithoutZone' ||
+                q.type === 'zone-in' ||
+                q.type === 'zone-out' ||
+                q.text?.toLowerCase().includes('chassis') ||
+                q.trackResponseRank === true ||
+                q.trackResponseRank === 'true' ||
+                q.trackResponseQuestion === true ||
+                q.trackResponseQuestion === 'true'
+              ) {
+                chassisId = q.id;
+                break;
+              }
+            }
+          }
+          if (chassisId) break;
+        }
+      }
+      if (f.id) formChassisMap[f.id] = chassisId;
+      if (f._id) formChassisMap[f._id.toString()] = chassisId;
+    });
+
+    // Group responses by item (Chassis) for status calculation
+    const itemGroups = {};
+    responses.forEach(r => {
+      const formId = r.questionId?.toString();
+      const chassisId = formChassisMap[formId];
+      let itemId = `unknown_${r._id}`;
+
+      if (chassisId && r.answers) {
+        const answersObj = r.answers instanceof Map ? Object.fromEntries(r.answers) : r.answers;
+        const answer = answersObj[chassisId];
+        if (answer) {
+          if (typeof answer === 'object') {
+            itemId = `${formId}_${answer.chassisNumber || JSON.stringify(answer)}`;
+          } else {
+            itemId = `${formId}_${String(answer)}`;
+          }
+        }
+      } else {
+        itemId = `${formId}_untracked_${r._id}`;
+      }
+
+      if (!itemGroups[itemId]) itemGroups[itemId] = [];
+      itemGroups[itemId].push(r);
+    });
+
+    // Calculate status for each response
+    const calculatedStatuses = {};
+    Object.values(itemGroups).forEach(group => {
+      let reworkCount = 0;
+      let hasBeenReworked = false;
+
+      group.forEach((r, index) => {
+        let isRework = false;
+        let isAccepted = false;
+        let isRejected = false;
+        let foundStatus = null;
+
+        const answersObj = r.answers instanceof Map ? Object.fromEntries(r.answers) : r.answers;
+        if (answersObj) {
+          Object.values(answersObj).forEach(ans => {
+            if (ans === null || ans === undefined) return;
+            
+            let s = '';
+            if (typeof ans === 'object' && ans.status) {
+              s = String(ans.status).trim();
+            } else if (typeof ans === 'string') {
+              s = ans.trim();
+            }
+
+            if (!s) return;
+            const sl = s.toLowerCase();
+
+            if (sl === 'rework' || sl === 'reworked' || sl.includes('re-rework')) {
+              isRework = true;
+            } else if (
+              sl === 'accepted' || 
+              sl === 'rework completed' || 
+              sl === 'verified' || 
+              sl === 'yes' || 
+              sl === 'direct ok' ||
+              sl === 'rework accepted'
+            ) {
+              isAccepted = true;
+            } else if (sl === 'rejected' || sl === 'no') {
+              isRejected = true;
+            } else {
+              foundStatus = s;
+            }
+          });
+        }
+
+        let finalStatus = 'Pending';
+        if (isRejected) {
+          finalStatus = 'Rejected';
+        } else if (isRework) {
+          reworkCount++;
+          hasBeenReworked = true;
+          finalStatus = 'Rework QC Pending'; // Combined column as requested
+        } else if (isAccepted) {
+          if (index === 0 && !hasBeenReworked) {
+            finalStatus = 'Direct Ok';
+          } else {
+            finalStatus = 'Rework QC Completed'; // Mapped from Rework Accepted
+          }
+        } else if (foundStatus) {
+          finalStatus = foundStatus;
+        }
+
+        calculatedStatuses[r._id.toString()] = finalStatus;
+      });
+    });
+
+    // Now aggregate per inspector and date
+    const inspectorData = {};
+    for (const r of responses) {
+      const creatorId = r.createdBy?.toString();
+      if (!creatorId) continue;
+
+      // Extract date string YYYY-MM-DD in IST (Asia/Kolkata)
+      const d = new Date(r.createdAt);
+      // Adjust to IST manually to be safe
+      const istDate = new Date(d.getTime() + (5.5 * 60 * 60 * 1000));
+      const dateIST = istDate.toISOString().split('T')[0];
+      const key = `${creatorId}_${dateIST}`;
+
+      if (!inspectorData[key]) {
+        inspectorData[key] = {
+          userId: creatorId,
+          date: dateIST,
+          tenantId: r.tenantId,
+          totalInspection: 0,
+          statusCounts: {
+            'Direct Ok': 0,
+            'Rework QC Completed': 0,
+            'Rework QC Pending': 0,
+            'Rejected': 0,
+            'Dispatched': 0
+          }
+        };
+      }
+
+      const stats = inspectorData[key];
+      const status = calculatedStatuses[r._id.toString()];
+      stats.totalInspection++;
+      
+      if (stats.statusCounts.hasOwnProperty(status)) {
+        stats.statusCounts[status]++;
+      } else {
+        stats.statusCounts[status] = (stats.statusCounts[status] || 0) + 1;
+      }
+    }
+
+    // Join with User, Tenant, and Shift details
+    const finalSummary = [];
+    const entryKeys = Object.keys(inspectorData);
+    const userIds = [...new Set(entryKeys.map(k => inspectorData[k].userId))];
+    const users = await User.find({ _id: { $in: userIds } }).lean();
+    const tenantIds = [...new Set(users.map(u => u.tenantId))];
+    const tenants = await Tenant.find({ _id: { $in: tenantIds } }).lean();
+    const shifts = await Shift.find({ tenantId: { $in: tenantIds }, isActive: true }).lean();
+
+    for (const key of entryKeys) {
+      const stats = inspectorData[key];
+      const user = users.find(u => u._id.toString() === stats.userId);
+      if (!user) continue;
+
+      const tenant = tenants.find(t => t._id.toString() === user.tenantId?.toString());
+      const shift = shifts.find(s => s.assignedInspectors.some(id => id.toString() === stats.userId));
+
+      finalSummary.push({
+        tenantName: tenant ? (tenant.companyName || tenant.name) : 'N/A',
+        date: stats.date,
+        shift: shift ? shift.displayName : 'N/A',
+        qcInspector: `${user.firstName} ${user.lastName}`,
+        totalInspection: stats.totalInspection,
+        statusCounts: stats.statusCounts
+      });
+    }
+
+    // Sort by date descending
+    finalSummary.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    // Static display order for the main columns
+    const allStatuses = ['Direct Ok', 'Rework QC Completed', 'Rework QC Pending', 'Rejected', 'Dispatched'];
+
+    res.json({ 
+      success: true, 
+      data: { 
+        summary: finalSummary, 
+        allStatuses 
+      } 
+    });
+  } catch (error) {
+    console.error('getInspectorSummary error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+function formatTimeDuration(seconds) {
+  if (!seconds) return '0s';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+
+

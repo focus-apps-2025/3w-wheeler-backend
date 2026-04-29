@@ -9,7 +9,8 @@ import {
   getTenantResponseDetails,
   getTenantSubmissionStats,
   exportAnalytics,
-  getResponseTimeAnalytics
+  getResponseTimeAnalytics,
+  getInspectorSummary
 } from '../controllers/analyticsController.js';
 import { authenticate, adminOnly, superAdminOnly, inspectorOrAdmin, authenticateGuest } from '../middleware/auth.js';
 import { addTenantFilter } from '../middleware/tenantIsolation.js';
@@ -54,5 +55,6 @@ router.get('/tenant/stats', inspectorOrAdmin, getTenantSubmissionStats);
 router.get('/export', inspectorOrAdmin, exportAnalytics);
 // Add this new route
 router.get('/forms/:formId/response-times', inspectorOrAdmin, getResponseTimeAnalytics);
+router.get('/inspector-summary', inspectorOrAdmin, getInspectorSummary);
 
 export default router;

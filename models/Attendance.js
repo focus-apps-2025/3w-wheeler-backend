@@ -16,6 +16,9 @@ const attendanceSchema = new mongoose.Schema({
     ref: 'Shift',
     required: true
   },
+  shiftName: String,
+  shiftStartTime: String,
+  shiftEndTime: String,
   date: {
     type: Date,
     required: true

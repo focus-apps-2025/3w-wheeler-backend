@@ -6,29 +6,61 @@ import mongoose from 'mongoose';
 import XLSX from 'xlsx';
 import smsService from '../services/smsService.js';
 
-// Helper to get current exact Date
-const getISTDate = () => {
-  return new Date();
+// Helper to get current IST time
+const getISTNow = () => {
+  const now = new Date();
+  // IST is UTC + 5:30. Calculate UTC time first, then add IST offset.
+  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+  const istTime = new Date(utc + (5.5 * 60 * 60 * 1000));
+  return istTime;
 };
 
-// Helper to get today's date boundary in IST timezone (Midnight IST)
+// Helper to get today's date boundary in IST (Midnight IST)
 const getISTToday = () => {
-  const now = new Date();
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Asia/Kolkata',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
+  const istNow = getISTNow();
+  istNow.setHours(0, 0, 0, 0);
+  return istNow;
+};
+
+// Helper to convert HH:mm to minutes
+const toMins = (t) => {
+  if (!t) return null;
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
+};
+
+/**
+ * Centered Shift Detection Logic with Buffer
+ */
+const findShiftByTime = (currentMins, shifts, bufferMins = 15) => {
+  console.log(`findShiftByTime - currentMins: ${currentMins}, shiftsCount: ${shifts.length}, buffer: ${bufferMins}`);
+  
+  return shifts.find(s => {
+    const startMins = toMins(s.startTime);
+    const endMins = toMins(s.endTime);
+    const isNight = s.isNightShift || startMins > endMins;
+
+    // Buffer allows checking in slightly before the shift starts
+    const bufferedStart = (startMins - bufferMins + 1440) % 1440;
+    
+    let isMatch = false;
+    if (isNight) {
+      if (bufferedStart > endMins) {
+        isMatch = currentMins >= bufferedStart || currentMins < endMins;
+      } else {
+        isMatch = currentMins >= bufferedStart && currentMins < endMins;
+      }
+    } else {
+      if (bufferedStart > endMins) {
+        isMatch = currentMins >= bufferedStart || currentMins < endMins;
+      } else {
+        isMatch = currentMins >= bufferedStart && currentMins < endMins;
+      }
+    }
+
+    console.log(`Checking shift ${s.displayName || s.name} (${s.startTime}-${s.endTime}): bufferedStart=${bufferedStart}, endMins=${endMins}, isNight=${isNight} -> Match: ${isMatch}`);
+    return isMatch;
   });
-  const parts = formatter.formatToParts(now);
-  const getPart = (type) => parts.find(p => p.type === type).value;
-
-  const year = parseInt(getPart('year'), 10);
-  const month = parseInt(getPart('month'), 10) - 1;
-  const day = parseInt(getPart('day'), 10);
-
-  // Midnight IST is exactly UTC - 5 hours and 30 minutes
-  return new Date(Date.UTC(year, month, day, -5, -30, 0, 0));
 };
 
 /**
@@ -53,7 +85,7 @@ export const checkIn = async (req, res) => {
     }
 
     // 2. Check for existing attendance today
-    const now = getISTDate();
+    const now = getISTNow();
     const today = getISTToday();
 
     let existingAttendance = await Attendance.findOne({
@@ -65,70 +97,48 @@ export const checkIn = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Already checked in today' });
     }
 
-    // 2.5 Find assigned shift
-    const shift = await Shift.findOne({
-      tenantId,
-      assignedInspectors: inspectorId,
-      isActive: true
-    });
+    // 2.5 Auto Shift Detection
+    const allShifts = await Shift.find({ tenantId, isActive: true });
+    const currentMins = now.getHours() * 60 + now.getMinutes();
+
+    const shift = findShiftByTime(currentMins, allShifts, 15); // 15 mins buffer
 
     if (!shift) {
-      return res.status(400).json({ success: false, message: 'No active shift assigned to you' });
+      return res.status(400).json({ 
+        success: false, 
+        message: 'No shift available for current time. Contact admin.' 
+      });
     }
 
-    // 3. Validate timing against shift
-    const currentTimeStr = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
-
-    const timeToMins = (t) => {
-      const [h, m] = t.split(':').map(Number);
-      return h * 60 + m;
-    };
-
-    const currentMins = timeToMins(currentTimeStr);
-    const shiftStartMins = timeToMins(shift.startTime);
-
+    // 3. Validate timing against shift (Late/Half-day marking)
+    const shiftStartMins = toMins(shift.startTime);
+    const shiftEndMins = toMins(shift.endTime);
     let status = 'present';
     let isLate = false;
     let isHalfDay = false;
 
-const diff = currentMins - shiftStartMins;
-
-    // For night shift (crosses midnight), handle differently
-    let canCheckIn = true;
-  
-
-    if (shift.isNightShift) {
-      // Night shift: check if current time is after shift start (allowing grace period)
-      // currentMins should be > shiftStartMins for night shift (e.g., 19:17 > 18:00)
+    // Calculate diff for status marking
+    let diff;
+    if (shift.isNightShift || shiftStartMins > shiftEndMins) {
       if (currentMins >= shiftStartMins) {
-        // After shift start - normal status
-        if (currentMins > shiftStartMins + shift.lateMarkingAfter) {
-          status = 'late';
-          isLate = true;
-        }
-        if (currentMins > shiftStartMins + shift.halfDayMarkingAfter) {
-          status = 'half-day';
-          isHalfDay = true;
-        }
+        diff = currentMins - shiftStartMins;
+      } else if (currentMins < shiftEndMins) {
+        // Checked in after midnight
+        diff = currentMins + (1440 - shiftStartMins);
       } else {
-        // Before shift start but within grace period - still OK
-        status = 'present';
+        // Within the buffer before start (e.g. 21:50 for 22:00 start)
+        diff = currentMins - shiftStartMins;
       }
     } else {
-      // Regular shift (same day)
-      if (diff < -shift.gracePeriod) {
-        return res.status(400).json({ success: false, message: 'Too early to check-in' });
-      } else if (diff <= shift.gracePeriod) {
-        status = 'present';
-      } else if (diff <= shift.lateMarkingAfter) {
-        status = 'late';
-        isLate = true;
-      } else if (diff <= shift.halfDayMarkingAfter) {
-        status = 'half-day';
-        isHalfDay = true;
-      } else {
-        return res.status(400).json({ success: false, message: 'Check-in window closed' });
-      }
+      diff = currentMins - shiftStartMins;
+    }
+
+    if (diff > shift.halfDayMarkingAfter) {
+      status = 'half-day';
+      isHalfDay = true;
+    } else if (diff > shift.lateMarkingAfter) {
+      status = 'late';
+      isLate = true;
     }
 
     const place = await reverseGeocode(lat, lng);
@@ -137,6 +147,9 @@ const diff = currentMins - shiftStartMins;
       inspector: inspectorId,
       tenantId,
       shift: shift._id,
+      shiftName: shift.displayName,
+      shiftStartTime: shift.startTime,
+      shiftEndTime: shift.endTime,
       date: today,
       checkInTime: now,
       checkInLat: lat,
@@ -196,16 +209,11 @@ export const checkOut = async (req, res) => {
     attendance.checkOutPlace = place || 'Position Captured';
     attendance.checkOutAccuracy = accuracy;
 
-    const shiftEndStr = attendance.shift.endTime;
-    const currentTimeStr = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
+    const shiftEndStr = attendance.shiftEndTime || attendance.shift.endTime;
+    const currentMins = now.getHours() * 60 + now.getMinutes();
+    const shiftEndMins = toMins(shiftEndStr);
 
-
-    const timeToMins = (t) => {
-      const [h, m] = t.split(':').map(Number);
-      return h * 60 + m;
-    };
-
-    if (timeToMins(currentTimeStr) < timeToMins(shiftEndStr) && !attendance.shift.isNightShift) {
+    if (currentMins < shiftEndMins && !attendance.shift.isNightShift) {
       attendance.isEarlyCheckout = true;
     }
 
@@ -234,29 +242,24 @@ export const getMyStatus = async (req, res) => {
 
     console.log('getMyStatus - inspectorId:', inspectorId, 'tenantId:', tenantId);
 
-    // First check if there's any shift with this inspector in assignedInspectors
-    const allShifts = await Shift.find({ tenantId, isActive: true });
-    console.log('getMyStatus - all shifts:', allShifts.map(s => ({
-      _id: s._id,
-      name: s.name,
-      assignedInspectors: s.assignedInspectors,
-      inspectorIdType: typeof inspectorId
-    })));
-
-    const shift = await Shift.findOne({
-      tenantId,
-      assignedInspectors: inspectorId,
-      isActive: true
-    });
-
-    console.log('getMyStatus - found shift:', shift);
-
     const today = getISTToday();
+    const now = getISTNow();
 
     const attendance = await Attendance.findOne({
       inspector: inspectorId,
       date: { $gte: today }
     });
+
+    // Auto Shift Detection for "Potential" shift if not checked in
+    let shift = null;
+    if (attendance && attendance.shift) {
+      shift = await Shift.findById(attendance.shift);
+    } else {
+      const allShifts = await Shift.find({ tenantId, isActive: true });
+      const currentMins = now.getHours() * 60 + now.getMinutes();
+      console.log(`getMyStatus - current IST: ${now.toString()}, currentMins: ${currentMins}, shifts found: ${allShifts.length}`);
+      shift = findShiftByTime(currentMins, allShifts, 15);
+    }
 
     let canCheckIn = !!shift && !attendance?.checkInTime;
     let canCheckOut = !!attendance && !!attendance.checkInTime && !attendance.checkOutTime;
@@ -380,7 +383,7 @@ export const getAttendance = async (req, res) => {
     const query = { tenantId };
 
     // Always include a date range for current month as fallback (IST)
-    const istNow = getISTDate();
+    const istNow = getISTNow();
     let start = startDate ? new Date(startDate) : new Date(istNow.getFullYear(), istNow.getMonth(), 1);
     let end = endDate ? new Date(endDate) : new Date(istNow.getFullYear(), istNow.getMonth() + 1, 0);
 
