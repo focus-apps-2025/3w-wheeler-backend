@@ -60,6 +60,5 @@ const formInviteSchema = new mongoose.Schema({
 formInviteSchema.index({ formId: 1, email: 1 }); // Regular index, not unique
 formInviteSchema.index({ formId: 1, phone: 1 }); // Regular index, not unique
 formInviteSchema.index({ status: 1 });
-formInviteSchema.index({ inviteId: 1 }); // inviteId is already unique
 
 export default mongoose.model('FormInvite', formInviteSchema);

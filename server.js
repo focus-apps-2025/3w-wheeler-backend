@@ -104,8 +104,8 @@ app.use('/api/upload', uploadRoutes);
 app.get("/", (req, res) => {
   res.json({
     success: true,
-    message: " Backend API is running 🚀",
-    version: "1.0.0",
+    message: "Backend API is running on Port 5000 🚀",
+    version: "1.0.1 (Zencoder Debug)",
     timestamp: new Date().toISOString()
   });
 });

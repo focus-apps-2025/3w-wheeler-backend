@@ -76,11 +76,16 @@ export const login = async (req, res) => {
 
     // Find user by username or email
     let user;
+    console.log('--- DEBUG LOGIN START ---');
+    console.log('Request Body:', JSON.stringify(req.body, null, 2));
     if (normalizedUsername) {
+      console.log('Searching by username:', normalizedUsername);
       user = await User.findOne({ username: normalizedUsername });
     } else if (normalizedEmail) {
+      console.log('Searching by email:', normalizedEmail);
       user = await User.findOne({ email: normalizedEmail });
     } else {
+      console.log('Login failed: Username or email is required');
       return res.status(400).json({
         success: false,
         message: 'Username or email is required'
@@ -88,19 +93,19 @@ export const login = async (req, res) => {
     }
 
     if (!user) {
+      console.log('Login failed: User not found in DB');
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials'
       });
     }
-
-    // Check if user is active
-    if (!user.isActive) {
-      return res.status(401).json({
-        success: false,
-        message: 'Account has been deactivated. Please contact administrator.'
-      });
-    }
+    
+    console.log('User found in DB:', { 
+        id: user._id, 
+        email: user.email, 
+        role: user.role, 
+        isActive: user.isActive 
+    });
 
     // Check access type
     const appType = (req.header('X-App-Type') || 'website').toLowerCase();
@@ -173,7 +178,9 @@ export const login = async (req, res) => {
 
     // Check password
     const isPasswordValid = await user.comparePassword(password);
+    console.log('Password validation:', { isPasswordValid });
     if (!isPasswordValid) {
+      console.log('Login failed: Invalid password');
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials'
