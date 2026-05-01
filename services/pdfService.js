@@ -1,4 +1,5 @@
 import puppeteer from 'puppeteer';
+import fs from 'fs';
 
 
 class PDFService {
@@ -16,7 +17,7 @@ class PDFService {
         console.log('🚀 Launching Puppeteer...');
         
         const launchOptions = {
-          headless: 'new',
+          headless: true,
           args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -25,18 +26,39 @@ class PDFService {
             '--no-first-run',
             '--no-zygote',
             '--disable-extensions',
-            '--disable-web-resources'
+            '--disable-web-resources',
+            '--font-render-hinting=none'
           ],
-          defaultViewport: { width: 1920, height: 1080 },
+          defaultViewport: { width: 1280, height: 1600 },
           timeout: 60000
         };
 
         // Try with explicit path first if provided
         if (process.env.PUPPETEER_EXECUTABLE_PATH) {
           launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+        } else {
+          // Look for common Chrome/Edge installation paths on Windows as fallbacks
+          const possiblePaths = [
+            'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+            'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+            'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+            'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe'
+          ];
+          
+          for (const path of possiblePaths) {
+            if (fs.existsSync(path)) {
+              console.log(`💡 Found fallback browser at: ${path}`);
+              launchOptions.executablePath = path;
+              break;
+            }
+          }
         }
 
-        this.browser = await puppeteer.launch(launchOptions);
+        console.log('📋 Launching with options:', JSON.stringify(launchOptions));
+        this.browser = await puppeteer.launch(launchOptions).catch(err => {
+          console.error('❌ puppeteer.launch direct error:', err);
+          throw err;
+        });
 
         this.initialized = true;
         console.log('✅ Puppeteer ready');
@@ -115,7 +137,7 @@ class PDFService {
       console.log('✅ Page rendered');
       
       // Set page format based on options
-      const format = options.format || 'custom'; // custom or a4
+      const format = options.format || 'custom'; // custom, a4, or a4-portrait
       const margin = options.margin || { top: '10mm', right: '10mm', bottom: '10mm', left: '10mm' };
       
       console.log(`📐 Generating PDF with format: ${format}`);
@@ -134,15 +156,22 @@ class PDFService {
         pdfOptions.width = '279.4mm';
         pdfOptions.height = '157.1mm';
         pdfOptions.landscape = false; // Already set by dimensions
+      } else if (format === 'a4-portrait') {
+        pdfOptions.format = 'A4';
+        pdfOptions.landscape = false;
       } else {
-        // A4 landscape
+        // Default to A4 landscape
         pdfOptions.format = 'A4';
         pdfOptions.landscape = true;
       }
       
       console.log('📄 Generating PDF buffer...');
       console.log('PDF Options:', JSON.stringify(pdfOptions, null, 2));
-      const pdfBuffer = await page.pdf(pdfOptions);
+      
+      const pdfBuffer = await page.pdf(pdfOptions).catch(err => {
+        console.error('❌ page.pdf error:', err.message);
+        throw new Error(`Puppeteer PDF generation failed: ${err.message}`);
+      });
       
       console.log(`✅ PDF generated: ${(pdfBuffer.length / 1024).toFixed(2)} KB`);
       return pdfBuffer;
@@ -176,8 +205,14 @@ class PDFService {
 
   // Method for A4 format (for backward compatibility)
   async generatePDFWithA4(htmlContent) {
-    console.log('🔄 Generating PDF with A4 format...');
+    console.log('🔄 Generating PDF with A4 landscape format...');
     return this.generatePDF(htmlContent, { format: 'a4' });
+  }
+
+  // Method for A4 portrait
+  async generatePDFWithA4Portrait(htmlContent) {
+    console.log('🔄 Generating PDF with A4 portrait format...');
+    return this.generatePDF(htmlContent, { format: 'a4-portrait' });
   }
 
   // Method for custom format

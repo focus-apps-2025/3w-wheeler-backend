@@ -57,15 +57,23 @@ router.post('/generate', async (req, res) => {
     
     // Choose generation method based on format
     let pdfBuffer;
-    if (format === 'custom') {
-      console.log('📐 Using custom format: 279.4mm × 157.1mm');
-      pdfBuffer = await pdfService.generatePDFWithCustomFormat(htmlContent);
-    } else if (format === 'a4') {
-      console.log('📐 Using A4 landscape format');
-      pdfBuffer = await pdfService.generatePDFWithA4(htmlContent);
-    } else {
-      // Default to custom format
-      pdfBuffer = await pdfService.generatePDFWithCustomFormat(htmlContent);
+    try {
+      if (format === 'custom') {
+        console.log('📐 Using custom format: 279.4mm × 157.1mm');
+        pdfBuffer = await pdfService.generatePDFWithCustomFormat(htmlContent);
+      } else if (format === 'a4') {
+        console.log('📐 Using A4 landscape format');
+        pdfBuffer = await pdfService.generatePDFWithA4(htmlContent);
+      } else if (format === 'a4-portrait') {
+        console.log('📐 Using A4 portrait format');
+        pdfBuffer = await pdfService.generatePDFWithA4Portrait(htmlContent);
+      } else {
+        // Default to custom format
+        pdfBuffer = await pdfService.generatePDFWithCustomFormat(htmlContent);
+      }
+    } catch (serviceError) {
+      console.error('❌ PDF Service Error:', serviceError);
+      throw serviceError; // Re-throw to be caught by outer catch
     }
     
     const duration = (Date.now() - startTime) / 1000;
