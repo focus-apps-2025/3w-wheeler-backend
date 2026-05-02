@@ -329,7 +329,7 @@ class MailService {
   }
 
   // Send analytics dashboard invite
-  async sendAnalyticsInvite(recipientEmail, formTitle, inviteLink, otp, tenantName, customMessage, isOTPRequest = false) {
+  async sendAnalyticsInvite(recipientEmail, formTitle, inviteLink, otp, tenantName, customMessage, isOTPRequest = false, pdfAttachment = null) {
     try {
       console.log('📧 Sending analytics invite to:', recipientEmail);
 
@@ -376,13 +376,25 @@ class MailService {
                <span style="color: #2563eb; word-break: break-all;">${inviteLink}</span>`
           }
         </p>
+
+        ${pdfAttachment ? `
+        <div style="margin-top: 24px; padding: 16px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; text-align: center;">
+          <p style="font-size: 14px; color: #166534; margin: 0;">
+            📎 A PDF analytics report has been attached to this email.
+          </p>
+        </div>
+        ` : ''}
       `;
 
       const mailOptions = {
         from: process.env.SMTP_USER,
         to: recipientEmail,
         subject: isOTPRequest ? `Verification Code: ${otp}` : `📊 Analytics Dashboard Invite - ${formTitle}`,
-        html: this._baseWrapper(isOTPRequest ? 'Email Verification' : 'Analytics Access Invited', '#2563eb', '#f5c518', body)
+        html: this._baseWrapper(isOTPRequest ? 'Email Verification' : 'Analytics Access Invited', '#2563eb', '#f5c518', body),
+        attachments: pdfAttachment ? [{
+          filename: pdfAttachment.filename || 'Analytics_Report.pdf',
+          content: pdfAttachment.content
+        }] : []
       };
 
       const result = await this.transporter.sendMail(mailOptions);

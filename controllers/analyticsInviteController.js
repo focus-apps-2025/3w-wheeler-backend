@@ -7,6 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 import mailService from '../services/mailService.js';
 import WhatsAppService from '../services/whatsappService.js';
 import smsService from '../services/smsService.js';
+import pdfService from '../services/pdfService.js';
 import { generateGuestToken } from '../middleware/auth.js';
 
 const isValidEmail = (email) => {
@@ -93,7 +94,7 @@ export const uploadAnalyticsInvites = async (req, res) => {
 export const sendAnalyticsInvites = async (req, res) => {
   try {
     const { formId } = req.params;
-    const { invites, channels = ['email'], customMessage } = req.body;
+    const { invites, channels = ['email'], customMessage, pdfHtml } = req.body;
     
     if (!Array.isArray(invites) || invites.length === 0) {
       return res.status(400).json({ success: false, message: 'Invites array is required' });
@@ -103,6 +104,31 @@ export const sendAnalyticsInvites = async (req, res) => {
     if (!form) return res.status(404).json({ success: false, message: 'Form not found' });
     
     const tenant = await Tenant.findById(form.tenantId);
+
+    // Handle PDF generation if pdfHtml is provided
+    let pdfAttachment = null;
+    console.log('📩 SendAnalyticsInvites called with pdfHtml:', !!pdfHtml, pdfHtml?.length || 0);
+    
+    if (pdfHtml && channels.includes('email')) {
+      try {
+        console.log('📄 Generating PDF for email attachment...');
+        const pdfBuffer = await pdfService.generatePDFWithA4Portrait(pdfHtml);
+        if (pdfBuffer && pdfBuffer.length > 0) {
+          pdfAttachment = {
+            filename: `${form.title.replace(/\s+/g, '_')}_Analytics.pdf`,
+            content: pdfBuffer
+          };
+          console.log(`✅ PDF generated successfully for attachment (${(pdfBuffer.length / 1024).toFixed(2)} KB)`);
+        } else {
+          console.error('❌ PDF generation returned empty buffer');
+        }
+      } catch (pdfError) {
+        console.error('❌ Failed to generate PDF for attachment:', pdfError);
+        // Continue without attachment if generation fails
+      }
+    } else if (!pdfHtml && channels.includes('email')) {
+      console.warn('⚠️ No pdfHtml provided but email channel is selected');
+    }
     
     const results = [];
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes expiry
@@ -135,7 +161,7 @@ export const sendAnalyticsInvites = async (req, res) => {
       let smsSent = false;
 
       if (channels.includes('email')) {
-        const mailResult = await mailService.sendAnalyticsInvite(email, form.title, inviteLink, otp, tenant.name, customMessage, false);
+        const mailResult = await mailService.sendAnalyticsInvite(email, form.title, inviteLink, otp, tenant.name, customMessage, false, pdfAttachment);
         emailSent = mailResult.success;
         if (!emailSent) {
           console.error(`Failed to send email to ${email}:`, mailResult.error);

@@ -123,7 +123,12 @@ app.use("/api/responses", responseRoutes);
 app.use("/api/profile", profileRoutes);
 app.use("/api/files", fileRoutes);
 app.use("/api/analytics", analyticsRoutes);
-app.use("/api/analytics-invites", analyticsInviteRoutes);
+app.use("/api/analytics-invites", (req, res, next) => {
+  // Set a much higher timeout (10 minutes) for analytics invites specifically 
+  // because PDF generation with Puppeteer can be extremely slow
+  req.setTimeout(600000); 
+  next();
+}, analyticsInviteRoutes);
 app.use("/api/roles", roleRoutes);
 app.use("/api/mail", mailRoutes);
 app.use("/api/whatsapp", whatsappRoutes);
