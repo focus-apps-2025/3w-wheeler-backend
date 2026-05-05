@@ -6,6 +6,7 @@ import FormSession from '../models/FormSession.js';
 import ActivityLog from '../models/ActivityLog.js';
 import Tenant from '../models/Tenant.js';
 import Shift from '../models/Shift.js';
+import Review from '../models/Review.js';
 import { calculateUserActiveMinutes } from './activityController.js';
 
 // ─── Date Parser Helper ──────────────────────────────────────────────────────
@@ -1864,7 +1865,7 @@ export const getInspectorSummary = async (req, res) => {
     let matchFilter = {};
     if (role === 'superadmin') {
       // No filter
-    } else if (role === 'admin' || role === 'tenant_admin' || role === 'subadmin') {
+    } else if (role === 'admin' || role === 'subadmin') {
       matchFilter.tenantId = new mongoose.Types.ObjectId(userTenantId);
     } else if (role === 'inspector') {
       matchFilter.createdBy = new mongoose.Types.ObjectId(userId);
@@ -2125,6 +2126,160 @@ function formatTimeDuration(seconds) {
   if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
 }
+
+export const getMyReviewStats = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const userEmail = req.user.email;
+    const userUsername = req.user.username;
+
+    // Get total responses by this user
+    // We match by createdBy (ObjectId) or submittedBy (email/username)
+    const totalResponses = await Response.countDocuments({
+      $or: [
+        { createdBy: userId },
+        { submittedBy: userEmail },
+        { submittedBy: userUsername }
+      ]
+    });
+
+    // Find all reviews for this user to calculate accurate stats
+    // submitterId can be stored as ObjectId string or email/name
+    const reviews = await Review.find({
+      $or: [
+        { submitterId: userId.toString() },
+        { submitterId: userEmail },
+        { submitterId: userUsername }
+      ]
+    });
+
+    const total = reviews.length;
+    const accepted = reviews.filter(r => r.reviewOption === 'Accepted').length;
+    const rejected = reviews.filter(r => r.reviewOption === 'Rejected').length;
+    const rework = reviews.filter(r => r.reviewOption === 'Rework').length;
+
+    // Calculate score from actual review data: (Accepted / Total) * 100
+    const performanceScore = total > 0 ? Math.round((accepted / total) * 100) : 0;
+
+    const stats = {
+      totalResponses,
+      reviewed: total,
+      accepted,
+      rejected,
+      rework,
+      performanceScore
+    };
+
+    res.json({
+      success: true,
+      data: stats
+    });
+  } catch (error) {
+    console.error('Error in getMyReviewStats:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch review statistics'
+    });
+  }
+};
+
+export const getPerformanceTable = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const query = { ...req.tenantFilter };
+
+    // Get all users in scope
+    const users = await User.find(query)
+      .populate('tenantId', 'name companyName')
+      .select('firstName lastName username email role tenantId');
+
+    // Date range for aggregations
+    const start = startDate ? new Date(startDate) : new Date(0);
+    const end = endDate ? new Date(endDate) : new Date();
+    if (endDate) end.setHours(23, 59, 59, 999);
+
+    // Aggregate submissions for all users
+    const submissionStats = await Response.aggregate([
+      { 
+        $match: { 
+          ...req.tenantFilter,
+          createdAt: { $gte: start, $lte: end }
+        } 
+      },
+      {
+        $group: {
+          _id: '$createdBy',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Aggregate review stats for all users
+    const reviewStats = await Review.aggregate([
+      { 
+        $match: { 
+          ...req.tenantFilter,
+          createdAt: { $gte: start, $lte: end }
+        } 
+      },
+      {
+        $group: {
+          _id: '$submitterId',
+          total: { $sum: 1 },
+          accepted: { $sum: { $cond: [{ $eq: ['$reviewOption', 'Accepted'] }, 1, 0] } },
+          rejected: { $sum: { $cond: [{ $eq: ['$reviewOption', 'Rejected'] }, 1, 0] } },
+          rework: { $sum: { $cond: [{ $eq: ['$reviewOption', 'Rework'] }, 1, 0] } }
+        }
+      }
+    ]);
+
+    // Map stats for easy lookup
+    const submissionMap = {};
+    submissionStats.forEach(s => { 
+      if (s._id) submissionMap[s._id.toString()] = s.count; 
+    });
+
+    const reviewMap = {};
+    reviewStats.forEach(r => { 
+      if (r._id) reviewMap[r._id.toString()] = r; 
+    });
+
+    // Format final table data
+    const tableData = users.map(user => {
+      // Mapping submissions by user ID
+      const submissions = submissionMap[user._id.toString()] || 0;
+      
+      // Try mapping reviews by ObjectId string
+      const reviews = reviewMap[user._id.toString()] || { total: 0, accepted: 0, rejected: 0, rework: 0 };
+      
+      const performanceScore = reviews.total > 0 
+        ? Math.round((reviews.accepted / reviews.total) * 100) 
+        : 0;
+
+      return {
+        name: `${user.firstName} ${user.lastName}`,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        tenantName: user.tenantId?.companyName || user.tenantId?.name || 'N/A',
+        totalSubmitted: submissions,
+        totalReviewed: reviews.total,
+        accepted: reviews.accepted,
+        rejected: reviews.rejected,
+        rework: reviews.rework,
+        performanceScore: performanceScore
+      };
+    });
+
+    res.json({
+      success: true,
+      data: tableData
+    });
+  } catch (error) {
+    console.error('Error in getPerformanceTable:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
 
 
 

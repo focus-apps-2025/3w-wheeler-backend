@@ -57,8 +57,7 @@ export const getMessagesByResponse = async (req, res) => {
     console.log("[getMessagesByResponse] tenantId:", tenantId);
     
     const messages = await ChatMessage.find({ 
-      responseId,
-      tenantId 
+      responseId
     })
       .populate('from', 'name email username')
       .populate('toUser', 'name email username')

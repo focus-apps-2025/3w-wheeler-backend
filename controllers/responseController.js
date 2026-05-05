@@ -10,6 +10,8 @@ import { isGoogleDriveUrl } from '../services/googleDriveService.js';
 import FormInvite from '../models/FormInvite.js';
 import User from '../models/User.js';
 import FormSession from '../models/FormSession.js';
+import Review from '../models/Review.js';
+import ChatMessage from '../models/ChatMessage.js';
 
 export const createResponse = async (req, res) => {
   try {
@@ -1892,7 +1894,11 @@ export const updateResponse = async (req, res) => {
     const { id } = req.params;
     const { answers, notes, status } = req.body;
 
+    console.log('Updating response:', { id, answers: !!answers, notes, status, tenantFilter: req.tenantFilter });
+
     const response = await Response.findOne({ id, ...req.tenantFilter });
+
+    console.log('Found response:', !!response, response?._id);
 
     if (!response) {
       return res.status(404).json({
@@ -1924,6 +1930,8 @@ export const updateResponse = async (req, res) => {
     }
 
     await response.save();
+
+    console.log('Response saved successfully');
 
     // Convert Map to Object for JSON serialization
     const formattedResponse = {
@@ -2197,41 +2205,76 @@ export const getResponsesByForm = async (req, res) => {
 
     const total = await Response.countDocuments(query);
 
-    // Convert Map to Object for JSON serialization
-  // Convert Map to Object for JSON serialization
-const formattedResponses = responses.map(response => {
-  const responseObj = response.toObject();
-  
-  // Determine the best display name for submittedBy
-  let displaySubmittedBy = response.submittedBy;
-  
-  // If submittedBy is "Anonymous" or missing, try to get from createdBy
-  if (!displaySubmittedBy || displaySubmittedBy === 'Anonymous') {
-    if (response.createdBy) {
-      if (typeof response.createdBy === 'object') {
-        const firstName = response.createdBy.firstName || '';
-        const lastName = response.createdBy.lastName || '';
-        const fullName = `${firstName} ${lastName}`.trim();
-        displaySubmittedBy = fullName || response.createdBy.email || response.createdBy.username;
-      } else if (typeof response.createdBy === 'string') {
-        displaySubmittedBy = response.createdBy;
+    // Fetch reviews and chat messages for these responses to show in the "Review" column
+    const responseIds = responses.map(r => r.id);
+    const reviews = await Review.find({ responseId: { $in: responseIds } })
+      .populate('reviewerId', 'firstName lastName email username')
+      .sort({ createdAt: -1 });
+
+    const chatMessages = await ChatMessage.find({ 
+      responseId: { $in: responseIds },
+      questionContexts: { $exists: true, $not: { $size: 0 } }
+    }).sort({ createdAt: -1 });
+
+    // Group reviews and messages by responseId
+    const reviewsByResponse = reviews.reduce((acc, r) => {
+      if (!acc[r.responseId]) {
+        acc[r.responseId] = r; // Keep latest review
       }
-    }
-  }
-  
-  // If still empty, use email from submitterContact
-  if (!displaySubmittedBy || displaySubmittedBy === 'Anonymous') {
-    displaySubmittedBy = response.submitterContact?.email || 'Anonymous';
-  }
-  
-  return {
-    ...responseObj,
-    answers: response.answers ? Object.fromEntries(response.answers) : {},
-    responseRanks: response.responseRanks ? Object.fromEntries(response.responseRanks) : {},
-    submissionMetadata: responseObj.submissionMetadata || null,
-    submittedBy: displaySubmittedBy // Override with better display name
-  };
-});
+      return acc;
+    }, {});
+
+    const messagesByResponse = chatMessages.reduce((acc, m) => {
+      if (!acc[m.responseId]) {
+        acc[m.responseId] = m; // Keep latest message with contexts
+      }
+      return acc;
+    }, {});
+
+    // Convert Map to Object for JSON serialization
+    const formattedResponses = responses.map(response => {
+      const responseObj = response.toObject();
+      const review = reviewsByResponse[response.id];
+      const message = messagesByResponse[response.id];
+
+      // Determine the best display name for submittedBy
+      let displaySubmittedBy = response.submittedBy;
+      
+      // If submittedBy is "Anonymous" or missing, try to get from createdBy
+      if (!displaySubmittedBy || displaySubmittedBy === 'Anonymous') {
+        if (response.createdBy) {
+          if (typeof response.createdBy === 'object') {
+            const firstName = response.createdBy.firstName || '';
+            const lastName = response.createdBy.lastName || '';
+            const fullName = `${firstName} ${lastName}`.trim();
+            displaySubmittedBy = fullName || response.createdBy.email || response.createdBy.username;
+          } else if (typeof response.createdBy === 'string') {
+            displaySubmittedBy = response.createdBy;
+          }
+        }
+      }
+      
+      // If still empty, use email from submitterContact
+      if (!displaySubmittedBy || displaySubmittedBy === 'Anonymous') {
+        displaySubmittedBy = response.submitterContact?.email || 'Anonymous';
+      }
+
+      // Attach review info
+      const reviewInfo = review ? {
+        status: review.reviewOption,
+        reviewer: review.reviewerName || (review.reviewerId ? (review.reviewerId.firstName ? `${review.reviewerId.firstName} ${review.reviewerId.lastName}` : review.reviewerId.username) : 'Reviewer'),
+        flaggedQuestions: message ? message.questionContexts.map(c => c.title) : []
+      } : null;
+      
+      return {
+        ...responseObj,
+        answers: response.answers ? Object.fromEntries(response.answers) : {},
+        responseRanks: response.responseRanks ? Object.fromEntries(response.responseRanks) : {},
+        submissionMetadata: responseObj.submissionMetadata || null,
+        submittedBy: displaySubmittedBy, // Override with better display name
+        review: reviewInfo
+      };
+    });
 
     res.json({
       success: true,

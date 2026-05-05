@@ -1,23 +1,24 @@
-  import express from 'express';
-  import {
-    createResponse,
-    batchImportResponses,
-    getAllResponses,
-    getResponseById,
-    updateResponse,
-    assignResponse,
-    deleteResponse,
-    deleteMultipleResponses,
-    getResponsesByForm,
-    exportResponses,
-    processBulkImages,
-    getRank,
-    getUnassignedResponses,
-    assignResponses,
-    autoAssignResponse,
-    getSuggestedAnswers,
-    getQuestionPreviousAnswers,
-  } from '../controllers/responseController.js';
+   import express from 'express';
+   import {
+     createResponse,
+     batchImportResponses,
+     getAllResponses,
+     getResponseById,
+     updateResponse,
+     assignResponse,
+     deleteResponse,
+     deleteMultipleResponses,
+     getResponsesByForm,
+     exportResponses,
+     processBulkImages,
+     getRank,
+     getUnassignedResponses,
+     assignResponses,
+     autoAssignResponse,
+     getSuggestedAnswers,
+     getQuestionPreviousAnswers,
+   } from '../controllers/responseController.js';
+   import { getReviewsForResponse } from '../controllers/userController.js';
   import {
     authenticate,
     authenticateOptional,
@@ -29,7 +30,7 @@
   import { processResponseImages, processGoogleDriveImage } from '../services/googleDriveService.js';
 
   const router = express.Router();
-
+router.get('/reviews/:responseId', getReviewsForResponse);
   // Middleware for guest access control
   const guestAccessControl = (req, res, next) => {
     if (req.user && req.user.isGuest) {
@@ -162,6 +163,7 @@ router.get('/:tenantSlug/forms/:formId/suggestions', getSuggestedAnswers);
 // 9. GET PREVIOUS ANSWERS (PUBLIC)
 router.get('/previous-answers', getQuestionPreviousAnswers);
 router.get('/:tenantSlug/forms/:formId/previous-answers', getQuestionPreviousAnswers);
+
 
 
   // ========== PROTECTED ROUTES (Require Auth) ==========

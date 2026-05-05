@@ -108,8 +108,8 @@ app.use('/api/upload', uploadRoutes);
 app.get("/", (req, res) => {
   res.json({
     success: true,
-    message: "Backend API is running on Port 5000 🚀",
-    version: "1.0.1 (Zencoder Debug)",
+    message: " Backend API is running 🚀",
+    version: "1.0.0",
     timestamp: new Date().toISOString()
   });
 });
@@ -118,6 +118,9 @@ app.get("/", (req, res) => {
 
 // Serve frontend static files
 app.use(express.static(path.join(__dirname, '../frontend/dist')));
+
+// Serve uploaded files (fallback for any local uploads)
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // API Routes
 app.use("/api/auth", authRoutes);

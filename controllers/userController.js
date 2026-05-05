@@ -1,4 +1,5 @@
 import User from '../models/User.js';
+import Review from '../models/Review.js';
 import LoginLog from '../models/LoginLog.js';
 
 // ─── Date Parser Helper ──────────────────────────────────────────────────────
@@ -770,6 +771,269 @@ export const getAllTenantsPerformance = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Internal server error'
+    });
+  }
+};
+
+// @desc    Get all performance scores
+// @route   GET /api/users/performance-scores
+// @access  Public (authenticated users can see scores)
+export const getPerformanceScores = async (req, res) => {
+  try {
+    console.log('Fetching performance scores...');
+
+    // Get users - apply tenant filter if user is authenticated
+    const tenantFilter = req.tenantFilter || {};
+    const users = await User.find(tenantFilter).select('_id performanceScore email firstName lastName');
+    console.log(`Found ${users.length} users with tenant filter:`, tenantFilter);
+
+    // Convert to {userId: score, email: score, username: score} format for easier frontend lookup
+    const scores = {};
+    users.forEach(user => {
+      const score = user.performanceScore || 0;
+      scores[user._id.toString()] = score;
+      if (user.email) {
+        scores[user.email] = score; // Also map by email
+      }
+      if (user.username) {
+        scores[user.username] = score; // Also map by username
+      }
+    });
+
+    console.log('Returning performance scores:', Object.keys(scores).length, 'entries');
+
+    res.json({
+      success: true,
+      data: scores
+    });
+  } catch (error) {
+    console.error('Error fetching performance scores:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch performance scores'
+    });
+  }
+};
+
+// @desc    Submit a review and update performance score
+// @route   POST /api/users/reviews
+// @access  Private (Admin only)
+// userController.js - submitReview
+export const submitReview = async (req, res) => {
+  try {
+    let { responseId, reviewerId, submitterId, reviewOption, tenantId } = req.body;
+
+    console.log('[submitReview] Received request:', {
+      responseId,
+      reviewerId,
+      submitterId,
+      reviewOption,
+      tenantId
+    });
+
+    // Validate required fields
+    if (!responseId || !reviewerId || !submitterId || !reviewOption || !tenantId) {
+      console.log('[submitReview] Missing fields');
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields'
+      });
+    }
+
+    // Validate review option
+    if (!['Accepted', 'Rejected', 'Rework'].includes(reviewOption)) {
+      console.log('[submitReview] Invalid review option:', reviewOption);
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid review option'
+      });
+    }
+
+    // Get reviewer info
+    const reviewer = await User.findById(reviewerId).select('firstName lastName username email');
+    console.log('[submitReview] Reviewer found:', reviewer ? 'Yes' : 'No');
+
+    if (!reviewer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Reviewer not found'
+      });
+    }
+
+    let reviewerName = '';
+    if (reviewer.firstName || reviewer.lastName) {
+      reviewerName = `${reviewer.firstName || ''} ${reviewer.lastName || ''}`.trim();
+    }
+    if (!reviewerName && reviewer.username) reviewerName = reviewer.username;
+    if (!reviewerName && reviewer.email) reviewerName = reviewer.email;
+    if (!reviewerName) reviewerName = 'Unknown Reviewer';
+
+    // Resolve submitter ID - try to find user by email/username if it's not an ObjectId
+    let resolvedSubmitterId = submitterId;
+    if (!mongoose.Types.ObjectId.isValid(submitterId)) {
+      const user = await User.findOne({
+        $or: [
+          { email: submitterId.toLowerCase() },
+          { username: submitterId },
+          { firstName: submitterId.split(' ')[0] }
+        ]
+      });
+      if (user) {
+        resolvedSubmitterId = user._id.toString();
+        console.log('[submitReview] Resolved submitter ID:', resolvedSubmitterId);
+      } else {
+        console.log('[submitReview] Could not resolve submitter ID, keeping as:', submitterId);
+      }
+    }
+
+    // Check if review already exists
+    const existingReview = await Review.findOne({ responseId, reviewerId });
+    if (existingReview) {
+      console.log('[submitReview] Review already exists');
+      return res.status(400).json({
+        success: false,
+        message: 'You have already reviewed this response'
+      });
+    }
+
+    // Create review record
+    const review = new Review({
+      responseId,
+      reviewerId,
+      reviewerName: reviewerName,
+      reviewerEmail: reviewer.email || '',
+      submitterId: resolvedSubmitterId,
+      reviewOption,
+      scoreChange: 0, // No longer used for ratio formula
+      tenantId
+    });
+
+    const savedReview = await review.save();
+    console.log('[submitReview] Review saved successfully:', savedReview._id);
+
+    // Only update performance score if submitterId is a valid ObjectId
+    if (mongoose.Types.ObjectId.isValid(resolvedSubmitterId)) {
+      const user = await User.findById(resolvedSubmitterId);
+      if (user) {
+        // Increment total reviews
+        const totalReviews = (user.totalReviews || 0) + 1;
+
+        // Update specific counters
+        let acceptedCount = user.acceptedCount || 0;
+        let rejectedCount = user.rejectedCount || 0;
+        let reworkCount = user.reworkCount || 0;
+
+        if (reviewOption === 'Accepted') {
+          acceptedCount += 1;
+        } else if (reviewOption === 'Rejected') {
+          rejectedCount += 1;
+        } else if (reviewOption === 'Rework') {
+          reworkCount += 1;
+        }
+
+        // Calculate performance score: (Accepted / Total) * 100
+        const performanceScore = Math.round((acceptedCount / totalReviews) * 100);
+
+        await User.findByIdAndUpdate(resolvedSubmitterId, {
+          totalReviews,
+          acceptedCount,
+          rejectedCount,
+          reworkCount,
+          performanceScore
+        });
+        console.log('[submitReview] Updated user stats - Score:', performanceScore, 'Accepted:', acceptedCount, 'Total:', totalReviews);
+      } else {
+        console.log('[submitReview] User not found for ID:', resolvedSubmitterId);
+      }
+    } else {
+      console.log('[submitReview] Skipping score update - submitterId is not a valid ObjectId:', resolvedSubmitterId);
+    }
+
+    res.json({
+      success: true,
+      message: 'Review submitted successfully',
+      data: {
+        review: {
+          id: savedReview._id,
+          reviewer: {
+            id: reviewer._id,
+            name: reviewerName,
+            email: reviewer.email
+          },
+          option: reviewOption,
+          scoreChange: 0
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('[submitReview] ERROR:', error);
+    console.error('[submitReview] Stack:', error.stack);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to submit review',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Get reviews for a response
+// @route   GET /api/responses/reviews/:responseId
+// @access  Public (reviews should be viewable by response viewers)
+// userController.js - getReviewsForResponse
+export const getReviewsForResponse = async (req, res) => {
+  try {
+    const { responseId } = req.params;
+
+    console.log(`[getReviewsForResponse] Fetching reviews for response: ${responseId}`);
+
+    // Import models
+    const Response = mongoose.model('Response');
+    const Review = mongoose.model('Review');
+
+    // Optional: Check if response exists (don't block if not found)
+    try {
+      const response = await Response.findOne({ id: responseId });
+      if (!response) {
+        console.log(`[getReviewsForResponse] Response not found: ${responseId}`);
+        // Return empty reviews instead of error
+        return res.json({
+          success: true,
+          reviews: []
+        });
+      }
+    } catch (err) {
+      console.log(`[getReviewsForResponse] Error finding response:`, err.message);
+      // Continue anyway
+    }
+
+    // Fetch reviews - no user check needed, reviews are public
+    const reviews = await Review.find({ responseId }).sort({ createdAt: -1 });
+    console.log(`[getReviewsForResponse] Found ${reviews.length} reviews`);
+
+    const formattedReviews = reviews.map(review => ({
+      id: review._id,
+      reviewer: {
+        id: review.reviewerId,
+        name: review.reviewerName || 'Unknown',
+        email: review.reviewerEmail || ''
+      },
+      option: review.reviewOption,
+      scoreChange: review.scoreChange,
+      createdAt: review.createdAt
+    }));
+
+    res.json({
+      success: true,
+      reviews: formattedReviews
+    });
+
+  } catch (error) {
+    console.error('[getReviewsForResponse] ERROR:', error);
+    // Return empty reviews instead of 500 error
+    res.json({
+      success: true,
+      reviews: []
     });
   }
 };

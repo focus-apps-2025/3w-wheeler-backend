@@ -42,6 +42,14 @@ const tenantSchema = new mongoose.Schema({
     timezone: {
       type: String,
       default: 'UTC'
+    },
+    officeLocation: {
+      lat: Number,
+      lng: Number,
+      radius: {
+        type: Number,
+        default: 500
+      }
     }
   },
   subscription: {

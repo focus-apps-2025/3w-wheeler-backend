@@ -54,11 +54,14 @@ export const authenticate = async (req, res, next) => {
     }
 
     // Check access type (only if explicitly set and not 'both')
+    // Admins (admin, superadmin, subadmin) can access both platforms regardless of accessType
+    const isAdmin = ['admin', 'superadmin', 'subadmin'].includes(user.role);
     const userAccessType = user.accessType || 'both';
     console.log('userAccessType:', userAccessType);
-    console.log('Should block?', userAccessType !== 'both' && userAccessType === 'mobile' && appType === 'website');
-    
-    if (userAccessType !== 'both') {
+    console.log('isAdmin:', isAdmin);
+    console.log('Should block?', !isAdmin && userAccessType !== 'both' && userAccessType === 'mobile' && appType === 'website');
+
+    if (!isAdmin && userAccessType !== 'both') {
       if (userAccessType === 'website' && appType === 'mobile') {
         console.log('BLOCKING: mobile access tries website');
         return res.status(403).json({
@@ -143,9 +146,15 @@ export const authorize = (...roles) => {
     }
 
     if (!roles.includes(req.user.role)) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Access denied. Insufficient permissions.' 
+      console.log('Authorization failed:', {
+        userRole: req.user.role,
+        allowedRoles: roles,
+        path: req.path,
+        method: req.method
+      });
+      return res.status(403).json({
+        success: false,
+        message: `Access denied. Insufficient permissions. Your role: ${req.user.role}, Required roles: ${roles.join(', ')}`
       });
     }
 

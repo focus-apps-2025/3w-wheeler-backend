@@ -677,3 +677,83 @@ export const removeGlobalDefaultLogo = async (req, res) => {
     });
   }
 };
+
+// @desc    Get office location for current tenant
+// @route   GET /api/tenants/office-location
+// @access  Private (Admin only)
+export const getOfficeLocation = async (req, res) => {
+  try {
+    const tenantId = req.user.tenantId;
+
+    const tenant = await Tenant.findById(tenantId).select('settings.officeLocation');
+
+    if (!tenant) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tenant not found'
+      });
+    }
+
+    const officeLocation = tenant.settings?.officeLocation;
+    const hasLocation = officeLocation && officeLocation.lat !== undefined && officeLocation.lat !== null && officeLocation.lng !== undefined && officeLocation.lng !== null;
+
+    res.json({
+      success: true,
+      data: hasLocation ? officeLocation : null
+    });
+  } catch (error) {
+    console.error('Error fetching office location:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch office location'
+    });
+  }
+};
+
+// @desc    Update office location for current tenant
+// @route   PUT /api/tenants/office-location
+// @access  Private (Admin only)
+export const updateOfficeLocation = async (req, res) => {
+  try {
+    const tenantId = req.user.tenantId;
+    const { lat, lng, radius } = req.body;
+
+    console.log('Updating office location for tenant:', tenantId);
+    console.log('Request data:', { lat, lng, radius });
+
+    const updateData = {
+      'settings.officeLocation': {
+        lat: parseFloat(lat),
+        lng: parseFloat(lng),
+        radius: parseInt(radius) || 500
+      }
+    };
+
+    console.log('Update data:', updateData);
+
+    const tenant = await Tenant.findByIdAndUpdate(tenantId, updateData, { new: true });
+
+    console.log('Updated tenant:', tenant?.settings?.officeLocation);
+
+    if (!tenant) {
+      console.error('Tenant not found after update');
+      return res.status(404).json({
+        success: false,
+        message: 'Tenant not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Office location updated successfully',
+      data: tenant.settings.officeLocation
+    });
+
+}
+ catch (error) {
+    console.error('Error updating office location:', error);
+    res.status(500).json({
+      success: false, message: 'Failed to update office location'
+    });
+  }
+};

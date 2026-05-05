@@ -73,7 +73,29 @@ const userSchema = new mongoose.Schema({
   position: String,
   permissions: [{
     type: String
-  }]
+  }],
+  performanceScore: {
+    type: Number,
+    default: 0,
+    min: 0,
+    max: 100
+  },
+  totalReviews: {
+    type: Number,
+    default: 0
+  },
+  acceptedCount: {
+    type: Number,
+    default: 0
+  },
+  rejectedCount: {
+    type: Number,
+    default: 0
+  },
+  reworkCount: {
+    type: Number,
+    default: 0
+  }
 }, {
   timestamps: true
 });

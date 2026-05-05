@@ -12,7 +12,9 @@ import {
   removeAdminFromTenant,
   getGlobalDefaultLogo,
   updateGlobalDefaultLogo,
-  removeGlobalDefaultLogo
+  removeGlobalDefaultLogo,
+  getOfficeLocation,
+  updateOfficeLocation
 } from '../controllers/tenantController.js';
 import { authenticate, superAdminOnly, adminOnly } from '../middleware/auth.js';
 import { addTenantFilter } from '../middleware/tenantIsolation.js';
@@ -22,6 +24,15 @@ const router = express.Router();
 // All routes require authentication
 router.use(authenticate);
 router.use(addTenantFilter);
+
+// Office location management (must come before parameterized routes)
+router.get('/office-location', authenticate, getOfficeLocation);
+router.put('/office-location', adminOnly, updateOfficeLocation);
+
+// Global default logo management (SuperAdmin only)
+router.get('/global/default-logo', superAdminOnly, getGlobalDefaultLogo);
+router.put('/global/default-logo', superAdminOnly, updateGlobalDefaultLogo);
+router.delete('/global/default-logo', superAdminOnly, removeGlobalDefaultLogo);
 
 // SuperAdmin-only routes for tenant management
 router.get('/minimal', getTenantsMinimal); // Minimal list accessible to all authenticated users
