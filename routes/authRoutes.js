@@ -1,5 +1,5 @@
 import express from 'express';
-import { login, logout, signup, getProfile, changePassword } from '../controllers/authController.js';
+import { login, logout, signup, getProfile, changePassword, forgotPassword, verifyForgotOtp, resetPassword, resendForgotOtp } from '../controllers/authController.js';
 import { authenticate } from '../middleware/auth.js';
 import { validateLogin } from '../middleware/validation.js';
 
@@ -19,6 +19,26 @@ router.post('/logout', logout);
 // @desc    Signup new tenant (Free Trial)
 // @access  Public
 router.post('/signup', signup);
+
+// @route   POST /api/auth/forgot-password
+// @desc    Request password reset OTP (sent to registered mobile)
+// @access  Public
+router.post('/forgot-password', forgotPassword);
+
+// @route   POST /api/auth/resend-otp
+// @desc    Resend OTP for password reset (with rate limiting)
+// @access  Public
+router.post('/resend-otp', resendForgotOtp);
+
+// @route   POST /api/auth/verify-forgot-otp
+// @desc    Verify OTP for password reset
+// @access  Public
+router.post('/verify-forgot-otp', verifyForgotOtp);
+
+// @route   POST /api/auth/reset-password
+// @desc    Reset password after OTP verification
+// @access  Public
+router.post('/reset-password', resetPassword);
 
 // @route   GET /api/auth/profile
 // @desc    Get current user profile

@@ -94,7 +94,7 @@ const initializeSystem = async () => {
     // Create superadmin user first (doesn't need tenantId or createdBy)
     console.log('\n👤 Creating superadmin user...');
     
-    const superadminEmail = 'superadmin@focus.com';
+    const superadminEmail = 'superadmin@gmail.com';
     let superadminUser = await User.findOne({ email: superadminEmail });
 
     if (superadminUser) {
@@ -103,7 +103,7 @@ const initializeSystem = async () => {
       superadminUser = new User({
         username: 'superadmin',
         email: superadminEmail,
-        password: 'superadmin123#',
+        password: 'srimathi123',
         firstName: 'Super',
         lastName: 'Administrator',
         role: 'superadmin',
@@ -115,8 +115,8 @@ const initializeSystem = async () => {
 
       await superadminUser.save();
       console.log('  ✅ Created superadmin user');
-      console.log('     📧 Email: superadmin@focus.com');
-      console.log('     🔐 Password: superadmin123#');
+      console.log('     📧 Email: superadmin@gmail.com');
+      console.log('     🔐 Password: srimathi123');
     }
 
     // Create default tenant
@@ -219,7 +219,7 @@ const initializeSystem = async () => {
     console.log('\n📋 Summary:');
     console.log('• Default roles created: Administrator, Teacher, Editor, Viewer');
     console.log('• Default tenant: default (Little Flower School)');
-    console.log('• Superadmin user: superadmin@focus.com / superadmin123#');
+    console.log('• Superadmin user: superadmin@gmail.com / srimathi123');
     console.log('• Admin user: admin@focus.com / admin123#');
     console.log('• Sample teacher: teacher@focus.com / teacher123');
     console.log('\n🚀 You can now start the server and begin using the system!');

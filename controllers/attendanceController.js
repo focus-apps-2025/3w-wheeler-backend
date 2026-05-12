@@ -332,12 +332,19 @@ export const exportAttendance = async (req, res) => {
     const { startDate, endDate } = req.query;
     const tenantId = req.user.tenantId;
 
+    // Parse dates in local timezone
+    const parseLocalDate = (dateStr) => {
+      const parts = dateStr.split('-').map(Number);
+      return new Date(parts[0], parts[1] - 1, parts[2]);
+    };
+
     const query = { tenantId };
     if (startDate && endDate) {
-      query.date = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate)
-      };
+      const start = parseLocalDate(startDate);
+      const end = parseLocalDate(endDate);
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+      query.date = { $gte: start, $lte: end };
     }
 
     const logs = await Attendance.find(query)
@@ -380,18 +387,23 @@ export const getAttendance = async (req, res) => {
 
     console.log('getAttendance - startDate:', startDate, 'endDate:', endDate, 'tenantId:', tenantId);
 
-    const query = { tenantId };
+    // Parse dates in local timezone (matching how Attendance.date is stored)
+    const parseLocalDate = (dateStr) => {
+      const parts = dateStr.split('-').map(Number);
+      return new Date(parts[0], parts[1] - 1, parts[2]);
+    };
 
-    // Always include a date range for current month as fallback (IST)
-    const istNow = getISTNow();
-    let start = startDate ? new Date(startDate) : new Date(istNow.getFullYear(), istNow.getMonth(), 1);
-    let end = endDate ? new Date(endDate) : new Date(istNow.getFullYear(), istNow.getMonth() + 1, 0);
-
+    const now = new Date();
+    const start = startDate ? parseLocalDate(startDate) : new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = endDate ? parseLocalDate(endDate) : new Date(now.getFullYear(), now.getMonth() + 1, 0);
     start.setHours(0, 0, 0, 0);
     end.setHours(23, 59, 59, 999);
-    query.date = { $gte: start, $lte: end };
 
-    console.log('getAttendance - date range:', start, 'to', end);
+    const query = { tenantId, date: { $gte: start, $lte: end } };
+    if (inspectorId) query.inspector = inspectorId;
+    if (status) query.status = status;
+
+    console.log('getAttendance - date range:', start.toISOString(), 'to', end.toISOString());
     console.log('getAttendance - full query:', JSON.stringify(query));
 
     const logs = await Attendance.find(query)
@@ -417,10 +429,11 @@ export const getAttendance = async (req, res) => {
 export const getAttendanceSummary = async (req, res) => {
   try {
     const today = getISTToday();
-    const query = { tenantId: req.user.tenantId, date: { $gte: today } };
+    const tenantId = req.user.tenantId;
+    const query = { tenantId, date: { $gte: today } };
 
     const [totalUsers, present, late, halfDay] = await Promise.all([
-      Attendance.countDocuments({ tenantId: req.user.tenantId, date: { $gte: today } }), // Approximation
+      Attendance.countDocuments({ tenantId, date: { $gte: today } }),
       Attendance.countDocuments({ ...query, status: 'present' }),
       Attendance.countDocuments({ ...query, status: 'late' }),
       Attendance.countDocuments({ ...query, status: 'half-day' })
@@ -428,7 +441,7 @@ export const getAttendanceSummary = async (req, res) => {
 
     res.json({
       success: true,
-      data: { totalUsers, present, late, halfDay, absent: totalUsers - present }
+      data: { totalUsers, present, late, halfDay, absent: Math.max(0, totalUsers - present - late - halfDay) }
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

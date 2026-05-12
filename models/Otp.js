@@ -25,6 +25,16 @@ const otpSchema = new mongoose.Schema({
     isVerified: {
         type: Boolean,
         default: false
+    },
+    verificationId: {
+        type: String,
+        required: false,
+        index: true
+    },
+    purpose: {
+        type: String,
+        enum: ['login', 'password-reset', 'signup', 'mobile-verification'],
+        default: 'login'
     }
 }, {
     timestamps: true

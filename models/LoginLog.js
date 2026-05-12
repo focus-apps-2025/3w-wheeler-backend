@@ -19,18 +19,18 @@ const loginLogSchema = new mongoose.Schema({
     type: Date
   },
   location: {
-    latitude: Number,
-    longitude: Number,
-    address: String,
-    city: String,
-    country: String,
-    countryCode: String,
-    status: {
-      type: String,
-      enum: ['granted', 'denied', 'unknown', 'browser'],
-      default: 'unknown'
-    }
-  },
+     latitude: Number,
+     longitude: Number,
+     address: String,
+     city: String,
+     country: String,
+     countryCode: String,
+     status: {
+       type: String,
+       enum: ['granted', 'denied', 'unknown', 'browser', 'password-reset'],
+       default: 'unknown'
+     }
+   },
   ipAddress: {
     type: String
   },

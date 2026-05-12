@@ -96,11 +96,12 @@ export const processAttendanceForReport = (logs, inspectors, totalDays) => {
     });
   });
 
-  // Track present logs
-  logs.forEach(log => {
-    const insId = log.inspector._id.toString();
-    const stats = inspectorMap.get(insId);
-    if (!stats) return;
+   // Track present logs
+   logs.forEach(log => {
+     if (!log.inspector) return; // Skip if inspector is null
+     const insId = log.inspector._id.toString();
+     const stats = inspectorMap.get(insId);
+     if (!stats) return;
 
     if (log.status === 'present') stats.present++;
     else if (log.status === 'late') stats.late++;
@@ -127,27 +128,28 @@ export const processAttendanceForReport = (logs, inspectors, totalDays) => {
     rate: totalDays > 0 ? Math.round(((s.present + s.late + s.halfDay) / totalDays) * 100) : 0
   }));
 
-  // Format detailed logs
-  const detailedLogs = logs.map(log => {
-    // Format date as local date string (YYYY-MM-DD) - subtract timezone offset to convert UTC to local
-    const localDate = new Date(log.date.getTime() - log.date.getTimezoneOffset() * 60000).toISOString().split('T')[0];
-    
-    // Get tenant info if available
-    const tenantName = log.tenantId?.companyName || log.tenantId?.name || null;
-    
-    return {
-      date: localDate,
-      inspector: `${log.inspector.firstName} ${log.inspector.lastName}`,
-      inspectorId: log.inspector._id,
-      tenant: tenantName,
-      shift: log.shift.displayName || log.shift.name,
-      checkIn: log.checkInTime ? new Date(log.checkInTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) : null,
-      checkOut: log.checkOutTime ? new Date(log.checkOutTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) : null,
-      hours: log.workingHours,
-      status: log.status,
-      location: log.checkInPlace || log.checkOutPlace
-    };
-  });
+   // Format detailed logs
+   const detailedLogs = logs.map(log => {
+     // Convert stored UTC date to local date (IST = UTC+5:30)
+     // Adjust by subtracting timezone offset to get local midnight date
+     const localDate = new Date(log.date.getTime() - (log.date.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+     
+     // Get tenant info if available
+     const tenantName = log.tenantId?.companyName || log.tenantId?.name || null;
+     
+     return {
+       date: localDate,
+       inspector: log.inspector ? `${log.inspector.firstName} ${log.inspector.lastName}` : 'Unknown',
+       inspectorId: log.inspector?._id || null,
+       tenant: tenantName,
+       shift: log.shift?.displayName || log.shift?.name || 'N/A',
+       checkIn: log.checkInTime ? new Date(log.checkInTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) : null,
+       checkOut: log.checkOutTime ? new Date(log.checkOutTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) : null,
+       hours: log.workingHours,
+       status: log.status,
+       location: log.checkInPlace || log.checkOutPlace
+     };
+   });
 
   // Overall summary
   const summary = {

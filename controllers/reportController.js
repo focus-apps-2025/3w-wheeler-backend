@@ -18,63 +18,42 @@ export const getAttendanceReport = async (req, res) => {
     console.log('tenantId:', tenantId);
     console.log('startDate:', startDate, 'endDate:', endDate);
 
-    // 1. Build Query - Superadmin sees all, others see their tenant
+    // 1. Build Query
     let query = {};
-    
-    console.log('=== Building query for role:', userRole);
-    console.log('=== startDate:', startDate, 'endDate:', endDate);
-    
+
     if (userRole === 'superadmin') {
-      console.log('Superadmin mode: NO tenant filter');
-      // For superadmin, only filter by date if provided
+      // Superadmin sees all tenants, no tenant filter
     } else if (tenantId) {
       query.tenantId = tenantId;
-      console.log('Filtering by tenantId:', tenantId.toString());
-    } else {
-      console.log('WARNING: No tenantId for non-superadmin user!');
     }
-    
-    // Always filter by date range - use current month as default
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      query.date = { $gte: start, $lte: end };
-    } else {
-      // Default to current month if no dates provided
-      const now = new Date();
-      const defaultStart = new Date(now.getFullYear(), now.getMonth(), 1);
-      const defaultEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
-      query.date = { $gte: defaultStart, $lte: defaultEnd };
-    }
-    
-    console.log('=== Final query:', JSON.stringify(query));
+
+    // Parse dates in LOCAL timezone to match stored Attendance.date
+    const parseLocalDate = (dateStr) => {
+      const parts = dateStr.split('-').map(Number);
+      return new Date(parts[0], parts[1] - 1, parts[2]);
+    };
+
+    const now = new Date();
+    const start = startDate ? parseLocalDate(startDate) : new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = endDate ? parseLocalDate(endDate) : new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+    query.date = { $gte: start, $lte: end };
 
     if (inspectorId) query.inspector = inspectorId;
     if (status) query.status = status;
     if (shiftId) query.shift = shiftId;
 
-    console.log('Query:', JSON.stringify(query));
+    console.log('Final query:', JSON.stringify(query));
 
     // 2. Fetch Data
-    // Debug: First let's see ALL attendance records in the system
-    const allLogs = await Attendance.find({}).limit(5);
-    console.log('=== DEBUG: Total attendance records (first 5):', allLogs.length);
-    if (allLogs.length > 0) {
-      console.log('Sample record tenantId:', allLogs[0].tenantId);
-      console.log('Sample record date:', allLogs[0].date);
-    }
-    
     const logs = await Attendance.find(query)
       .populate('inspector', 'firstName lastName username email tenantId')
       .populate('tenantId', 'name companyName')
       .populate('shift', 'name displayName startTime endTime')
       .sort({ date: -1 });
 
-    console.log('=== Found logs:', logs.length);
-    
-    // Debug: show first few log inspector IDs if any
+    console.log('Found logs:', logs.length);
     if (logs.length > 0) {
       console.log('Sample log inspector:', logs[0].inspector);
       console.log('Sample log tenantId:', logs[0].tenantId);
@@ -90,9 +69,8 @@ export const getAttendanceReport = async (req, res) => {
     console.log('Found inspectors:', inspectors.length);
 
     // 3. Process Report
-    const diffTime = Math.abs(new Date(endDate) - new Date(startDate));
+    const diffTime = Math.abs(end.getTime() - start.getTime());
     const totalDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
-    console.log('Total days:', totalDays);
 
     const reportData = processAttendanceForReport(logs, inspectors, totalDays);
     console.log('Report data structure:', Object.keys(reportData));

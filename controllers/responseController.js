@@ -1907,11 +1907,17 @@ export const updateResponse = async (req, res) => {
       });
     }
 
+    // ✅ PRESERVE the createdBy field - don't let it be overwritten
+    const originalCreatedBy = response.createdBy;
+    const originalSubmittedBy = response.submittedBy;
+    const originalSubmitterContact = response.submitterContact;
+
     // Update fields
     if (answers) {
       let processedAnswers = answers;
       try {
-        processedAnswers = await processResponseImages(answers);
+        const result = await processResponseImages(answers);
+        processedAnswers = result.processedAnswers;
         console.log('[DEBUG] Updated answers with Google Drive image processing:', Object.keys(processedAnswers));
       } catch (error) {
         console.error('[ERROR] Failed to process Google Drive images on update:', error);
@@ -1929,19 +1935,19 @@ export const updateResponse = async (req, res) => {
       }
     }
     if (req.body.isDispatched !== undefined) {
-      // If it's being set to true and was false/undefined
       if (req.body.isDispatched === true && !response.isDispatched) {
         response.isDispatched = true;
         response.dispatchedAt = new Date();
       } else if (req.body.isDispatched === false) {
-        // As per user request, disabling might not be needed, but we handle it anyway
-        // Or we could ignore it. Let's stick to user request: "once enabled means no option to disable"
-        // Actually, if they try to set it to false, we just don't allow it or just set it.
-        // I'll just set it for completeness, but the UI won't allow it.
         response.isDispatched = false;
         response.dispatchedAt = null;
       }
     }
+
+    // ✅ Restore original creator info if they were accidentally changed
+    response.createdBy = originalCreatedBy;
+    response.submittedBy = originalSubmittedBy;
+    response.submitterContact = originalSubmitterContact;
 
     await response.save();
 

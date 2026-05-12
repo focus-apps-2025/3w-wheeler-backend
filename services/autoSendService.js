@@ -29,7 +29,7 @@ export const initAutoSendJob = () => {
   });
 };
 
-const processAutoSend = async (form) => {
+export const processAutoSend = async (form) => {
   const { autoSendConfig, id: formId, tenantId } = form;
   const { recipients, includePdf, includeLink } = autoSendConfig;
 

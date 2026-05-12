@@ -1,6 +1,7 @@
 import Form from '../models/Form.js';
 import AutoSendHistory from '../models/AutoSendHistory.js';
 import mongoose from 'mongoose';
+import { processAutoSend } from '../services/autoSendService.js';
 
 export const updateAutoSendConfig = async (req, res) => {
   try {
@@ -15,8 +16,8 @@ export const updateAutoSendConfig = async (req, res) => {
       });
     }
 
-    // Check permissions (admin only or owner)
-    // Assuming authenticate middleware already added req.user
+    // Check if we are starting/restarting
+    const isStarting = autoSendConfig.status === 'active' && form.autoSendConfig?.status !== 'active';
 
     form.autoSendConfig = {
       ...form.autoSendConfig,
@@ -27,9 +28,16 @@ export const updateAutoSendConfig = async (req, res) => {
 
     await form.save();
 
+    // If starting, trigger immediate send
+    if (isStarting) {
+      console.log(`[AUTOSEND] Starting service for form ${id}, triggering immediate send`);
+      // Run in background so response is not delayed
+      processAutoSend(form).catch(err => console.error('[AUTOSEND] Immediate send failed:', err));
+    }
+
     res.status(200).json({
       success: true,
-      message: 'AutoSend configuration updated successfully',
+      message: isStarting ? 'AutoSend started and initial report triggered' : 'AutoSend configuration updated successfully',
       data: form.autoSendConfig
     });
   } catch (error) {

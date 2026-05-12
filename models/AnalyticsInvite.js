@@ -8,7 +8,6 @@ const analyticsInviteSchema = new mongoose.Schema({
   },
   email: {
     type: String,
-    required: true,
     lowercase: true,
     trim: true,
     index: true
@@ -42,8 +41,9 @@ const analyticsInviteSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Ensure uniqueness per form and email
-analyticsInviteSchema.index({ formId: 1, email: 1 }, { unique: true });
+// Ensure uniqueness per form and identity
+analyticsInviteSchema.index({ formId: 1, email: 1 }, { unique: true, sparse: true });
+analyticsInviteSchema.index({ formId: 1, phone: 1 }, { unique: true, sparse: true });
 
 const AnalyticsInvite = mongoose.model('AnalyticsInvite', analyticsInviteSchema);
 

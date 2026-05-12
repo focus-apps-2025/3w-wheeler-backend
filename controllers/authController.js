@@ -2,8 +2,11 @@ import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
 import Tenant from '../models/Tenant.js';
 import LoginLog from '../models/LoginLog.js';
+import Otp from '../models/Otp.js';
 import { generateToken } from '../middleware/auth.js';
+import crypto from 'crypto';
 import axios from 'axios';
+import smsService from '../services/smsService.js'; 
 
 // Helper function to get location from IP address
 const getLocationFromIP = async (ip) => {
@@ -471,6 +474,383 @@ export const logout = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Internal server error'
+    });
+  }
+};
+
+/**
+ * @desc    Request password reset via email (OTP sent to registered mobile)
+ * @route   POST /api/auth/forgot-password
+ * @access  Public
+ */
+export const forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // Find user by email - also get mobile number for OTP
+    const user = await User.findOne({ email: normalizedEmail });
+
+    // Security: Don't reveal if account exists - just say OTP was sent
+    if (!user || !user.mobile) {
+      return res.status(200).json({
+        success: true,
+        message: 'If the email exists and has a registered mobile number, an OTP has been sent',
+        data: {
+          success: true,
+          message: 'OTP sent successfully'
+        }
+      });
+    }
+
+    // Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes expiry
+    const verificationId = crypto.randomBytes(32).toString('hex');
+
+    // Save OTP to database
+    const newOtp = new Otp({
+      email: normalizedEmail,
+      otp,
+      expiresAt,
+      isVerified: false,
+      verificationId,
+      purpose: 'password-reset'
+    });
+    await newOtp.save();
+
+    // Clean up any old OTPs for this email
+    await Otp.deleteMany({
+      email: normalizedEmail,
+      _id: { $ne: newOtp._id },
+      purpose: 'password-reset'
+    });
+
+    // Send OTP via SMS to registered mobile number
+    // ✅ Use the imported smsService directly (no dynamic import)
+    const smsResult = await smsService.sendOTP(user.mobile, otp);
+
+    if (!smsResult.success) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to send OTP SMS',
+        error: smsResult.error
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Password reset OTP has been sent to your registered mobile number',
+      data: {
+        success: true,
+        message: 'OTP sent successfully',
+        verificationId,
+        expiresAt,
+        mobile: user.mobile
+      }
+    });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Verify OTP for password reset
+ * @route   POST /api/auth/verify-forgot-otp
+ * @access  Public
+ */
+export const verifyForgotOtp = async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+
+    if (!email || !otp) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email and OTP are required'
+      });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // Find OTP record
+    const otpRecord = await Otp.findOne({
+      email: normalizedEmail,
+      otp: otp,
+      isVerified: false
+    });
+
+    if (!otpRecord) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid OTP'
+      });
+    }
+
+    // Check expiration
+    if (otpRecord.expiresAt < new Date()) {
+      await Otp.deleteOne({ _id: otpRecord._id });
+      return res.status(400).json({
+        success: false,
+        message: 'OTP has expired'
+      });
+    }
+
+    // Validate user exists
+    const user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Mark OTP as verified
+    otpRecord.isVerified = true;
+    const verificationId = crypto.randomBytes(32).toString('hex');
+    otpRecord.verificationId = verificationId;
+    await otpRecord.save();
+
+    // Invalidate other OTPs
+    await Otp.updateMany(
+      { email: normalizedEmail, otp: { $ne: otp } },
+      { isVerified: true }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'OTP verified successfully',
+      data: {
+        success: true,
+        message: 'OTP verified successfully',
+        verificationId,
+        expiresAt: otpRecord.expiresAt,
+        mobile: user.mobile
+      }
+    });
+  } catch (error) {
+    console.error('Verify forgot OTP error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Reset password after OTP verification
+ * @route   POST /api/auth/reset-password
+ * @access  Public
+ */
+export const resetPassword = async (req, res) => {
+  try {
+    const { email, verificationId, newPassword } = req.body;
+
+    if (!email || !verificationId || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email, verification ID, and new password are required'
+      });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // Password strength validation
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 6 characters long'
+      });
+    }
+
+    // Find the verified OTP record with matching verification ID
+    const otpRecord = await Otp.findOne({
+      email: normalizedEmail,
+      verificationId: verificationId,
+      isVerified: true
+    });
+
+    if (!otpRecord) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired verification session'
+      });
+    }
+
+    // Verify OTP hasn't expired
+    if (otpRecord.expiresAt < new Date()) {
+      await Otp.deleteOne({ _id: otpRecord._id });
+      return res.status(400).json({
+        success: false,
+        message: 'Verification session has expired'
+      });
+    }
+
+    // Find user
+    const user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Update user password
+    user.password = newPassword;
+    await user.save();
+
+    // Invalidate all existing sessions for this user
+    await LoginLog.updateMany(
+      { userId: user._id, logoutTime: null },
+      { logoutTime: new Date() }
+    );
+
+    // Delete OTP records for this email after successful reset
+    await Otp.deleteMany({ email: normalizedEmail });
+
+    // Log password reset activity
+    await LoginLog.create({
+      userId: user._id,
+      tenantId: user.tenantId,
+      location: { status: 'password-reset' },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent']
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Password has been reset successfully'
+    });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * @desc    Resend OTP for password reset (with rate limiting)
+ * @route   POST /api/auth/resend-otp
+ * @access  Public
+ */
+export const resendForgotOtp = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // Find user by email
+    const user = await User.findOne({ email: normalizedEmail });
+
+    // Security: Don't reveal if email exists
+    if (!user) {
+      return res.status(200).json({
+        success: true,
+        message: 'If the email exists, a new OTP has been sent'
+      });
+    }
+
+    if (!user.mobile) {
+      return res.status(400).json({
+        success: false,
+        message: 'No mobile number registered for this account',
+        error: 'No mobile number on file'
+      });
+    }
+
+    // Rate limiting - check OTP resend attempts
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    
+    const recentOtps = await Otp.find({
+      email: normalizedEmail,
+      createdAt: { $gte: fiveMinutesAgo },
+      purpose: 'password-reset'
+    });
+
+    if (recentOtps.length >= 3) {
+      return res.status(429).json({
+        success: false,
+        message: 'Too many OTP requests. Please wait 5 minutes before trying again.'
+      });
+    }
+
+    // Generate new OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    const verificationId = crypto.randomBytes(32).toString('hex');
+
+    const newOtp = new Otp({
+      email: normalizedEmail,
+      otp,
+      expiresAt,
+      isVerified: false,
+      verificationId,
+      purpose: 'password-reset'
+    });
+    await newOtp.save();
+
+    // Invalidate previous unverified OTPs
+    await Otp.updateMany(
+      { 
+        email: normalizedEmail, 
+        otp: { $ne: otp },
+        isVerified: false,
+        purpose: 'password-reset'
+      },
+      { isVerified: true }
+    );
+
+    // Send OTP via SMS
+    // ✅ Use the imported smsService directly
+    const smsResult = await smsService.sendOTP(user.mobile, otp);
+
+    if (!smsResult.success) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to send OTP SMS',
+        error: smsResult.error
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'New OTP has been sent to your registered mobile number',
+      data: {
+        success: true,
+        message: 'OTP resent successfully',
+        verificationId,
+        expiresAt
+      }
+    });
+  } catch (error) {
+    console.error('Resend OTP error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
     });
   }
 };

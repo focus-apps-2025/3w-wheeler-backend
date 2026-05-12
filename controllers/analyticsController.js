@@ -2219,6 +2219,23 @@ export const getPerformanceTable = async (req, res) => {
       }
     ]);
 
+    // Aggregate dispatched (assigned) responses count for all users
+    const dispatchedStats = await Response.aggregate([
+      { 
+        $match: { 
+          ...req.tenantFilter,
+          assignedTo: { $ne: null }, // Only count responses that are assigned/dispatched
+          createdAt: { $gte: start, $lte: end }
+        } 
+      },
+      {
+        $group: {
+          _id: '$assignedTo',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
     // Aggregate review stats for all users
     const reviewStats = await Review.aggregate([
       { 
@@ -2233,7 +2250,8 @@ export const getPerformanceTable = async (req, res) => {
           total: { $sum: 1 },
           accepted: { $sum: { $cond: [{ $eq: ['$reviewOption', 'Accepted'] }, 1, 0] } },
           rejected: { $sum: { $cond: [{ $eq: ['$reviewOption', 'Rejected'] }, 1, 0] } },
-          rework: { $sum: { $cond: [{ $eq: ['$reviewOption', 'Rework'] }, 1, 0] } }
+          rework: { $sum: { $cond: [{ $eq: ['$reviewOption', 'Rework'] }, 1, 0] } },
+          dispatched: { $sum: { $cond: [{ $eq: ['$isDispatched', true] }, 1, 0] } }
         }
       }
     ]);
@@ -2244,6 +2262,11 @@ export const getPerformanceTable = async (req, res) => {
       if (s._id) submissionMap[s._id.toString()] = s.count; 
     });
 
+    const dispatchedMap = {};
+    dispatchedStats.forEach(d => { 
+      if (d._id) dispatchedMap[d._id.toString()] = d.count; 
+    });
+
     const reviewMap = {};
     reviewStats.forEach(r => { 
       if (r._id) reviewMap[r._id.toString()] = r; 
@@ -2251,11 +2274,10 @@ export const getPerformanceTable = async (req, res) => {
 
     // Format final table data
     const tableData = users.map(user => {
-      // Mapping submissions by user ID
-      const submissions = submissionMap[user._id.toString()] || 0;
-      
-      // Try mapping reviews by ObjectId string
-      const reviews = reviewMap[user._id.toString()] || { total: 0, accepted: 0, rejected: 0, rework: 0 };
+      const userId = user._id.toString();
+      const submissions = submissionMap[userId] || 0;
+      const dispatched = dispatchedMap[userId] || 0;
+      const reviews = reviewMap[userId] || { total: 0, accepted: 0, rejected: 0, rework: 0 };
       
       const performanceScore = reviews.total > 0 
         ? Math.round((reviews.accepted / reviews.total) * 100) 
@@ -2268,6 +2290,7 @@ export const getPerformanceTable = async (req, res) => {
         role: user.role,
         tenantName: user.tenantId?.companyName || user.tenantId?.name || 'N/A',
         totalSubmitted: submissions,
+        dispatched: dispatched,
         totalReviewed: reviews.total,
         accepted: reviews.accepted,
         rejected: reviews.rejected,

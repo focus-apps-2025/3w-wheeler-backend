@@ -143,13 +143,20 @@ export const sendAnalyticsInvites = async (req, res) => {
     const inviteLink = `${formattedBaseUrl}forms/${formId}/analytics/login`;
     
     for (const inviteData of invites) {
-      const { email, phone } = inviteData;
+      const email = inviteData.email ? inviteData.email.toLowerCase().trim() : null;
+      const { phone } = inviteData;
       const otp = generateOTP();
       
-      // Update or create invite
+      // Update or create invite - Use form.id (custom ID) consistently
+      const query = { formId: form.id };
+      if (email) query.email = email;
+      else if (phone) query.phone = phone;
+      else continue;
+
       await AnalyticsInvite.findOneAndUpdate(
-        { formId, email },
+        query,
         { 
+          email,
           phone, 
           otp, 
           expiresAt, 
@@ -230,33 +237,56 @@ export const sendAnalyticsInvites = async (req, res) => {
 
 export const requestGuestOTP = async (req, res) => {
   try {
-    const { formId, email, phone, channel = 'email' } = req.body;
+    let { formId, email, phone, channel = 'email' } = req.body;
 
-    if (!formId || !email || !phone) {
-      return res.status(400).json({ success: false, message: 'Form ID, email, and phone number are required' });
+    if (!formId || (!email && !phone)) {
+      return res.status(400).json({ success: false, message: 'Form ID and either email or phone are required' });
+    }
+
+    // Normalize inputs
+    const normalizedFormId = formId.toString().trim();
+    const normalizedEmail = email ? email.toString().toLowerCase().trim() : null;
+    const cleanPhone = phone ? phone.toString().replace(/\D/g, '') : null;
+
+    // 1. Try to find the form
+    const form = await Form.findOne({ 
+      $or: [
+        { id: normalizedFormId }, 
+        { _id: mongoose.Types.ObjectId.isValid(normalizedFormId) ? normalizedFormId : new mongoose.Types.ObjectId() }
+      ] 
+    });
+
+    // 2. Build search query for invite
+    const inviteConditions = [];
+    
+    // Add conditions based on what's provided
+    if (normalizedEmail) {
+      inviteConditions.push({ email: normalizedEmail });
+    }
+    if (cleanPhone) {
+      // Use regex to match ending of phone number (e.g. last 10 digits) or exact match
+      const phoneRegex = cleanPhone.length >= 10 ? new RegExp(cleanPhone.slice(-10) + '$') : new RegExp(cleanPhone + '$');
+      inviteConditions.push({ phone: phoneRegex });
+      inviteConditions.push({ phone: cleanPhone });
+    }
+
+    const formIds = [normalizedFormId];
+    if (form) {
+      if (form.id) formIds.push(form.id);
+      if (form._id) formIds.push(form._id.toString());
     }
 
     const invite = await AnalyticsInvite.findOne({ 
-      formId, 
-      email: email.toLowerCase()
+      formId: { $in: formIds },
+      $or: inviteConditions
     });
 
     if (!invite) {
+      const identity = normalizedEmail || phone;
+      console.log(`[AUTH] Invite not found for ${identity} on form: ${normalizedFormId}`);
       return res.status(404).json({ 
         success: false, 
-        message: 'This email is not invited to view analytics for this form. Please contact the administrator.' 
-      });
-    }
-
-    // Clean phone numbers for comparison
-    const cleanInputPhone = phone.replace(/\D/g, '');
-    const cleanInvitePhone = invite.phone ? invite.phone.replace(/\D/g, '') : '';
-
-    // Verify phone number matches (handling potential country code differences)
-    if (!cleanInvitePhone || (cleanInputPhone.length >= 10 && !cleanInvitePhone.endsWith(cleanInputPhone))) {
-      return res.status(401).json({
-        success: false,
-        message: 'The phone number provided does not match our records for this email.'
+        message: 'This identity is not invited to view analytics for this form. Please contact the administrator.' 
       });
     }
 
@@ -268,7 +298,6 @@ export const requestGuestOTP = async (req, res) => {
     invite.status = 'sent';
     await invite.save();
 
-    const form = await Form.findOne({ id: formId });
     const tenant = await Tenant.findById(invite.tenantId);
 
     const baseUrl = process.env.INVITE_FRONTEND_URL || process.env.FRONTEND_URL || 'http://localhost:5173';
@@ -279,9 +308,9 @@ export const requestGuestOTP = async (req, res) => {
     let emailSent = false;
     let smsSent = false;
 
-    if (channel === 'email') {
+    if (channel === 'email' && invite.email) {
       const mailResult = await mailService.sendAnalyticsInvite(
-        email, 
+        invite.email, 
         form ? form.title : 'Form Analytics', 
         inviteLink, 
         otp, 
@@ -312,7 +341,7 @@ export const requestGuestOTP = async (req, res) => {
         success: false,
         message: channel === 'sms' && !invite.phone 
           ? 'No phone number associated with this invite. Please use email.'
-          : 'Failed to send verification code'
+          : (channel === 'email' && !invite.email ? 'No email associated with this invite. Please use SMS.' : 'Failed to send verification code')
       });
     }
   } catch (error) {
@@ -323,16 +352,52 @@ export const requestGuestOTP = async (req, res) => {
 
 export const verifyAnalyticsOTP = async (req, res) => {
   try {
-    const { formId, email, otp } = req.body;
+    const { formId, email, phone, otp } = req.body;
     
-    const invite = await AnalyticsInvite.findOne({ formId, email });
+    if (!formId || (!email && !phone) || !otp) {
+      return res.status(400).json({ success: false, message: 'Form ID, OTP, and either email or phone are required' });
+    }
+
+    const normalizedFormId = formId.toString().trim();
+    const normalizedEmail = email ? email.toString().toLowerCase().trim() : null;
+    const cleanPhone = phone ? phone.toString().replace(/\D/g, '') : null;
+
+    // 1. Try to find the form
+    const form = await Form.findOne({ 
+      $or: [
+        { id: normalizedFormId }, 
+        { _id: mongoose.Types.ObjectId.isValid(normalizedFormId) ? normalizedFormId : new mongoose.Types.ObjectId() }
+      ] 
+    });
+
+    // 2. Build search query for invite
+    const inviteConditions = [];
+    if (normalizedEmail) {
+      inviteConditions.push({ email: normalizedEmail });
+    }
+    if (cleanPhone) {
+      const phoneRegex = cleanPhone.length >= 10 ? new RegExp(cleanPhone.slice(-10) + '$') : new RegExp(cleanPhone + '$');
+      inviteConditions.push({ phone: phoneRegex });
+      inviteConditions.push({ phone: cleanPhone });
+    }
+
+    const formIds = [normalizedFormId];
+    if (form) {
+      if (form.id) formIds.push(form.id);
+      if (form._id) formIds.push(form._id.toString());
+    }
+
+    const invite = await AnalyticsInvite.findOne({ 
+      formId: { $in: formIds },
+      $or: inviteConditions
+    });
     
     if (!invite) {
       return res.status(404).json({ success: false, message: 'Invite not found' });
     }
     
     if (invite.otp !== otp) {
-      return res.status(401).json({ success: false, message: 'Invalid password (OTP)' });
+      return res.status(401).json({ success: false, message: 'Invalid verification code (OTP)' });
     }
     
     if (new Date() > invite.expiresAt) {
@@ -346,13 +411,14 @@ export const verifyAnalyticsOTP = async (req, res) => {
     await invite.save();
     
     // Generate guest token
-    const token = generateGuestToken(invite.email, invite.formId);
+    const token = generateGuestToken(invite.email || invite.phone, invite.formId);
     
     res.json({ 
       success: true, 
       data: { 
         token,
         email: invite.email, 
+        phone: invite.phone,
         formId: invite.formId,
         expiresAt: invite.expiresAt
       } 
