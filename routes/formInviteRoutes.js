@@ -36,12 +36,17 @@ const upload = multer({
 
 // Admin middleware (you need to create this)
 const adminOnly = (req, res, next) => {
-  if (req.user.role === 'admin' || req.user.role === 'superadmin') {
+  if (
+    req.user.role === 'admin' ||
+    req.user.role === 'superadmin' ||
+    req.user.role === 'subadmin' ||
+    req.user.role === 'inspector'
+  ) {
     next();
   } else {
     res.status(403).json({
       success: false,
-      message: 'Admin access required'
+      message: 'Admin, Subadmin, or Inspector access required'
     });
   }
 };

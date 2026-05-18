@@ -14,10 +14,9 @@ import {
   submitReview,
   getReviewsForResponse
 } from '../controllers/userController.js';
-import { authenticate, adminOnly } from '../middleware/auth.js';
+import { authenticate, adminOnly, inspectorOrAdmin, authorize } from '../middleware/auth.js';
 import { addTenantFilter } from '../middleware/tenantIsolation.js';
 import { validateUserCreation } from '../middleware/validation.js';
-import {  inspectorOrAdmin } from '../middleware/auth.js';
 
 
 const router = express.Router();
@@ -30,6 +29,11 @@ router.use(authenticate);
 
 // Performance scores routes - bypass tenant filter for cross-tenant visibility
 router.get('/performance-scores', inspectorOrAdmin, getPerformanceScores);
+
+// @route   POST /api/users/reviews
+// @desc    Submit a review
+// @access  Private (Admin, SuperAdmin, SubAdmin, Inspector)
+router.post('/reviews', authorize('admin', 'superadmin', 'subadmin', 'inspector'), submitReview);
 
 router.use(addTenantFilter);
 router.use(adminOnly);
@@ -57,11 +61,6 @@ router.get('/all-tenants-performance', getAllTenantsPerformance);
 // @route   GET /api/users/performance-scores
 // @desc    Get all performance scores
 // @access  Private (Admin only)
-
-// @route   POST /api/users/reviews
-// @desc    Submit a review
-// @access  Private (Admin only)
-router.post('/reviews', authenticate, submitReview);
 
 
 

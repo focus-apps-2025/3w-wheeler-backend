@@ -1753,7 +1753,53 @@ export const getAllResponses = async (req, res) => {
       includePartial = 'false'
     } = req.query;
 
-    const query = { ...req.tenantFilter };
+    let query = {};
+    if (req.user && req.user.role !== 'superadmin') {
+      const userTenantId = req.user.tenantId;
+
+      // Find all forms that are owned by, shared with, or chassis-assigned to the user's tenant
+      const accessibleForms = await Form.find({
+        $or: [
+          { tenantId: userTenantId },
+          { sharedWithTenants: userTenantId },
+          { "chassisTenantAssignments.assignedTenants": userTenantId?.toString() }
+        ]
+      }).select('id _id');
+
+      const accessibleFormIds = accessibleForms.flatMap(f => [f.id, f._id.toString()]).filter(Boolean);
+
+      if (req.user.role === 'inspector') {
+        const userEmail = req.user.email || '';
+        const userUsername = req.user.username || '';
+        const userId = req.user._id;
+
+        // Inspector sees own submissions (any tenant) OR different tenant submissions,
+        // but still limited to accessible forms!
+        query.$and = [
+          { questionId: { $in: accessibleFormIds } },
+          {
+            $or: [
+              { createdBy: userId },
+              { submittedBy: userEmail },
+              { submittedBy: userUsername },
+              { "submitterContact.email": userEmail },
+              { tenantId: { $ne: userTenantId } }
+            ]
+          }
+        ];
+      } else {
+        // Admin / subadmin / other roles see:
+        // - Responses in their own tenant, OR
+        // - Responses for forms shared with their tenant!
+        query.$or = [
+          { tenantId: userTenantId },
+          { questionId: { $in: accessibleFormIds } }
+        ];
+      }
+    } else {
+      // Superadmin sees everything (no restriction)
+      query = {};
+    }
 
     // Filter out partial submissions unless explicitly requested
     if (includePartial !== 'true') {
@@ -2156,25 +2202,24 @@ export const getResponsesByForm = async (req, res) => {
     }
 
     // Apply tenant filtering
-    // Inspector sees only their own responses - no tenant filter
     console.log('[GET RESPONSES] Inspector check - role:', req.user.role, 'userId:', req.user._id, 'tenantId:', req.user.tenantId, 'email:', req.user.email);
     if (req.user.role === 'inspector') {
-  // Inspector sees ONLY their own responses
-  const userEmail = req.user.email || '';
-  const userUsername = req.user.username || '';
-  const userId = req.user._id;
-  
-  // ✅ CORRECTED: Remove the "createdBy: null" condition
-  query.$or = [
-    { createdBy: userId },
-    { submittedBy: userEmail },
-    { submittedBy: userUsername },
-    { "submitterContact.email": userEmail }
-  ];
-  
-  console.log('[INSPECTOR] Filtering responses for user:', userId, userEmail);
-  console.log('[INSPECTOR] Query $or:', JSON.stringify(query.$or));
-} else if (isOwner || isSuperAdmin) {
+      const userEmail = req.user.email || '';
+      const userUsername = req.user.username || '';
+      const userId = req.user._id;
+      const userTenantId = req.user.tenantId;
+
+      query.$or = [
+        { createdBy: userId },
+        { submittedBy: userEmail },
+        { submittedBy: userUsername },
+        { "submitterContact.email": userEmail },
+        { tenantId: { $ne: userTenantId } }
+      ];
+
+      console.log('[INSPECTOR] Filtering responses for user with inspector visibility rules:', userId, userEmail);
+      console.log('[INSPECTOR] Query $or:', JSON.stringify(query.$or));
+    } else if (isOwner || isSuperAdmin) {
       Object.assign(query, req.tenantFilter);
     } else if (!isShared && !hasChassisShare) {
       Object.assign(query, req.tenantFilter);
@@ -2367,7 +2412,20 @@ export const exportResponses = async (req, res) => {
     const query = { questionId: formId };
 
     // Apply tenant filtering
-    if (isOwner || isSuperAdmin) {
+    if (req.user.role === 'inspector') {
+      const userEmail = req.user.email || '';
+      const userUsername = req.user.username || '';
+      const userId = req.user._id;
+      const userTenantId = req.user.tenantId;
+
+      query.$or = [
+        { createdBy: userId },
+        { submittedBy: userEmail },
+        { submittedBy: userUsername },
+        { "submitterContact.email": userEmail },
+        { tenantId: { $ne: userTenantId } }
+      ];
+    } else if (isOwner || isSuperAdmin) {
       Object.assign(query, req.tenantFilter);
     } else if (!isShared && !hasChassisShare) {
       Object.assign(query, req.tenantFilter);

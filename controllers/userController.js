@@ -52,16 +52,21 @@ export const createUser = async (req, res) => {
       });
     }
 
-    // Check if user already exists
-    const existingUser = await User.findOne({
-      $or: [{ username }, { email }],
-      ...req.tenantFilter
-    });
-
-    if (existingUser) {
+    // Check if username already exists globally
+    const existingUsername = await User.findOne({ username });
+    if (existingUsername) {
       return res.status(400).json({
         success: false,
-        message: 'User with this username or email already exists'
+        message: 'Username is already taken'
+      });
+    }
+
+    // Check if email already exists globally
+    const existingEmail = await User.findOne({ email });
+    if (existingEmail) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is already registered'
       });
     }
 
