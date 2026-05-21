@@ -114,7 +114,7 @@ export const sendAnalyticsInvites = async (req, res) => {
     
     if (pdfHtml && channels.includes('email') && includePdf) {
       try {
-        console.log('📄 Generating PDF for email attachment...');
+        console.log(`📄 Generating PDF for email attachment... HTML length: ${pdfHtml.length}`);
         const pdfBuffer = await pdfService.generatePDFWithA4Portrait(pdfHtml);
         if (pdfBuffer && pdfBuffer.length > 0) {
           pdfAttachment = {
@@ -129,8 +129,12 @@ export const sendAnalyticsInvites = async (req, res) => {
         console.error('❌ Failed to generate PDF for attachment:', pdfError);
         // Continue without attachment if generation fails
       }
-    } else if (!pdfHtml && channels.includes('email')) {
-      console.warn('⚠️ No pdfHtml provided but email channel is selected');
+    } else {
+      console.log('ℹ️ PDF generation skipped:', { 
+        hasPdfHtml: !!pdfHtml, 
+        hasEmailChannel: channels.includes('email'), 
+        includePdf 
+      });
     }
     
     const results = [];
@@ -142,76 +146,78 @@ export const sendAnalyticsInvites = async (req, res) => {
     const formattedBaseUrl = singleBaseUrl.endsWith('/') ? singleBaseUrl : `${singleBaseUrl}/`;
     const inviteLink = `${formattedBaseUrl}forms/${formId}/analytics/login`;
     
-    for (const inviteData of invites) {
-      const email = inviteData.email ? inviteData.email.toLowerCase().trim() : null;
-      const { phone } = inviteData;
-      const otp = generateOTP();
-      
-      // Update or create invite - Use form.id (custom ID) consistently
-      const query = { formId: form.id };
-      if (email) query.email = email;
-      else if (phone) query.phone = phone;
-      else continue;
-
-      await AnalyticsInvite.findOneAndUpdate(
-        query,
-        { 
+    // Process invites in batches to avoid overloading and timeouts
+    const batchSize = 10;
+    for (let i = 0; i < invites.length; i += batchSize) {
+      const batch = invites.slice(i, i + batchSize);
+      const batchPromises = batch.map(async (inviteData) => {
+        const email = inviteData.email ? inviteData.email.toLowerCase().trim() : null;
+        const { phone } = inviteData;
+        const otp = generateOTP();
+        
+        // Create new invite for each request (allows duplicates)
+        await AnalyticsInvite.create({
+          formId: form.id,
           email,
           phone, 
           otp, 
           expiresAt, 
           status: 'sent', 
           tenantId: form.tenantId 
-        },
-        { upsert: true, new: true }
-      );
-      
-      let emailSent = false;
-      let whatsappSent = false;
-      let smsSent = false;
+        });
+        
+        let emailSent = false;
+        let whatsappSent = false;
+        let smsSent = false;
 
-      if (channels.includes('email')) {
-        const mailResult = await mailService.sendAnalyticsInvite(email, form.title, inviteLink, otp, tenant.name, customMessage, false, pdfAttachment, includeLink);
-        emailSent = mailResult.success;
-        if (!emailSent) {
-          console.error(`Failed to send email to ${email}:`, mailResult.error);
+        if (channels.includes('email') && email) {
+          console.log(`📧 Attempting email to: ${email}`);
+          const mailResult = await mailService.sendAnalyticsInvite(email, form.title, inviteLink, otp, tenant.name, customMessage, false, pdfAttachment, includeLink);
+          emailSent = mailResult.success;
+          if (!emailSent) {
+            console.error(`❌ Email failed for ${email}:`, mailResult.error);
+          }
         }
-      }
-      
-      if (channels.includes('whatsapp') && phone) {
-        // Don't send OTP in the initial invite as per user request
-        const waResult = await WhatsAppService.sendAnalyticsInvite(phone, form.title, inviteLink, null, tenant.name, email, customMessage, false, includeLink);
-        whatsappSent = waResult.success;
-        if (!whatsappSent) {
-          console.error(`Failed to send WhatsApp to ${phone}:`, waResult.error);
+        
+        if (channels.includes('whatsapp') && phone) {
+          console.log(`📱 Attempting WhatsApp to: ${phone}`);
+          const waResult = await WhatsAppService.sendAnalyticsInvite(phone, form.title, inviteLink, null, tenant.name, email, customMessage, false, includeLink);
+          whatsappSent = waResult.success;
+          if (!whatsappSent) {
+            console.error(`❌ WhatsApp failed for ${phone}:`, waResult.error);
+          }
         }
-      }
 
-      if (channels.includes('sms') && phone) {
-        const smsResult = await smsService.sendFormInvite(phone, form.title, inviteLink, tenant.name);
-        smsSent = smsResult.success;
-        if (!smsSent) {
-          console.error(`Failed to send SMS to ${phone}:`, smsResult.error);
+        if (channels.includes('sms') && phone) {
+          console.log(`💬 Attempting SMS to: ${phone}`);
+          const smsResult = await smsService.sendFormInvite(phone, form.title, inviteLink, tenant.name);
+          smsSent = smsResult.success;
+          if (!smsSent) {
+            console.error(`❌ SMS failed for ${phone}:`, smsResult.error);
+          }
         }
-      }
-      
-      results.push({ 
-        email, 
-        phone,
-        status: (emailSent || whatsappSent || smsSent) ? 'sent' : 'failed',
-        emailSent,
-        whatsappSent,
-        smsSent,
-        deliveryReport: {
-          email: emailSent ? 'success' : (channels.includes('email') ? 'failed' : 'skipped'),
-          whatsapp: whatsappSent ? 'success' : (channels.includes('whatsapp') && phone ? 'failed' : 'skipped'),
-          sms: smsSent ? 'success' : (channels.includes('sms') && phone ? 'failed' : 'skipped')
-        }
+        
+        return { 
+          email, 
+          phone,
+          status: (emailSent || whatsappSent || smsSent) ? 'sent' : 'failed',
+          emailSent,
+          whatsappSent,
+          smsSent,
+          deliveryReport: {
+            email: emailSent ? 'success' : (channels.includes('email') && email ? 'failed' : 'skipped'),
+            whatsapp: whatsappSent ? 'success' : (channels.includes('whatsapp') && phone ? 'failed' : 'skipped'),
+            sms: smsSent ? 'success' : (channels.includes('sms') && phone ? 'failed' : 'skipped')
+          }
+        };
       });
+
+      const batchResults = await Promise.all(batchPromises);
+      results.push(...batchResults.filter(r => r !== null));
     }
     
     const sentCount = results.filter(r => r.status === 'sent').length;
-    const allSuccessful = results.every(r => 
+    const allSuccessful = results.length > 0 && results.every(r => 
       (!channels.includes('email') || r.emailSent) && 
       (!channels.includes('whatsapp') || !r.phone || r.whatsappSent) &&
       (!channels.includes('sms') || !r.phone || r.smsSent)
@@ -227,7 +233,9 @@ export const sendAnalyticsInvites = async (req, res) => {
       },
       message: allSuccessful 
         ? `Successfully sent ${sentCount} invites` 
-        : (sentCount > 0 ? "Some invites failed to deliver" : "Failed to send any invites")
+        : (sentCount > 0 
+          ? `Sent ${sentCount} invites, but ${results.length - sentCount} failed. Check server logs for details.` 
+          : "Failed to send any invites. This could be due to SMTP/WhatsApp service configuration issues.")
     });
   } catch (error) {
     console.error('Send analytics invites error:', error);

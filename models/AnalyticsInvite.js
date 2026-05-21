@@ -41,9 +41,9 @@ const analyticsInviteSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Ensure uniqueness per form and identity
-analyticsInviteSchema.index({ formId: 1, email: 1 }, { unique: true, sparse: true });
-analyticsInviteSchema.index({ formId: 1, phone: 1 }, { unique: true, sparse: true });
+// Ensure quick lookup per form and identity (Removed unique constraint to allow duplicates)
+analyticsInviteSchema.index({ formId: 1, email: 1 });
+analyticsInviteSchema.index({ formId: 1, phone: 1 });
 
 const AnalyticsInvite = mongoose.model('AnalyticsInvite', analyticsInviteSchema);
 

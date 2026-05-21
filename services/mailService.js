@@ -18,6 +18,10 @@ class MailService {
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS
+      },
+      tls: {
+        ciphers: 'SSLv3',
+        rejectUnauthorized: false // Sometimes needed for corporate SMTP
       }
     };
 
@@ -397,7 +401,8 @@ class MailService {
         html: this._baseWrapper(isOTPRequest ? 'Email Verification' : 'Analytics Access Invited', '#2563eb', '#f5c518', body),
         attachments: pdfAttachment ? [{
           filename: pdfAttachment.filename || 'Analytics_Report.pdf',
-          content: pdfAttachment.content
+          content: pdfAttachment.content,
+          contentType: 'application/pdf'
         }] : []
       };
 
