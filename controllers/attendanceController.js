@@ -22,6 +22,12 @@ const getISTToday = () => {
   return istNow;
 };
 
+const getISTDate = () => {
+  const istNow = getISTNow();
+  istNow.setHours(0, 0, 0, 0);
+  return istNow;
+};
+
 // Helper to convert HH:mm to minutes
 const toMins = (t) => {
   if (!t) return null;
@@ -182,12 +188,12 @@ export const checkIn = async (req, res) => {
 /**
  * Check-out process for inspectors (HRM Logic)
  */
-export const checkOut = async (req, res) => {
+const checkOut = async (req, res) => {
   try {
     const { lat, lng, accuracy } = req.body;
     const inspectorId = req.user._id;
     const tenantId = req.user.tenantId;
-    const now = getISTDate();
+    const now = getISTNow();
     const today = getISTToday();
 
     const attendance = await Attendance.findOne({
@@ -203,11 +209,15 @@ export const checkOut = async (req, res) => {
 
     const place = await reverseGeocode(lat, lng);
 
-    attendance.checkOutTime = new Date();
+    attendance.checkOutTime = now;
     attendance.checkOutLat = lat;
     attendance.checkOutLng = lng;
     attendance.checkOutPlace = place || 'Position Captured';
     attendance.checkOutAccuracy = accuracy;
+
+    // Calculate working hours
+    const workingHoursMs = attendance.checkOutTime - attendance.checkInTime;
+    attendance.workingHours = parseFloat((workingHoursMs / (1000 * 60 * 60)).toFixed(2));
 
     const shiftEndStr = attendance.shiftEndTime || attendance.shift.endTime;
     const currentMins = now.getHours() * 60 + now.getMinutes();
@@ -217,13 +227,13 @@ export const checkOut = async (req, res) => {
       attendance.isEarlyCheckout = true;
     }
 
-    await attendance.save();
-
+    // Update status based on working hours
     if (attendance.workingHours < 4) {
       attendance.status = 'half-day';
       attendance.isHalfDay = true;
-      await attendance.save();
     }
+
+    await attendance.save();
 
     res.json({ success: true, data: attendance });
   } catch (error) {

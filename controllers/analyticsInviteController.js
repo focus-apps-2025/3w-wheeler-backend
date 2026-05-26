@@ -169,13 +169,15 @@ export const sendAnalyticsInvites = async (req, res) => {
         let emailSent = false;
         let whatsappSent = false;
         let smsSent = false;
+        let emailError = null;
 
         if (channels.includes('email') && email) {
           console.log(`📧 Attempting email to: ${email}`);
           const mailResult = await mailService.sendAnalyticsInvite(email, form.title, inviteLink, otp, tenant.name, customMessage, false, pdfAttachment, includeLink);
           emailSent = mailResult.success;
           if (!emailSent) {
-            console.error(`❌ Email failed for ${email}:`, mailResult.error);
+            emailError = mailResult.error;
+            console.error(`❌ Email failed for ${email}:`, emailError);
           }
         }
         
@@ -206,6 +208,7 @@ export const sendAnalyticsInvites = async (req, res) => {
           smsSent,
           deliveryReport: {
             email: emailSent ? 'success' : (channels.includes('email') && email ? 'failed' : 'skipped'),
+            emailError: emailError,
             whatsapp: whatsappSent ? 'success' : (channels.includes('whatsapp') && phone ? 'failed' : 'skipped'),
             sms: smsSent ? 'success' : (channels.includes('sms') && phone ? 'failed' : 'skipped')
           }

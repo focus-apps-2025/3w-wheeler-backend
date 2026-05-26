@@ -1859,7 +1859,7 @@ function groupResponsesByHour(responses) {
 export const getInspectorSummary = async (req, res) => {
   try {
     const { role, _id: userId, tenantId: userTenantId } = req.user;
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, formId } = req.query;
 
     // Build the initial match filter
     let matchFilter = {};
@@ -1871,6 +1871,10 @@ export const getInspectorSummary = async (req, res) => {
       matchFilter.createdBy = new mongoose.Types.ObjectId(userId);
     } else {
       matchFilter.tenantId = new mongoose.Types.ObjectId(userTenantId);
+    }
+
+    if (formId) {
+      matchFilter.questionId = formId;
     }
 
     // Date filtering - handle inclusive days
@@ -2041,12 +2045,14 @@ export const getInspectorSummary = async (req, res) => {
       // Adjust to IST manually to be safe
       const istDate = new Date(d.getTime() + (5.5 * 60 * 60 * 1000));
       const dateIST = istDate.toISOString().split('T')[0];
-      const key = `${creatorId}_${dateIST}`;
+      const formId = r.questionId?.toString() || 'unknown';
+      const key = `${creatorId}_${dateIST}_${formId}`;
 
       if (!inspectorData[key]) {
         inspectorData[key] = {
           userId: creatorId,
           date: dateIST,
+          formId: formId,
           tenantId: r.tenantId,
           totalInspection: 0,
           statusCounts: {
@@ -2079,7 +2085,16 @@ export const getInspectorSummary = async (req, res) => {
     const finalSummary = [];
     const entryKeys = Object.keys(inspectorData);
     const userIds = [...new Set(entryKeys.map(k => inspectorData[k].userId))];
+    const formIdsToFetch = [...new Set(entryKeys.map(k => inspectorData[k].formId))].filter(id => id !== 'unknown');
+    
     const users = await User.find({ _id: { $in: userIds } }).lean();
+    const fetchedForms = await Form.find({ 
+      $or: [
+        { id: { $in: formIdsToFetch } },
+        { _id: { $in: formIdsToFetch.filter(id => mongoose.Types.ObjectId.isValid(id)) } }
+      ]
+    }).lean();
+
     const tenantIds = [...new Set(users.map(u => u.tenantId))];
     const tenants = await Tenant.find({ _id: { $in: tenantIds } }).lean();
     const shifts = await Shift.find({ tenantId: { $in: tenantIds }, isActive: true }).lean();
@@ -2091,11 +2106,13 @@ export const getInspectorSummary = async (req, res) => {
 
       const tenant = tenants.find(t => t._id.toString() === user.tenantId?.toString());
       const shift = shifts.find(s => s.assignedInspectors.some(id => id.toString() === stats.userId));
+      const formInfo = fetchedForms.find(f => f.id === stats.formId || f._id.toString() === stats.formId);
 
       finalSummary.push({
         tenantName: tenant ? (tenant.companyName || tenant.name) : 'N/A',
         date: stats.date,
         shift: shift ? shift.displayName : 'N/A',
+        formTitle: formInfo ? formInfo.title : 'N/A',
         qcInspector: `${user.firstName} ${user.lastName}`,
         totalInspection: stats.totalInspection,
         statusCounts: stats.statusCounts
@@ -2190,7 +2207,7 @@ export const getMyReviewStats = async (req, res) => {
 
 export const getPerformanceTable = async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, formId } = req.query;
     const query = { ...req.tenantFilter };
 
     // Get all users in scope
@@ -2203,14 +2220,19 @@ export const getPerformanceTable = async (req, res) => {
     const end = endDate ? new Date(endDate) : new Date();
     if (endDate) end.setHours(23, 59, 59, 999);
 
+    // Filter responses by formId if provided
+    const responseBaseFilter = {
+      ...req.tenantFilter,
+      createdAt: { $gte: start, $lte: end }
+    };
+    
+    if (formId) {
+      responseBaseFilter.questionId = formId;
+    }
+
     // Aggregate submissions for all users
     const submissionStats = await Response.aggregate([
-      { 
-        $match: { 
-          ...req.tenantFilter,
-          createdAt: { $gte: start, $lte: end }
-        } 
-      },
+      { $match: responseBaseFilter },
       {
         $group: {
           _id: '$createdBy',
@@ -2223,9 +2245,8 @@ export const getPerformanceTable = async (req, res) => {
     const dispatchedStats = await Response.aggregate([
       { 
         $match: { 
-          ...req.tenantFilter,
-          assignedTo: { $ne: null }, // Only count responses that are assigned/dispatched
-          createdAt: { $gte: start, $lte: end }
+          ...responseBaseFilter,
+          assignedTo: { $ne: null }
         } 
       },
       {
@@ -2236,14 +2257,22 @@ export const getPerformanceTable = async (req, res) => {
       }
     ]);
 
-    // Aggregate review stats for all users
+    // Aggregate review stats
+    // If formId is provided, we need to filter reviews by responseId associated with that form
+    let reviewMatchFilter = {
+      ...req.tenantFilter,
+      createdAt: { $gte: start, $lte: end }
+    };
+
+    if (formId) {
+      const responseIds = await Response.find({ questionId: formId }).distinct('_id');
+      const responseIdsStr = await Response.find({ questionId: formId }).distinct('id');
+      const allPossibleResponseIds = [...new Set([...responseIds.map(id => id.toString()), ...responseIdsStr])];
+      reviewMatchFilter.responseId = { $in: allPossibleResponseIds };
+    }
+
     const reviewStats = await Review.aggregate([
-      { 
-        $match: { 
-          ...req.tenantFilter,
-          createdAt: { $gte: start, $lte: end }
-        } 
-      },
+      { $match: reviewMatchFilter },
       {
         $group: {
           _id: '$submitterId',
