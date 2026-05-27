@@ -188,7 +188,7 @@ export const checkIn = async (req, res) => {
 /**
  * Check-out process for inspectors (HRM Logic)
  */
-const checkOut = async (req, res) => {
+export const checkOut = async (req, res) => {
   try {
     const { lat, lng, accuracy } = req.body;
     const inspectorId = req.user._id;
