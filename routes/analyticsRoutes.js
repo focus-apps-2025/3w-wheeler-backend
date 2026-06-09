@@ -12,7 +12,8 @@ import {
   getResponseTimeAnalytics,
   getInspectorSummary,
   getMyReviewStats,
-  getPerformanceTable
+  getPerformanceTable,
+  getOverallAnalytics
 } from '../controllers/analyticsController.js';
 import { authenticate, adminOnly, superAdminOnly, inspectorOrAdmin, authenticateGuest } from '../middleware/auth.js';
 import { addTenantFilter } from '../middleware/tenantIsolation.js';
@@ -46,6 +47,7 @@ router.use(addTenantFilter);
 
 // Analytics routes
 router.get('/dashboard', inspectorOrAdmin, getDashboardStats);
+router.get('/overall', inspectorOrAdmin, getOverallAnalytics);
 // router.get('/form/:formId', inspectorOrAdmin, getFormAnalytics); // Moved above
 router.get('/users', adminOnly, getUserAnalytics);
 router.get('/admin/:adminId/performance', getAdminPerformance);

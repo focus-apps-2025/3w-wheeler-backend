@@ -2340,3 +2340,315 @@ export const getPerformanceTable = async (req, res) => {
 
 
 
+
+// OVERALL ANALYTICS
+
+export const getOverallAnalytics = async (req, res) => {
+  try {
+    const { startDate, endDate, formIds } = req.query;
+    
+    // Base match with tenant filtering
+    const matchFilter = { ...req.tenantFilter };
+
+    // Apply optional formIds filter
+    if (formIds) {
+      const ids = formIds.split(',');
+      if (!ids.includes('NONE_SELECTED') && ids.length > 0) {
+        matchFilter.questionId = { $in: ids };
+      }
+    }
+
+    // Apply optional date filter
+    if (startDate || endDate) {
+      matchFilter.createdAt = {};
+      if (startDate) {
+        const s = new Date(startDate);
+        s.setHours(0, 0, 0, 0);
+        matchFilter.createdAt.$gte = s;
+      }
+      if (endDate) {
+        const e = new Date(endDate);
+        e.setHours(23, 59, 59, 999);
+        matchFilter.createdAt.$lte = e;
+      }
+    }
+
+    // Fetch responses for this query
+    const responses = await Response.find(matchFilter).sort({ createdAt: -1 }).lean();
+    
+    if (!responses || responses.length === 0) {
+      return res.json({
+        success: true,
+        data: {
+          responses: [],
+          uniqueForms: [],
+          summaryTotals: { total: 0, yesCount: 0, noCount: 0, naCount: 0 },
+          sectionStats: [],
+          totalResponses: 0,
+          totalYes: 0,
+          totalQuestions: 0,
+          overallScore: "0.0",
+          dailyTrend: [],
+          stats: { yes: 0, no: 0, na: 0, accepted: 0, rejected: 0, rework: 0 }
+        }
+      });
+    }
+
+    // Extract formIds to get form details
+    const uniqueFormIds = [...new Set(responses.map(r => r.questionId).filter(Boolean))];
+    const forms = await Form.find({ 
+      $or: [
+        { id: { $in: uniqueFormIds } },
+        { _id: { $in: uniqueFormIds.filter(id => mongoose.Types.ObjectId.isValid(id)) } }
+      ]
+    }).lean();
+
+    const formMap = {};
+    const dealerQuestionMap = new Map();
+
+    forms.forEach(form => {
+      const fid = form.id || form._id.toString();
+      formMap[fid] = form;
+      
+      // Identify dealer questions
+      if (form.sections?.length > 0) {
+        const first = form.sections[0];
+        if (first.questions?.length > 0) {
+          for (const q of first.questions) {
+            const txt = (q.text || q.label || "").toLowerCase();
+            if (
+              txt.includes("dealer") ||
+              txt.includes("distributor") ||
+              txt.includes("store") ||
+              txt.includes("business")
+            ) {
+              dealerQuestionMap.set(fid, q.id);
+              break;
+            }
+          }
+        }
+      }
+    });
+
+    // Helper functions replicated from frontend logic
+    const extractYesNoValues = (value) => {
+      if (value === null || value === undefined) return [];
+      if (typeof value === "string") {
+        const n = value.trim().toLowerCase();
+        return n ? [n] : [];
+      }
+      if (typeof value === "boolean") return [value ? "yes" : "no"];
+      if (Array.isArray(value)) return value.flatMap(extractYesNoValues);
+      if (typeof value === "object") return Object.values(value).flatMap(extractYesNoValues);
+      return [];
+    };
+
+    const computeResponseStats = (answers) => {
+      let yes = 0, no = 0, na = 0, accepted = 0, rejected = 0, rework = 0;
+      const values = extractYesNoValues(answers);
+      values.forEach((val) => {
+        if (val === "yes") yes++;
+        else if (val === "no") no++;
+        else if (val === "na" || val === "n/a" || val === "n.a" || val === "n.a.") na++;
+        else if (val === "accepted" || val === "accept") accepted++;
+        else if (val === "rejected" || val === "reject") rejected++;
+        else if (val === "rework") rework++;
+      });
+      return { yes, no, na, accepted, rejected, rework };
+    };
+
+    const collectYesNoQuestionIds = (form) => {
+      const ids = new Set();
+      const processQuestion = (q) => {
+        if (!q) return;
+        if (q.type === "yesNoNA" && q.id) ids.add(q.id);
+        q.followUpQuestions?.forEach(processQuestion);
+      };
+      form.sections?.forEach((s) => s.questions?.forEach(processQuestion));
+      return Array.from(ids);
+    };
+
+    const computeYesNoScore = (answers, form) => {
+      const ids = collectYesNoQuestionIds(form);
+      if (!ids.length) return { yes: 0, total: 0 };
+      let yes = 0;
+      ids.forEach((id) => {
+        if (extractYesNoValues(answers?.[id]).includes("yes")) yes++;
+      });
+      return { yes, total: ids.length };
+    };
+
+    const renderAnswerDisplay = (value) => {
+      if (value === null || value === undefined) return "";
+      if (typeof value === "string") return value.trim();
+      if (Array.isArray(value)) return value.map(renderAnswerDisplay).filter(Boolean).join(", ");
+      if (typeof value === "object") {
+        const s = value.value || value.text || value.label || "";
+        return s ? String(s) : "";
+      }
+      return String(value);
+    };
+
+    const extractDealer = (response, form) => {
+      if (!form || !response.answers) return { name: null, rank: null };
+      const fid = form._id?.toString() || form.id;
+      if (!fid) return { name: null, rank: null };
+      const dqid = dealerQuestionMap.get(fid);
+      const answersObj = response.answers instanceof Map ? Object.fromEntries(response.answers) : response.answers;
+      
+      const hasAnswerValue = (v) => {
+        if (v === null || v === undefined) return false;
+        if (typeof v === 'string') return v.trim() !== '';
+        if (Array.isArray(v)) return v.length > 0;
+        if (typeof v === 'object') return Object.keys(v).length > 0;
+        return true;
+      };
+
+      if (dqid) {
+        const ans = answersObj[dqid];
+        if (ans && hasAnswerValue(ans)) {
+          return { name: renderAnswerDisplay(ans), rank: response.responseRanks?.[dqid] || null };
+        }
+      }
+      if (form.sections?.length > 0) {
+        const first = form.sections[0];
+        if (first.questions?.length > 0) {
+          for (const q of first.questions) {
+            const ans = answersObj[q.id];
+            if (ans && hasAnswerValue(ans)) {
+              return { name: renderAnswerDisplay(ans), rank: response.responseRanks?.[q.id] || null };
+            }
+          }
+        }
+      }
+      return { name: null, rank: null };
+    };
+
+    // Enrich responses
+    const enrichedResponses = responses.map(r => {
+      const fid = r.questionId;
+      const form = formMap[fid];
+      const dealer = extractDealer(r, form);
+      const answersObj = r.answers instanceof Map ? Object.fromEntries(r.answers) : r.answers;
+
+      let firstQ = "Unknown Question";
+      let firstA = "N/A";
+      if (form && form.sections?.length > 0) {
+        for (const section of form.sections) {
+          if (section.questions?.length > 0) {
+            const q = section.questions[0];
+            firstQ = q.text || q.label || q.id || "Unknown Question";
+            firstA = renderAnswerDisplay(answersObj?.[q.id]) || "N/A";
+            break;
+          }
+        }
+      } else if (answersObj && Object.keys(answersObj).length > 0) {
+        const firstKey = Object.keys(answersObj)[0];
+        firstQ = firstKey;
+        firstA = renderAnswerDisplay(answersObj[firstKey]) || "N/A";
+      }
+
+      return {
+        _id: r._id,
+        id: r.id,
+        questionId: r.questionId,
+        formId: r.formId,
+        parentResponseId: r.parentResponseId,
+        answers: answersObj,
+        responseRanks: r.responseRanks,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+        status: r.status,
+        submissionMetadata: r.submissionMetadata,
+        formTitle: form?.title || "Unknown Form",
+        yesNoScore: form ? computeYesNoScore(answersObj, form) : undefined,
+        stats: computeResponseStats(answersObj),
+        dealerName: dealer.name || "Unknown",
+        dealerRank: dealer.rank,
+        firstQuestionText: firstQ,
+        firstAnswerValue: firstA,
+      };
+    });
+
+    const totalYes = enrichedResponses.reduce((s, r) => s + (r.yesNoScore?.yes || 0), 0);
+    const totalQuestions = enrichedResponses.reduce((s, r) => s + (r.yesNoScore?.total || 0), 0);
+    const overallScore = totalQuestions > 0 ? ((totalYes / totalQuestions) * 100).toFixed(1) : "0.0";
+
+    const sectionStatsMap = new Map();
+    enrichedResponses.forEach((r) => {
+      if (!r.stats) return;
+      const key = r.questionId || r.formId || "";
+      const title = r.formTitle;
+      if (!key) return;
+      if (!sectionStatsMap.has(key)) {
+        sectionStatsMap.set(key, {
+          id: key, title, yes: 0, no: 0, na: 0, accepted: 0, rejected: 0, rework: 0, total: 0
+        });
+      }
+      const s = sectionStatsMap.get(key);
+      s.yes += r.stats.yes;
+      s.no += r.stats.no;
+      s.na += r.stats.na;
+      s.accepted += r.stats.accepted;
+      s.rejected += r.stats.rejected;
+      s.rework += r.stats.rework;
+      s.total += r.stats.yes + r.stats.no + r.stats.na + r.stats.accepted + r.stats.rejected + r.stats.rework;
+    });
+
+    const sectionStats = Array.from(sectionStatsMap.values());
+    
+    let globalStats = { yes: 0, no: 0, na: 0, accepted: 0, rejected: 0, rework: 0 };
+    enrichedResponses.forEach(r => {
+      if (r.stats) {
+        globalStats.yes += r.stats.yes;
+        globalStats.no += r.stats.no;
+        globalStats.na += r.stats.na;
+        globalStats.accepted += r.stats.accepted;
+        globalStats.rejected += r.stats.rejected;
+        globalStats.rework += r.stats.rework;
+      }
+    });
+
+    const summaryTotals = sectionStats.reduce(
+      (acc, s) => ({
+        total: acc.total + s.total,
+        yesCount: acc.yesCount + s.yes + s.accepted,
+        noCount: acc.noCount + s.no + s.rejected,
+        naCount: acc.naCount + s.na + s.rework,
+      }),
+      { total: 0, yesCount: 0, noCount: 0, naCount: 0 }
+    );
+
+    const dailyTrend = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const label = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      const dateStr = d.toDateString();
+      const count = enrichedResponses.filter(r => new Date(r.createdAt).toDateString() === dateStr).length;
+      dailyTrend.push({ date: label, count });
+    }
+
+    const uniqueForms = forms.map(f => ({ id: f.id || f._id.toString(), title: f.title }));
+
+    res.json({
+      success: true,
+      data: {
+        responses: enrichedResponses, // Return all data for Customer Requests grouping
+        uniqueForms,
+        summaryTotals,
+        sectionStats,
+        totalResponses: enrichedResponses.length,
+        totalYes,
+        totalQuestions,
+        overallScore,
+        dailyTrend,
+        stats: globalStats
+      }
+    });
+
+  } catch (error) {
+    console.error('getOverallAnalytics error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
