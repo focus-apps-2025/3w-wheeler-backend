@@ -9,18 +9,18 @@ const router = express.Router();
 // Generate PDF with format option
 router.post('/generate', async (req, res) => {
   const startTime = Date.now();
-  
+
   try {
-    let { 
-      htmlContent, 
+    let {
+      htmlContent,
       filename = 'report.pdf',
       format = 'custom', // 'custom' or 'a4'
       compressed = false
     } = req.body;
 
     if (!htmlContent) {
-      return res.status(400).json({ 
-        error: 'HTML content is required' 
+      return res.status(400).json({
+        error: 'HTML content is required'
       });
     }
 
@@ -38,7 +38,7 @@ router.post('/generate', async (req, res) => {
         console.log(`✅ Decompressed: ${(htmlContent.length / 1024).toFixed(2)} KB`);
       } catch (decompressError) {
         console.error('❌ Decompression failed:', decompressError.message);
-        return res.status(400).json({ 
+        return res.status(400).json({
           error: 'Failed to decompress content',
           details: decompressError.message
         });
@@ -49,12 +49,12 @@ router.post('/generate', async (req, res) => {
     console.log(`📊 Starting PDF generation... (Memory usage: ${Math.round(used * 100) / 100} MB)`);
     console.log(`📄 Content length: ${htmlContent.length} characters`);
     console.log(`📐 Format: ${format}`);
-    
+
     // For very large content, add warnings
     if (htmlContent.length > 1000000) {
       console.log(`⚠️ Large document detected: ${(htmlContent.length / 1024 / 1024).toFixed(2)} MB`);
     }
-    
+
     // Choose generation method based on format
     let pdfBuffer;
     try {
@@ -75,17 +75,17 @@ router.post('/generate', async (req, res) => {
       console.error('❌ PDF Service Error:', serviceError);
       throw serviceError; // Re-throw to be caught by outer catch
     }
-    
+
     const duration = (Date.now() - startTime) / 1000;
     const usedAfter = process.memoryUsage().heapUsed / 1024 / 1024;
     console.log(`✅ PDF generated in ${duration.toFixed(2)}s (Memory usage: ${Math.round(usedAfter * 100) / 100} MB)`);
-    
+
     // Sanitize filename for Content-Disposition header
     // 1. Basic ASCII-only filename for older clients
     const safeFilename = filename.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, "'");
     // 2. UTF-8 encoded filename for modern clients (RFC 6266)
     const encodedFilename = encodeURIComponent(filename);
-    
+
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`);
     res.setHeader('Content-Length', pdfBuffer.length);
@@ -98,11 +98,11 @@ router.post('/generate', async (req, res) => {
     const duration = (Date.now() - startTime) / 1000;
     console.error(`❌ PDF generation failed after ${duration}s:`, error.message);
     console.error('Stack trace:', error.stack);
-    
+
     // Provide more helpful error messages
     let errorMessage = error.message;
     let suggestion = '';
-    
+
     if (error.message.includes('ENOENT') || error.message.includes('not found')) {
       suggestion = 'Chrome/Chromium binary not found. Make sure Puppeteer is properly installed.';
     } else if (error.message.includes('Timeout')) {
@@ -112,8 +112,8 @@ router.post('/generate', async (req, res) => {
     } else if (error.message.includes('ENOMEM') || error.message.includes('memory')) {
       suggestion = 'Out of memory. Please try with smaller content.';
     }
-    
-    res.status(500).json({ 
+
+    res.status(500).json({
       error: 'Failed to generate PDF',
       details: errorMessage,
       suggestion: suggestion,
@@ -178,23 +178,68 @@ router.post('/test-custom-format', async (req, res) => {
         </body>
       </html>
     `;
-    
+
     const pdfBuffer = await pdfService.generatePDFWithCustomFormat(testHTML);
-    
+
     res.set({
       'Content-Type': 'application/pdf',
       'Content-Disposition': 'inline; filename="custom-format-test.pdf"'
     });
-    
+
     res.send(pdfBuffer);
-    
+
   } catch (error) {
     console.error('❌ Test failed:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Test failed',
-      details: error.message 
+      details: error.message
     });
   }
 });
+// Add this new route after your existing routes
+router.post('/generate-overall', async (req, res) => {
+  const startTime = Date.now();
 
+  try {
+    let {
+      htmlContent,
+      filename = 'overall-report.pdf'
+    } = req.body;
+
+    if (!htmlContent) {
+      return res.status(400).json({
+        error: 'HTML content is required'
+      });
+    }
+
+    console.log('📥 Received Overall PDF request');
+    console.log(`📄 Content length: ${htmlContent.length} characters`);
+
+    const used = process.memoryUsage().heapUsed / 1024 / 1024;
+    console.log(`📊 Starting PDF generation... (Memory usage: ${Math.round(used * 100) / 100} MB)`);
+
+    // Generate PDF with A4 Portrait format
+    const pdfBuffer = await pdfService.generatePDFWithA4Portrait(htmlContent);
+
+    const duration = (Date.now() - startTime) / 1000;
+    console.log(`✅ Overall PDF generated in ${duration.toFixed(2)}s`);
+
+    const safeFilename = filename.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, "'");
+    const encodedFilename = encodeURIComponent(filename);
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    res.setHeader('X-Generation-Time', `${duration}s`);
+
+    res.send(pdfBuffer);
+
+  } catch (error) {
+    console.error(`❌ Overall PDF generation failed:`, error.message);
+    res.status(500).json({
+      error: 'Failed to generate PDF',
+      details: error.message
+    });
+  }
+});
 export default router;
