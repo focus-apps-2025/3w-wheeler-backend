@@ -2114,6 +2114,10 @@ export const getInspectorSummary = async (req, res) => {
         shift: shift ? shift.displayName : 'N/A',
         formTitle: formInfo ? formInfo.title : 'N/A',
         qcInspector: `${user.firstName} ${user.lastName}`,
+        username: user.username,
+        email: user.email,
+        isActive: user.isActive,
+        status: user.status,
         totalInspection: stats.totalInspection,
         statusCounts: stats.statusCounts
       });
@@ -2213,7 +2217,7 @@ export const getPerformanceTable = async (req, res) => {
     // Get all users in scope
     const users = await User.find(query)
       .populate('tenantId', 'name companyName')
-      .select('firstName lastName username email role tenantId');
+      .select('firstName lastName username email role tenantId isActive status');
 
     // Date range for aggregations
     const start = startDate ? new Date(startDate) : new Date(0);

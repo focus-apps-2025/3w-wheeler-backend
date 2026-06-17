@@ -39,6 +39,10 @@ const tenantSchema = new mongoose.Schema({
     companyEmail: String,
     companyPhone: String,
     address: String,
+    showCustomerPortal: {
+      type: Boolean,
+      default: false
+    },
     timezone: {
       type: String,
       default: 'UTC'

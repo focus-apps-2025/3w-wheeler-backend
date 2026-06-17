@@ -266,10 +266,26 @@ export const login = async (req, res) => {
 
 export const getProfile = async (req, res) => {
   try {
+    let tenantData = null;
+    if (req.user.tenantId) {
+      const tenant = await Tenant.findById(req.user.tenantId).select('name slug companyName settings subscription');
+      if (tenant) {
+        tenantData = {
+          id: tenant._id,
+          _id: tenant._id,
+          name: tenant.name,
+          slug: tenant.slug,
+          companyName: tenant.companyName,
+          settings: tenant.settings,
+          subscription: tenant.subscription
+        };
+      }
+    }
     res.json({
       success: true,
       data: {
-        user: req.user
+        user: req.user,
+        ...(tenantData && { tenant: tenantData })
       }
     });
   } catch (error) {
