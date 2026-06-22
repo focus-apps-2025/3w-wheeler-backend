@@ -14,7 +14,8 @@ import {
   updateGlobalDefaultLogo,
   removeGlobalDefaultLogo,
   getOfficeLocation,
-  updateOfficeLocation
+  updateOfficeLocation,
+  getCurrentTenant
 } from '../controllers/tenantController.js';
 import { authenticate, superAdminOnly, adminOnly } from '../middleware/auth.js';
 import { addTenantFilter } from '../middleware/tenantIsolation.js';
@@ -47,6 +48,9 @@ router.delete('/:id', superAdminOnly, deleteTenant);
 router.get('/:id/stats', adminOnly, getTenantStats);
 router.post('/:tenantId/add-admin', adminOnly, addAdminToTenant);
 router.delete('/:tenantId/remove-admin/:adminId', adminOnly, removeAdminFromTenant);
+
+// Get current user's tenant (for refreshing tenant data in frontend)
+router.get('/me', getCurrentTenant);
 
 // Global default logo management (SuperAdmin only)
 router.get('/global/default-logo', superAdminOnly, getGlobalDefaultLogo);

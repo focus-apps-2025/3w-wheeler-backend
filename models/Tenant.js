@@ -76,6 +76,15 @@ const tenantSchema = new mongoose.Schema({
       default: 50
     }
   },
+  internalTrackingEnabled: {
+    type: Boolean,
+    default: false
+  },
+  allowedTenantIds: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Tenant',
+    default: []
+  }],
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'

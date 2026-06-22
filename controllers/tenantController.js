@@ -210,6 +210,47 @@ export const getTenantsMinimal = async (req, res) => {
   }
 };
 
+// Get current user's tenant (for refreshing tenant data in frontend)
+export const getCurrentTenant = async (req, res) => {
+  try {
+    if (!req.user || !req.user.tenantId) {
+      return res.json({
+        success: true,
+        data: { tenant: null }
+      });
+    }
+
+    const tenant = await Tenant.findById(req.user.tenantId)
+      .select('name slug companyName settings subscription internalTrackingEnabled allowedTenantIds')
+      .lean();
+
+    if (!tenant) {
+      return res.json({
+        success: true,
+        data: { tenant: null }
+      });
+    }
+
+    const tenantResponse = {
+      ...tenant,
+      id: tenant._id.toString(),
+      _id: tenant._id.toString(),
+      allowedTenantIds: (tenant.allowedTenantIds || []).map((id) => id.toString())
+    };
+
+    res.json({
+      success: true,
+      data: { tenant: tenantResponse }
+    });
+  } catch (error) {
+    console.error('Get current tenant error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
 // Update tenant
 export const getTenantBySlug = async (req, res) => {
   try {

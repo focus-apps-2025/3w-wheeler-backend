@@ -36,6 +36,7 @@ import attendanceRoutes from './routes/attendanceRoutes.js';
 import otpRoutes from './routes/otpRoutes.js';
 import hrRoutes from './routes/hrRoutes.js';
 import messageRoutes from './routes/messageRoutes.js';
+import internalTrackingRoutes from './routes/internalTrackingRoutes.js';
 
 // Connect to database
 await connectDB();
@@ -140,6 +141,7 @@ app.use("/api/roles", roleRoutes);
 app.use("/api/mail", mailRoutes);
 app.use("/api/whatsapp", whatsappRoutes);
 app.use("/api/tenants", tenantRoutes);
+app.use("/api/internal-tracking", internalTrackingRoutes);
 app.use("/api/parameters", parameterRoutes);
 app.use('/api/pdf', pdfRoutes);
 app.use('/api/forms', formInviteRoutes);
