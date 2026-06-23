@@ -142,28 +142,80 @@ export const getInternalTrackingPerformance = async (req, res) => {
   try {
     const user = req.user;
 
-    // ── SuperAdmin: see all tenants ──────────────────────────────────────────
+    // ── PAGINATION PARAMS ──────────────────────────────────────────────────
+    const page = parseInt(req.query.page) || 1;
+    const limit = Math.min(parseInt(req.query.limit) || 10, 50); // Max 50 per page
+    const skip = (page - 1) * limit;
+    const search = req.query.search || '';
+    const sortBy = req.query.sortBy || 'name';
+    const sortOrder = req.query.sortOrder === 'desc' ? -1 : 1;
+
+    // ── SUPERADMIN: see all tenants with pagination ──────────────────────
     if (user.role === 'superadmin') {
-      const tenants = await Tenant.find({ isActive: true })
+      // Build search filter
+      const searchFilter = search ? {
+        $or: [
+          { name: { $regex: search, $options: 'i' } },
+          { companyName: { $regex: search, $options: 'i' } },
+          { slug: { $regex: search, $options: 'i' } }
+        ]
+      } : {};
+
+      // Get total count for pagination
+      const totalTenants = await Tenant.countDocuments({
+        isActive: true,
+        ...searchFilter
+      });
+
+      // Get paginated tenants
+      const tenants = await Tenant.find({
+        isActive: true,
+        ...searchFilter
+      })
         .select('_id name companyName slug internalTrackingEnabled allowedTenantIds')
+        .sort({ [sortBy]: sortOrder })
+        .skip(skip)
+        .limit(limit)
         .lean();
 
+      // Get users for these tenants only (not all tenants!)
       const tenantIds = tenants.map(t => t._id);
       const users = await User.find({
         tenantId: { $in: tenantIds },
         role: { $in: ['admin', 'subadmin', 'inspector'] }
-      }).select('_id tenantId role performanceScore name email').lean();
+      })
+        .select('_id tenantId role performanceScore name email')
+        .lean();
+
+      // Calculate performance scores per tenant
+      const tenantPerformanceMap = {};
+      users.forEach(u => {
+        const tenantId = toStr(u.tenantId);
+        if (!tenantPerformanceMap[tenantId]) {
+          tenantPerformanceMap[tenantId] = { total: 0, count: 0 };
+        }
+        tenantPerformanceMap[tenantId].total += (u.performanceScore || 0);
+        tenantPerformanceMap[tenantId].count += 1;
+      });
+
+      const enrichedTenants = tenants.map(t => {
+        const tId = toStr(t._id);
+        const perf = tenantPerformanceMap[tId] || { total: 0, count: 0 };
+        return {
+          _id: tId,
+          name: t.name,
+          companyName: t.companyName,
+          slug: t.slug,
+          internalTrackingEnabled: t.internalTrackingEnabled || false,
+          performanceScore: perf.count > 0 ? Math.round(perf.total / perf.count) : 0,
+          userCount: perf.count,
+        };
+      });
 
       return res.json({
         success: true,
         data: {
-          tenants: tenants.map(t => ({
-            _id: toStr(t._id),
-            name: t.name,
-            companyName: t.companyName,
-            slug: t.slug,
-            internalTrackingEnabled: t.internalTrackingEnabled || false,
-          })),
+          tenants: enrichedTenants,
           users: users.map(u => ({
             _id: toStr(u._id),
             tenantId: toStr(u.tenantId),
@@ -172,20 +224,24 @@ export const getInternalTrackingPerformance = async (req, res) => {
             name: u.name,
             email: u.email,
           })),
+          pagination: {
+            page,
+            limit,
+            total: totalTenants,
+            totalPages: Math.ceil(totalTenants / limit),
+            hasNextPage: page < Math.ceil(totalTenants / limit),
+            hasPrevPage: page > 1,
+          }
         }
       });
     }
 
-    // ── Tenant admin: only allowed tenants ──────────────────────────────────
+    // ── TENANT ADMIN: only allowed tenants with pagination ────────────────
     if (!user.tenantId) {
       return res.status(403).json({ success: false, message: 'No tenant associated with this user.' });
     }
 
     const currentTenant = await Tenant.findById(user.tenantId).lean();
-
-    console.log('[InternalTracking] tenant:', currentTenant?.slug,
-      '| enabled:', currentTenant?.internalTrackingEnabled,
-      '| allowedIds count:', currentTenant?.allowedTenantIds?.length ?? 0);
 
     if (!currentTenant) {
       return res.status(403).json({ success: false, message: 'Tenant not found.' });
@@ -201,11 +257,24 @@ export const getInternalTrackingPerformance = async (req, res) => {
     const rawAllowedIds = currentTenant.allowedTenantIds || [];
 
     if (rawAllowedIds.length === 0) {
-      // Enabled but no tenants assigned yet — return empty, NOT 403
-      return res.json({ success: true, data: { tenants: [], users: [] } });
+      return res.json({
+        success: true,
+        data: {
+          tenants: [],
+          users: [],
+          pagination: {
+            page,
+            limit,
+            total: 0,
+            totalPages: 0,
+            hasNextPage: false,
+            hasPrevPage: false,
+          }
+        }
+      });
     }
 
-    // Safely convert every stored id (ObjectId / string / BSON) to ObjectId
+    // Convert allowed IDs to ObjectIds
     const targetObjectIds = rawAllowedIds.map(id => {
       try {
         const str = toStr(id);
@@ -216,37 +285,84 @@ export const getInternalTrackingPerformance = async (req, res) => {
       }
     }).filter(Boolean);
 
-    console.log('[InternalTracking] querying tenants:', targetObjectIds.map(toStr));
+    // Build search filter for allowed tenants
+    const searchFilter = search ? {
+      _id: { $in: targetObjectIds },
+      isActive: true,
+      $or: [
+        { name: { $regex: search, $options: 'i' } },
+        { companyName: { $regex: search, $options: 'i' } },
+        { slug: { $regex: search, $options: 'i' } }
+      ]
+    } : {
+      _id: { $in: targetObjectIds },
+      isActive: true
+    };
 
-    const [targetTenants, users] = await Promise.all([
-      Tenant.find({ _id: { $in: targetObjectIds }, isActive: true })
-        .select('_id name companyName slug')
-        .lean(),
-      User.find({
-        tenantId: { $in: targetObjectIds },
-        role: { $in: ['admin', 'subadmin', 'inspector'] },
-      }).select('_id tenantId role performanceScore name email').lean(),
-    ]);
+    // Get total count for pagination
+    const totalAllowedTenants = await Tenant.countDocuments(searchFilter);
 
-    console.log('[InternalTracking] found', targetTenants.length, 'tenants,', users.length, 'users');
+    // Get paginated allowed tenants
+    const targetTenants = await Tenant.find(searchFilter)
+      .select('_id name companyName slug')
+      .sort({ [sortBy]: sortOrder })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    const allowedTenantIds = targetTenants.map(t => t._id);
+
+    const users = await User.find({
+      tenantId: { $in: allowedTenantIds },
+      role: { $in: ['admin', 'subadmin', 'inspector'] },
+    })
+      .select('_id tenantId role performanceScore name email')
+      .lean();
+
+    // Calculate performance scores per tenant
+    const tenantPerfMap = {};
+    users.forEach(u => {
+      const tenantId = toStr(u.tenantId);
+      if (!tenantPerfMap[tenantId]) {
+        tenantPerfMap[tenantId] = { total: 0, count: 0 };
+      }
+      tenantPerfMap[tenantId].total += (u.performanceScore || 0);
+      tenantPerfMap[tenantId].count += 1;
+    });
+
+    const enrichedAllowedTenants = targetTenants.map(t => {
+      const tId = toStr(t._id);
+      const perf = tenantPerfMap[tId] || { total: 0, count: 0 };
+      return {
+        _id: tId,
+        name: t.name,
+        companyName: t.companyName,
+        slug: t.slug,
+        performanceScore: perf.count > 0 ? Math.round(perf.total / perf.count) : 0,
+        userCount: perf.count,
+      };
+    });
 
     res.json({
       success: true,
       data: {
-        tenants: targetTenants.map(t => ({
-          _id: toStr(t._id),
-          name: t.name,
-          companyName: t.companyName,
-          slug: t.slug,
-        })),
+        tenants: enrichedAllowedTenants,
         users: users.map(u => ({
           _id: toStr(u._id),
-          tenantId: toStr(u.tenantId),   // ← always a plain string now
+          tenantId: toStr(u.tenantId),
           role: u.role,
           performanceScore: u.performanceScore || 0,
           name: u.name,
           email: u.email,
         })),
+        pagination: {
+          page,
+          limit,
+          total: totalAllowedTenants,
+          totalPages: Math.ceil(totalAllowedTenants / limit),
+          hasNextPage: page < Math.ceil(totalAllowedTenants / limit),
+          hasPrevPage: page > 1,
+        }
       }
     });
   } catch (error) {

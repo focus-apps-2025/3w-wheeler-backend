@@ -343,7 +343,7 @@ export const createForm = async (req, res) => {
 
 export const getAllForms = async (req, res) => {
   try {
-    const { page = 1, limit = 1000, search, isVisible, isActive, createdBy, isGlobal } = req.query;
+    const { page = 1, limit = 50, search, isVisible, isActive, createdBy, isGlobal } = req.query;
 
     let query = { ...req.tenantFilter };
 
@@ -436,84 +436,29 @@ export const getAllForms = async (req, res) => {
       .limit(options.limit * 1)
       .skip((options.page - 1) * options.limit);
 
-    console.log('[getAllForms] Found forms count:', forms.length);
-    if (forms.length > 0) {
-      forms.forEach(f => {
-        console.log(`[getAllForms] Form: "${f.title}", id: "${f.id}", _id: "${f._id}"`);
-      });
-    }
-
     const total = await Form.countDocuments(query);
 
+    // Fast response count using aggregation pipeline
     const formIdsForCounts = forms
       .map((form) => form.id || (form._id ? form._id.toString() : null))
       .filter((id) => Boolean(id));
 
-    let responseCountsMap = new Map();
-    if (formIdsForCounts.length > 0) {
-      // Determine current user's tenant ID for chassis filtering
-      const currentTenantId = req.user?.tenantId?.toString();
+    const responseCounts = formIdsForCounts.length > 0
+      ? await Response.aggregate([
+          { $match: { questionId: { $in: formIdsForCounts }, isSectionSubmit: { $ne: true } } },
+          { $group: { _id: "$questionId", count: { $sum: 1 } } }
+        ])
+      : [];
 
-      // Fetch all responses for these forms (no tenant filter)
-      const allResponses = await Response.find({
-        questionId: { $in: formIdsForCounts },
-        isSectionSubmit: { $ne: true }
-      }).select('questionId answers').lean();
-
-      // Count responses per form, with chassis filtering for shared forms
-      for (const form of forms) {
-        const formId = form.id || (form._id ? form._id.toString() : '');
-        if (!formId) continue;
-
-        const isOwner = form.tenantId?.toString() === currentTenantId;
-        const isShared = form.sharedWithTenants?.some(t => t.toString() === currentTenantId);
-        const chassisAssignments = form.chassisTenantAssignments || [];
-        const hasChassisShare = chassisAssignments.some(
-          a => a.assignedTenants && a.assignedTenants.includes(currentTenantId)
-        );
-
-        // Get responses for this form
-        const formResponses = allResponses.filter(r => r.questionId === formId);
-
-        if (!isOwner && !isShared && hasChassisShare) {
-          // Chassis-shared form: only count responses matching assigned chassis
-          const myChassis = chassisAssignments
-            .filter(a => a.assignedTenants?.includes(currentTenantId))
-            .map(a => a.chassisNumber)
-            .filter(Boolean);
-
-          if (myChassis.length > 0) {
-            // Find the chassis question field ID
-            const chassisQuestion = form.sections?.flatMap(s => s.questions || [])
-              .find(q => q.type === 'chassisNumber')
-              || form.followUpQuestions?.find(q => q.type === 'chassisNumber');
-            const chassisFieldId = chassisQuestion?.id || 'chassis_number';
-
-            const filteredCount = formResponses.filter(r => {
-              const answers = r.answers instanceof Map
-                ? Object.fromEntries(r.answers)
-                : (r.answers || {});
-              return myChassis.includes(answers[chassisFieldId] || answers['chassis_number']);
-            }).length;
-
-            responseCountsMap.set(formId, filteredCount);
-          } else {
-            responseCountsMap.set(formId, 0);
-          }
-        } else {
-          // Owned or shared form: count all responses
-          responseCountsMap.set(formId, formResponses.length);
-        }
-      }
-    }
+    // Build map for quick lookup
+    const responseCountsMap = new Map(responseCounts.map(rc => [rc._id, rc.count]));
 
     const formsWithCounts = forms.map((form) => {
       const plain = form.toObject({ virtuals: true });
       const lookupId = form.id || (form._id ? form._id.toString() : "");
-      const responseCount = responseCountsMap.get(lookupId) || 0;
       return {
         ...plain,
-        responseCount
+        responseCount: responseCountsMap.get(lookupId) || 0
       };
     });
 
