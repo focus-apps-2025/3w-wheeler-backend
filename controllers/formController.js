@@ -47,15 +47,15 @@ const findFormByIdentifier = async (identifier, populateOptions) => {
 const normalizeQuestionTypes = (question) => {
   const typeMap = {
     // Legacy/UI type names - without spaces/slashes
-    'shorttext': 'text', 'shortint': 'text', 
-    'multiplechoice': 'radio', 
+    'shorttext': 'text', 'shortint': 'text',
+    'multiplechoice': 'radio',
     'longtext': 'paragraph', 'longinput': 'paragraph',
-    'dropdown': 'select', 'checkboxes': 'checkbox', 
+    'dropdown': 'select', 'checkboxes': 'checkbox',
     'fileupload': 'file', 'file upload': 'file',
-    
+
     // Yes/No variations
     'yesnona': 'yesNoNA', 'yesno': 'yesNoNA',
-    
+
     // Core types - pass through
     'email': 'email', 'url': 'url', 'tel': 'tel',
     'date': 'date', 'time': 'time', 'file': 'file', 'range': 'range',
@@ -64,8 +64,8 @@ const normalizeQuestionTypes = (question) => {
     'radio-image': 'radio-image', 'radioimage': 'radio-image',
     'search-select': 'search-select', 'searchselect': 'search-select',
     'number': 'number', 'location': 'location',
-    'boolean': 'boolean', 'textarea': 'textarea', 
-    'text': 'text', 'radio': 'radio', 'paragraph': 'paragraph', 
+    'boolean': 'boolean', 'textarea': 'textarea',
+    'text': 'text', 'radio': 'radio', 'paragraph': 'paragraph',
     'select': 'select', 'checkbox': 'checkbox', 'productnpstgwbuckets': 'productNPSTGWBuckets',
     'chassis-with-zone': 'chassis-with-zone',
     'chassiswithzone': 'chassis-with-zone',
@@ -77,16 +77,16 @@ const normalizeQuestionTypes = (question) => {
     'zoneout': 'zone-out',
     'productnpstgwbuckets': 'productNPSTGWBuckets'
   };
-  
+
   if (question?.type) {
     let normalizedType = String(question.type)
       .toLowerCase()
       .trim()
       .replace(/\s+/g, ' ')
       .replace(/\s*\/\s*/g, '');
-    
+
     const mappedType = typeMap[normalizedType] || typeMap[normalizedType.replace(/\s/g, '')] || question.type;
-    
+
     // Log normalization if it changed
     if (question.type !== mappedType) {
       // console.log(`Normalizing question type: "${question.type}" → "${mappedType}"`);
@@ -115,7 +115,7 @@ const normalizeQuestionTypes = (question) => {
   if (Array.isArray(question?.followUpQuestions)) {
     question.followUpQuestions = question.followUpQuestions.map(fq => normalizeQuestionTypes(fq));
   }
-  
+
   return question;
 };
 
@@ -246,7 +246,7 @@ export const createForm = async (req, res) => {
     // DEBUG: Check formData before creating form
     console.log('=== DEBUG: formData before Form creation ===');
     console.log('First question suggestion:', formData.sections?.[0]?.questions?.[0]?.suggestion);
-     // Normalize question types before form creation (handles spaces/slashes)
+    // Normalize question types before form creation (handles spaces/slashes)
     // Normalize all sections using global utility
     if (Array.isArray(formData.sections)) {
       formData.sections.forEach(section => {
@@ -261,7 +261,7 @@ export const createForm = async (req, res) => {
       formData.followUpQuestions = formData.followUpQuestions.map(q => normalizeQuestionTypes(q));
     }
 
-    
+
 
     const form = new Form(formData);
 
@@ -290,7 +290,7 @@ export const createForm = async (req, res) => {
       createdBy: formData.createdBy
     });
 
-   
+
     await form.save();
 
     console.log('Form created successfully with ID:', form.id);
@@ -343,7 +343,7 @@ export const createForm = async (req, res) => {
 
 export const getAllForms = async (req, res) => {
   try {
-    const { page = 1, limit = 1000, search, isVisible, isActive, createdBy, isGlobal } = req.query;
+    const { page = 1, limit = 1000, search, isVisible, isActive, createdBy, isGlobal, tenantId: queryTenantId } = req.query;
 
     let query = { ...req.tenantFilter };
 
@@ -362,6 +362,17 @@ export const getAllForms = async (req, res) => {
           { "chassisTenantAssignments.assignedTenants": tenantIdStr }
         ]
       };
+    } else if (req.user.role === 'superadmin' && queryTenantId) {
+      // Superadmin can filter by a specific tenantId passed as query param
+      if (mongoose.Types.ObjectId.isValid(queryTenantId)) {
+        const tenantObjId = new mongoose.Types.ObjectId(queryTenantId);
+        query = {
+          $or: [
+            { tenantId: tenantObjId },
+            { sharedWithTenants: tenantObjId }
+          ]
+        };
+      }
     }
 
     // Filter by global status
@@ -451,16 +462,12 @@ export const getAllForms = async (req, res) => {
 
     let responseCountsMap = new Map();
     if (formIdsForCounts.length > 0) {
-      // Determine current user's tenant ID for chassis filtering
       const currentTenantId = req.user?.tenantId?.toString();
 
-      // Fetch all responses for these forms (no tenant filter)
-      const allResponses = await Response.find({
-        questionId: { $in: formIdsForCounts },
-        isSectionSubmit: { $ne: true }
-      }).select('questionId answers').lean();
+      // Separate forms into chassis-shared vs normal
+      const chassisSharedFormIds = [];
+      const normalFormIds = [];
 
-      // Count responses per form, with chassis filtering for shared forms
       for (const form of forms) {
         const formId = form.id || (form._id ? form._id.toString() : '');
         if (!formId) continue;
@@ -472,37 +479,57 @@ export const getAllForms = async (req, res) => {
           a => a.assignedTenants && a.assignedTenants.includes(currentTenantId)
         );
 
-        // Get responses for this form
-        const formResponses = allResponses.filter(r => r.questionId === formId);
-
         if (!isOwner && !isShared && hasChassisShare) {
-          // Chassis-shared form: only count responses matching assigned chassis
-          const myChassis = chassisAssignments
-            .filter(a => a.assignedTenants?.includes(currentTenantId))
-            .map(a => a.chassisNumber)
-            .filter(Boolean);
-
-          if (myChassis.length > 0) {
-            // Find the chassis question field ID
-            const chassisQuestion = form.sections?.flatMap(s => s.questions || [])
-              .find(q => q.type === 'chassisNumber')
-              || form.followUpQuestions?.find(q => q.type === 'chassisNumber');
-            const chassisFieldId = chassisQuestion?.id || 'chassis_number';
-
-            const filteredCount = formResponses.filter(r => {
-              const answers = r.answers instanceof Map
-                ? Object.fromEntries(r.answers)
-                : (r.answers || {});
-              return myChassis.includes(answers[chassisFieldId] || answers['chassis_number']);
-            }).length;
-
-            responseCountsMap.set(formId, filteredCount);
-          } else {
-            responseCountsMap.set(formId, 0);
-          }
+          chassisSharedFormIds.push({ form, formId, chassisAssignments });
         } else {
-          // Owned or shared form: count all responses
-          responseCountsMap.set(formId, formResponses.length);
+          normalFormIds.push(formId);
+        }
+      }
+
+      // ✅ Fast path: use aggregation to get counts (no document loading)
+      if (normalFormIds.length > 0) {
+        const countAgg = await Response.aggregate([
+          {
+            $match: {
+              questionId: { $in: normalFormIds },
+              isSectionSubmit: { $ne: true }
+            }
+          },
+          {
+            $group: {
+              _id: '$questionId',
+              count: { $sum: 1 }
+            }
+          }
+        ]);
+        countAgg.forEach(({ _id, count }) => responseCountsMap.set(_id, count));
+      }
+
+      // Chassis-shared forms: targeted countDocuments per chassis set (avoids loading answers)
+      for (const { form, formId, chassisAssignments } of chassisSharedFormIds) {
+        const myChassis = chassisAssignments
+          .filter(a => a.assignedTenants?.includes(currentTenantId))
+          .map(a => a.chassisNumber)
+          .filter(Boolean);
+
+        if (myChassis.length > 0) {
+          const chassisQuestion = form.sections?.flatMap(s => s.questions || [])
+            .find(q => q.type === 'chassisNumber')
+            || form.followUpQuestions?.find(q => q.type === 'chassisNumber');
+          const chassisFieldId = chassisQuestion?.id || 'chassis_number';
+
+          // Count only responses whose chassis answer matches assigned chassis numbers
+          const filteredCount = await Response.countDocuments({
+            questionId: formId,
+            isSectionSubmit: { $ne: true },
+            $or: [
+              { [`answers.${chassisFieldId}`]: { $in: myChassis } },
+              { [`answers.chassis_number`]: { $in: myChassis } }
+            ]
+          });
+          responseCountsMap.set(formId, filteredCount);
+        } else {
+          responseCountsMap.set(formId, 0);
         }
       }
     }
@@ -646,7 +673,7 @@ export const getFormById = async (req, res) => {
           message: 'Access denied. Organization identification required.'
         });
       }
-      
+
       const userTenantId = req.user.tenantId.toString();
       const isOwnedByTenant = form.tenantId && form.tenantId.toString() === userTenantId;
       const isSharedWithTenant = form.sharedWithTenants && form.sharedWithTenants.some(tId => tId && tId.toString() === userTenantId);
@@ -2265,7 +2292,7 @@ export const submitPublicResponse = async (req, res) => {
     console.log('[PUBLIC SUBMIT] req.user?._id:', req.user?._id);
     console.log('[PUBLIC SUBMIT] req.user?.role:', req.user?.role);
     console.log('[PUBLIC SUBMIT] auth header:', !!req.header('Authorization'));
-    
+
     const { id } = req.params;
     const {
       inviteId,

@@ -25,7 +25,7 @@ export const createResponse = async (req, res) => {
     console.log('[CREATE RESPONSE] auth header value:', req.header('Authorization')?.substring(0, 30) + '...');
     console.log('[CREATE RESPONSE] body.submittedBy:', req.body.submittedBy);
     console.log('[CREATE RESPONSE] body.submitterContact:', req.body.submitterContact);
-    
+
     const {
       questionId: bodyFormId,
       answers,
@@ -517,22 +517,22 @@ export const createResponse = async (req, res) => {
     }
     let displayName = 'Anonymous';
 
-if (req.body.submittedBy && req.body.submittedBy !== 'Anonymous') {
-  displayName = req.body.submittedBy;
-} else if (req.user) {
-  // Try to get full name from firstName + lastName
-  if (req.user.firstName || req.user.lastName) {
-    displayName = `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim();
-  }
-  // Fallback to username
-  if (displayName === '' && req.user.username) {
-    displayName = req.user.username;
-  }
-  // Fallback to email
-  if (displayName === '' && req.user.email) {
-    displayName = req.user.email;
-  }
-}
+    if (req.body.submittedBy && req.body.submittedBy !== 'Anonymous') {
+      displayName = req.body.submittedBy;
+    } else if (req.user) {
+      // Try to get full name from firstName + lastName
+      if (req.user.firstName || req.user.lastName) {
+        displayName = `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim();
+      }
+      // Fallback to username
+      if (displayName === '' && req.user.username) {
+        displayName = req.user.username;
+      }
+      // Fallback to email
+      if (displayName === '' && req.user.email) {
+        displayName = req.user.email;
+      }
+    }
 
     // ========== CREATE RESPONSE WITH TIMING DATA ==========
     const responseData = {
@@ -1745,6 +1745,7 @@ export const getAllResponses = async (req, res) => {
       page = 1,
       limit = 10,
       questionId,
+      formIds,        // NEW: comma-separated list of form IDs to filter by
       status,
       assignedTo,
       search,
@@ -1806,9 +1807,22 @@ export const getAllResponses = async (req, res) => {
       query.isSectionSubmit = { $ne: true };
     }
 
-    // Filter by form
+    // Filter by form (single ID)
     if (questionId) {
       query.questionId = questionId;
+    }
+
+    // Filter by multiple form IDs (comma-separated formIds param)
+    if (formIds) {
+      const formIdList = formIds.split(',').map(id => id.trim()).filter(Boolean);
+      if (formIdList.length > 0) {
+        // Override or combine with questionId filter
+        if (query.questionId) {
+          // Already filtering by single questionId — keep it
+        } else {
+          query.questionId = { $in: formIdList };
+        }
+      }
     }
 
     // Filter by status
@@ -2276,7 +2290,7 @@ export const getResponsesByForm = async (req, res) => {
       .populate('reviewerId', 'firstName lastName email username')
       .sort({ createdAt: -1 });
 
-    const chatMessages = await ChatMessage.find({ 
+    const chatMessages = await ChatMessage.find({
       responseId: { $in: responseIds },
       questionContexts: { $exists: true, $not: { $size: 0 } }
     }).sort({ createdAt: -1 });
@@ -2304,7 +2318,7 @@ export const getResponsesByForm = async (req, res) => {
 
       // Determine the best display name for submittedBy
       let displaySubmittedBy = response.submittedBy;
-      
+
       // If submittedBy is "Anonymous" or missing, try to get from createdBy
       if (!displaySubmittedBy || displaySubmittedBy === 'Anonymous') {
         if (response.createdBy) {
@@ -2318,7 +2332,7 @@ export const getResponsesByForm = async (req, res) => {
           }
         }
       }
-      
+
       // If still empty, use email from submitterContact
       if (!displaySubmittedBy || displaySubmittedBy === 'Anonymous') {
         displaySubmittedBy = response.submitterContact?.email || 'Anonymous';
@@ -2330,7 +2344,7 @@ export const getResponsesByForm = async (req, res) => {
         reviewer: review.reviewerName || (review.reviewerId ? (review.reviewerId.firstName ? `${review.reviewerId.firstName} ${review.reviewerId.lastName}` : review.reviewerId.username) : 'Reviewer'),
         flaggedQuestions: message ? message.questionContexts.map(c => c.title) : []
       } : null;
-      
+
       return {
         ...responseObj,
         answers: response.answers ? Object.fromEntries(response.answers) : {},
