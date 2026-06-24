@@ -30,6 +30,14 @@ const tenantSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   },
+  internalTrackingEnabled: {
+    type: Boolean,
+    default: false
+  },
+  allowedTenantIds: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Tenant'
+  }],
   settings: {
     logo: String,
     primaryColor: {

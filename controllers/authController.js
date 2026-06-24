@@ -243,6 +243,8 @@ export const login = async (req, res) => {
         name: tenant.name,
         slug: tenant.slug,
         companyName: tenant.companyName,
+        internalTrackingEnabled: tenant.internalTrackingEnabled,
+        allowedTenantIds: tenant.allowedTenantIds,
         settings: tenant.settings,
         subscription: tenant.subscription
       };
@@ -268,7 +270,7 @@ export const getProfile = async (req, res) => {
   try {
     let tenantData = null;
     if (req.user.tenantId) {
-      const tenant = await Tenant.findById(req.user.tenantId).select('name slug companyName settings subscription');
+      const tenant = await Tenant.findById(req.user.tenantId).select('name slug companyName internalTrackingEnabled allowedTenantIds settings subscription');
       if (tenant) {
         tenantData = {
           id: tenant._id,
@@ -276,6 +278,8 @@ export const getProfile = async (req, res) => {
           name: tenant.name,
           slug: tenant.slug,
           companyName: tenant.companyName,
+          internalTrackingEnabled: tenant.internalTrackingEnabled,
+          allowedTenantIds: tenant.allowedTenantIds,
           settings: tenant.settings,
           subscription: tenant.subscription
         };

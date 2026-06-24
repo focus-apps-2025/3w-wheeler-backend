@@ -36,6 +36,7 @@ import attendanceRoutes from './routes/attendanceRoutes.js';
 import otpRoutes from './routes/otpRoutes.js';
 import hrRoutes from './routes/hrRoutes.js';
 import messageRoutes from './routes/messageRoutes.js';
+import internalTrackingRoutes from './routes/internalTrackingRoutes.js';
 
 // Connect to database
 await connectDB();
@@ -148,6 +149,7 @@ app.use('/api/attendance', attendanceRoutes);
 app.use('/api/hr', hrRoutes);
 app.use('/api/otp', otpRoutes);
 app.use('/api/messages', messageRoutes);
+app.use('/api/internal-tracking', internalTrackingRoutes);
 
 
 process.on('SIGTERM', async () => {
