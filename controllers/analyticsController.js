@@ -1859,18 +1859,42 @@ function groupResponsesByHour(responses) {
 export const getInspectorSummary = async (req, res) => {
   try {
     const { role, _id: userId, tenantId: userTenantId } = req.user;
-    const { startDate, endDate, formId } = req.query;
+    const { startDate, endDate, formId, tenantId: queryTenantId } = req.query;
 
-    // Build the initial match filter
     let matchFilter = {};
-    if (role === 'superadmin') {
-      // No filter
-    } else if (role === 'admin' || role === 'subadmin') {
-      matchFilter.tenantId = new mongoose.Types.ObjectId(userTenantId);
-    } else if (role === 'inspector') {
-      matchFilter.createdBy = new mongoose.Types.ObjectId(userId);
+
+    // Internal Tracking: Check for cross-tenant access first
+    if (queryTenantId && queryTenantId !== userTenantId?.toString()) {
+      let hasAccess = false;
+      if (role === 'superadmin') {
+        hasAccess = true;
+      } else if (userTenantId) {
+        const currentUserTenant = await Tenant.findById(userTenantId).lean();
+        if (currentUserTenant && currentUserTenant.internalTrackingEnabled) {
+          const allowedIds = (currentUserTenant.allowedTenantIds || []).map(id => id.toString());
+          if (allowedIds.includes(queryTenantId)) {
+            hasAccess = true;
+          }
+        }
+      }
+
+      if (hasAccess) {
+        matchFilter = { tenantId: new mongoose.Types.ObjectId(queryTenantId) };
+      } else {
+        return res.status(403).json({ success: false, message: 'Access to this tenant is denied for Inspector Summary.' });
+      }
     } else {
-      matchFilter.tenantId = new mongoose.Types.ObjectId(userTenantId);
+        // Default behavior if no tenantId is specified in query
+        if (role === 'superadmin') {
+            // No initial filter for superadmin, can see all
+        } else if (role === 'admin' || role === 'subadmin') {
+            matchFilter.tenantId = new mongoose.Types.ObjectId(userTenantId);
+        } else if (role === 'inspector') {
+            matchFilter.createdBy = new mongoose.Types.ObjectId(userId);
+        } else {
+            // Default for other roles if any
+            matchFilter.tenantId = new mongoose.Types.ObjectId(userTenantId);
+        }
     }
 
     if (formId) {
@@ -2211,8 +2235,34 @@ export const getMyReviewStats = async (req, res) => {
 
 export const getPerformanceTable = async (req, res) => {
   try {
-    const { startDate, endDate, formId } = req.query;
-    const query = { ...req.tenantFilter };
+    const { startDate, endDate, formId, tenantId: queryTenantId } = req.query;
+    const { role, tenantId: userTenantId } = req.user;
+
+    let tenantFilter = { ...req.tenantFilter };
+
+    // Internal Tracking: Check for cross-tenant access
+    if (queryTenantId && queryTenantId !== userTenantId?.toString()) {
+      let hasAccess = false;
+      if (role === 'superadmin') {
+        hasAccess = true;
+      } else if (userTenantId) {
+        const currentUserTenant = await Tenant.findById(userTenantId).lean();
+        if (currentUserTenant && currentUserTenant.internalTrackingEnabled) {
+          const allowedIds = (currentUserTenant.allowedTenantIds || []).map(id => id.toString());
+          if (allowedIds.includes(queryTenantId)) {
+            hasAccess = true;
+          }
+        }
+      }
+
+      if (hasAccess) {
+        tenantFilter = { tenantId: new mongoose.Types.ObjectId(queryTenantId) };
+      } else {
+        return res.status(403).json({ success: false, message: 'Access to this tenant is denied for Performance Table.' });
+      }
+    }
+
+    const query = tenantFilter;
 
     // Get all users in scope
     const users = await User.find(query)
@@ -2226,7 +2276,7 @@ export const getPerformanceTable = async (req, res) => {
 
     // Filter responses by formId if provided
     const responseBaseFilter = {
-      ...req.tenantFilter,
+      ...tenantFilter,
       createdAt: { $gte: start, $lte: end }
     };
     
@@ -2264,7 +2314,7 @@ export const getPerformanceTable = async (req, res) => {
     // Aggregate review stats
     // If formId is provided, we need to filter reviews by responseId associated with that form
     let reviewMatchFilter = {
-      ...req.tenantFilter,
+      ...tenantFilter,
       createdAt: { $gte: start, $lte: end }
     };
 
@@ -2328,6 +2378,7 @@ export const getPerformanceTable = async (req, res) => {
         accepted: reviews.accepted,
         rejected: reviews.rejected,
         rework: reviews.rework,
+        reviewPending: submissions - reviews.total,
         performanceScore: performanceScore
       };
     });
