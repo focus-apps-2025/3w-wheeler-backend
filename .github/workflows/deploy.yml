@@ -1,7 +1,9 @@
 name: Deploy Backend to EC2
+
 on:
   push:
     branches: [main]
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -21,5 +23,6 @@ jobs:
             # Go inside, install, and start
             cd 3w-wheeler-backend
             npm install
+            sudo npm install -g pm2
             pm2 restart backend || pm2 start server.js --name "backend"
             pm2 save
