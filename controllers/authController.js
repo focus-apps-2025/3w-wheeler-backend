@@ -231,7 +231,12 @@ export const login = async (req, res) => {
         role: user.role,
         tenantId: user.tenantId,
         lastLogin: user.lastLogin,
-        permissions: user.permissions || []
+        permissions: user.permissions || [],
+        granularPermissions: user.granularPermissions || {
+          canEditAttendanceTime: false,
+          canEditInvoices: false,
+          canEditPricing: false
+        }
       }
     };
 
@@ -285,10 +290,19 @@ export const getProfile = async (req, res) => {
         };
       }
     }
+    // Include granularPermissions in user profile
+    const userWithPermissions = {
+      ...req.user.toObject(),
+      granularPermissions: req.user.granularPermissions || {
+        canEditAttendanceTime: false,
+        canEditInvoices: false,
+        canEditPricing: false
+      }
+    };
     res.json({
       success: true,
       data: {
-        user: req.user,
+        user: userWithPermissions,
         ...(tenantData && { tenant: tenantData })
       }
     });

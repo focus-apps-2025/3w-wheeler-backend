@@ -128,27 +128,28 @@ export const processAttendanceForReport = (logs, inspectors, totalDays) => {
     rate: totalDays > 0 ? Math.round(((s.present + s.late + s.halfDay) / totalDays) * 100) : 0
   }));
 
-   // Format detailed logs
-   const detailedLogs = logs.map(log => {
-     // Convert stored UTC date to local date (IST = UTC+5:30)
-     // Adjust by subtracting timezone offset to get local midnight date
-     const localDate = new Date(log.date.getTime() - (log.date.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+// Format detailed logs
+    const detailedLogs = logs.map(log => {
+      // Convert stored UTC date to local date (IST = UTC+5:30)
+      // IST is UTC+5:30, so add 5.5 hours to get correct local date
+      const istOffsetMs = 5.5 * 60 * 60 * 1000;
+      const localDate = new Date(log.date.getTime() + istOffsetMs).toISOString().split('T')[0];
      
      // Get tenant info if available
      const tenantName = log.tenantId?.companyName || log.tenantId?.name || null;
      
-     return {
-       date: localDate,
-       inspector: log.inspector ? `${log.inspector.firstName} ${log.inspector.lastName}` : 'Unknown',
-       inspectorId: log.inspector?._id || null,
-       tenant: tenantName,
-       shift: log.shift?.displayName || log.shift?.name || 'N/A',
-       checkIn: log.checkInTime ? new Date(log.checkInTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) : null,
-       checkOut: log.checkOutTime ? new Date(log.checkOutTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) : null,
-       hours: log.workingHours,
-       status: log.status,
-       location: log.checkInPlace || log.checkOutPlace
-     };
+return {
+        date: localDate,
+        inspector: log.inspector ? `${log.inspector.firstName} ${log.inspector.lastName}` : 'Unknown',
+        inspectorId: log.inspector?._id || null,
+        tenant: tenantName,
+        shift: log.shiftName || log.shift?.displayName || log.shift?.name || 'N/A',
+        checkIn: log.checkInTime ? new Date(log.checkInTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) : null,
+        checkOut: log.checkOutTime ? new Date(log.checkOutTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) : null,
+        hours: log.workingHours,
+        status: log.status,
+        location: log.checkInPlace || log.checkOutPlace
+      };
    });
 
   // Overall summary

@@ -13,8 +13,7 @@ const attendanceSchema = new mongoose.Schema({
   },
   shift: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Shift',
-    required: true
+    ref: 'Shift'
   },
   shiftName: String,
   shiftStartTime: String,

@@ -12,7 +12,7 @@ import {
   getAllTenantsPerformance,
   getPerformanceScores,
   submitReview,
-  getReviewsForResponse
+  getReviewsForResponse, updateGranularPermissions
 } from '../controllers/userController.js';
 import { authenticate, adminOnly, inspectorOrAdmin, authorize } from '../middleware/auth.js';
 import { addTenantFilter } from '../middleware/tenantIsolation.js';
@@ -83,5 +83,10 @@ router.delete('/:id', deleteUser);
 // @desc    Reset user password
 // @access  Private (Admin only)
 router.put('/:id/reset-password', resetUserPassword);
+
+// @route   PUT /api/users/:id/granular-permissions
+// @desc    Update granular permissions for a user (SuperAdmin only)
+// @access  Private (SuperAdmin only)
+router.put('/:id/granular-permissions', authorize('superadmin'), updateGranularPermissions);
 
 export default router;

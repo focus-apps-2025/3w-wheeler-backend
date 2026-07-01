@@ -172,3 +172,60 @@ export const getTenantStats = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+/**
+ * Update attendance time (SuperAdmin grants permission via granularPermissions)
+ */
+export const updateAttendanceTime = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { checkIn, checkOut, status, shift } = req.body;
+
+    // Only superadmin can update attendance times via this endpoint
+    // Admin users need granular permission canEditAttendanceTime=true
+    if (req.user.role === 'admin') {
+      const user = await User.findById(req.user._id);
+      if (!user?.granularPermissions?.canEditAttendanceTime) {
+        return res.status(403).json({
+          success: false,
+          message: 'Permission denied. Admin does not have "Can Edit Attendance" permission.'
+        });
+      }
+    }
+
+    const attendance = await Attendance.findById(id);
+    if (!attendance) {
+      return res.status(404).json({ success: false, message: 'Attendance record not found' });
+    }
+
+    if (checkIn) {
+      attendance.checkInTime = new Date(checkIn);
+    }
+    if (checkOut) {
+      attendance.checkOutTime = new Date(checkOut);
+    }
+
+    // Update status if provided
+    if (status) {
+      attendance.status = status;
+      attendance.isPresent = status === 'present' || status === 'late' || status === 'half-day';
+    }
+
+    // Update shift name if provided
+    if (shift) {
+      attendance.shiftName = shift;
+    }
+
+    // Recalculate working hours
+    if (attendance.checkInTime && attendance.checkOutTime) {
+      attendance.workingHours = (attendance.checkOutTime.getTime() - attendance.checkInTime.getTime()) / (1000 * 60 * 60);
+      attendance.workingHours = Math.round(attendance.workingHours * 100) / 100;
+    }
+
+    await attendance.save();
+    res.json({ success: true, data: attendance });
+  } catch (error) {
+    console.error('Update attendance time error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
