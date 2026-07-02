@@ -248,18 +248,16 @@ export const sendAnalyticsInvites = async (req, res) => {
 
 export const requestGuestOTP = async (req, res) => {
   try {
-    let { formId, email, phone, channel = 'email' } = req.body;
+    let { formId, email, phone } = req.body;
 
     if (!formId || (!email && !phone)) {
       return res.status(400).json({ success: false, message: 'Form ID and either email or phone are required' });
     }
 
-    // Normalize inputs
     const normalizedFormId = formId.toString().trim();
     const normalizedEmail = email ? email.toString().toLowerCase().trim() : null;
     const cleanPhone = phone ? phone.toString().replace(/\D/g, '') : null;
 
-    // 1. Try to find the form
     const form = await Form.findOne({ 
       $or: [
         { id: normalizedFormId }, 
@@ -267,15 +265,11 @@ export const requestGuestOTP = async (req, res) => {
       ] 
     });
 
-    // 2. Build search query for invite
     const inviteConditions = [];
-    
-    // Add conditions based on what's provided
     if (normalizedEmail) {
       inviteConditions.push({ email: normalizedEmail });
     }
     if (cleanPhone) {
-      // Use regex to match ending of phone number (e.g. last 10 digits) or exact match
       const phoneRegex = cleanPhone.length >= 10 ? new RegExp(cleanPhone.slice(-10) + '$') : new RegExp(cleanPhone + '$');
       inviteConditions.push({ phone: phoneRegex });
       inviteConditions.push({ phone: cleanPhone });
@@ -291,7 +285,7 @@ export const requestGuestOTP = async (req, res) => {
       formId: { $in: formIds },
       $or: inviteConditions
     });
-
+    
     if (!invite) {
       const identity = normalizedEmail || phone;
       console.log(`[AUTH] Invite not found for ${identity} on form: ${normalizedFormId}`);
@@ -300,61 +294,25 @@ export const requestGuestOTP = async (req, res) => {
         message: 'This identity is not invited to view analytics for this form. Please contact the administrator.' 
       });
     }
-
-    const otp = generateOTP();
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes expiry
-
-    invite.otp = otp;
-    invite.expiresAt = expiresAt;
-    invite.status = 'sent';
+    
+    invite.status = 'active';
+    invite.lastLogin = new Date();
     await invite.save();
+    
+    // Generate guest token
+    const token = generateGuestToken(invite.email || invite.phone, invite.formId);
+    
+    res.json({ 
+      success: true, 
+      data: { 
+        token,
+        email: invite.email, 
+        phone: invite.phone,
+        formId: invite.formId,
+        expiresAt: invite.expiresAt
+      } 
+    });
 
-    const tenant = await Tenant.findById(invite.tenantId);
-
-    const baseUrl = process.env.INVITE_FRONTEND_URL || process.env.FRONTEND_URL || 'http://localhost:5173';
-    const singleBaseUrl = baseUrl.split(',')[0].trim();
-    const formattedBaseUrl = singleBaseUrl.endsWith('/') ? singleBaseUrl : `${singleBaseUrl}/`;
-    const inviteLink = `${formattedBaseUrl}forms/${formId}/analytics/login`;
-
-    let emailSent = false;
-    let smsSent = false;
-
-    if (channel === 'email' && invite.email) {
-      const mailResult = await mailService.sendAnalyticsInvite(
-        invite.email, 
-        form ? form.title : 'Form Analytics', 
-        inviteLink, 
-        otp, 
-        tenant ? tenant.name : 'System',
-        'Your login verification code (OTP)',
-        true
-      );
-      emailSent = mailResult.success;
-    }
-
-    if (channel === 'sms' && invite.phone) {
-      const smsResult = await smsService.sendOTP(invite.phone, otp);
-      smsSent = smsResult.success;
-    }
-
-    if (emailSent || smsSent) {
-      const msg = channel === 'sms' 
-        ? 'Verification code sent to your phone via SMS' 
-        : 'Verification code sent to your email';
-        
-      res.json({
-        success: true,
-        message: msg,
-        data: { message: msg }
-      });
-    } else {
-      res.status(500).json({
-        success: false,
-        message: channel === 'sms' && !invite.phone 
-          ? 'No phone number associated with this invite. Please use email.'
-          : (channel === 'email' && !invite.email ? 'No email associated with this invite. Please use SMS.' : 'Failed to send verification code')
-      });
-    }
   } catch (error) {
     console.error('Request guest OTP error:', error);
     res.status(500).json({ success: false, message: error.message });
