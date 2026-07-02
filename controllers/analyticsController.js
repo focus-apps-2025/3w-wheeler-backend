@@ -2356,9 +2356,40 @@ export const getPerformanceTable = async (req, res) => {
       if (d._id) dispatchedMap[d._id.toString()] = d.count;
     });
 
+    // Create maps for user lookup
+    const userIdToUser = {};
+    const emailToUserId = {};
+    const usernameToUserId = {};
+    users.forEach(u => {
+        const userId = u._id.toString();
+        userIdToUser[userId] = u;
+        if (u.email) emailToUserId[u.email.toLowerCase()] = userId;
+        if (u.username) usernameToUserId[u.username.toLowerCase()] = userId;
+    });
+
     const reviewMap = {};
     reviewStats.forEach(r => {
-      if (r._id) reviewMap[r._id.toString()] = r;
+        const submitterId = r._id;
+        if (!submitterId) return;
+
+        let userId = null;
+        if (userIdToUser[submitterId]) {
+            userId = submitterId;
+        } else if (emailToUserId[submitterId.toLowerCase()]) {
+            userId = emailToUserId[submitterId.toLowerCase()];
+        } else if (usernameToUserId[submitterId.toLowerCase()]) {
+            userId = usernameToUserId[submitterId.toLowerCase()];
+        }
+
+        if (userId) {
+            if (!reviewMap[userId]) {
+                reviewMap[userId] = { total: 0, accepted: 0, rejected: 0, rework: 0 };
+            }
+            reviewMap[userId].total += r.total;
+            reviewMap[userId].accepted += r.accepted;
+            reviewMap[userId].rejected += r.rejected;
+            reviewMap[userId].rework += r.rework;
+        }
     });
 
     // Format final table data

@@ -193,6 +193,55 @@ ResponseSchema.index({ startedAt: -1 }); // NEW - for time range queries
 ResponseSchema.index({ timeSpent: 1 }); // NEW - for time-based queries
 ResponseSchema.index({ sessionId: 1 });  // NEW - for session lookups
 
+// ========== PRE-SAVE HOOK FOR ROBUST CREATOR ASSIGNMENT ==========
+ResponseSchema.pre('save', async function(next) {
+  if (!this.createdBy && this.tenantId) {
+    try {
+      const User = mongoose.model('User');
+      
+      // 1. Try to find a user matching submittedBy identifier if valid
+      if (this.submittedBy && this.submittedBy !== 'Excel Import') {
+        const submittedClean = String(this.submittedBy).trim();
+        let matchedUser = await User.findOne({
+          tenantId: this.tenantId,
+          $or: [
+            { email: { $regex: new RegExp(`^${submittedClean}$`, 'i') } },
+            { username: { $regex: new RegExp(`^${submittedClean}$`, 'i') } }
+          ]
+        });
+        
+        if (!matchedUser) {
+          const users = await User.find({ tenantId: this.tenantId });
+          matchedUser = users.find(u => {
+            const fullName = `${u.firstName || ''} ${u.lastName || ''}`.trim();
+            return fullName.toLowerCase() === submittedClean.toLowerCase();
+          });
+        }
+        
+        if (matchedUser) {
+          this.createdBy = matchedUser._id;
+          return next();
+        }
+      }
+      
+      // 2. Fallback to tenant admin
+      let fallbackUser = await User.findOne({ tenantId: this.tenantId, role: 'admin' });
+      
+      // 3. Fallback to any tenant user
+      if (!fallbackUser) {
+        fallbackUser = await User.findOne({ tenantId: this.tenantId });
+      }
+      
+      if (fallbackUser) {
+        this.createdBy = fallbackUser._id;
+      }
+    } catch (error) {
+      console.error('Error in Response pre-save hook:', error);
+    }
+  }
+  next();
+});
+
 const Response = mongoose.model('Response', ResponseSchema);
 
 export default Response;

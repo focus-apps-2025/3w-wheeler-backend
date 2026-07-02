@@ -925,11 +925,34 @@ export const batchImportResponses = async (req, res) => {
               submissionMetadata,
               status: 'pending',
               tenantId: form.tenantId,
-              score: { correct, total }
+              score: { correct, total },
+              createdBy: req.user?._id || null
             };
 
             const response = new Response(responseData);
             await response.save();
+
+            // Create a default 'Accepted' review for the imported response
+            if (req.user) {
+              try {
+                const reviewData = {
+                  responseId: response.id,
+                  reviewerId: req.user._id,
+                  reviewerName: `${req.user.firstName} ${req.user.lastName}`,
+                  reviewerEmail: req.user.email,
+                  submitterId: response.createdBy || response.submittedBy,
+                  reviewOption: 'Accepted',
+                  scoreChange: 0,
+                  tenantId: form.tenantId
+                };
+                const review = new Review(reviewData);
+                await review.save();
+                console.log(`[BATCH ${batchId}] Created default review for response ${response.id}`);
+              } catch (reviewError) {
+                console.error(`[BATCH ${batchId}] Failed to create default review for response ${response.id}:`, reviewError.message);
+                // Don't let review creation failure stop the import
+              }
+            }
 
             const answersObj = response.answers instanceof Map ?
               Object.fromEntries(response.answers) : response.answers;
@@ -1105,12 +1128,35 @@ export const batchImportResponses = async (req, res) => {
             submissionMetadata,
             status: 'pending',
             tenantId: form.tenantId,
-            score: { correct, total }
+            score: { correct, total },
+            createdBy: req.user?._id || null
           };
 
           // Save to database
           const response = new Response(responseData);
           await response.save();
+
+          // Create a default 'Accepted' review for the imported response
+          if (req.user) {
+            try {
+              const reviewData = {
+                responseId: response.id,
+                reviewerId: req.user._id,
+                reviewerName: `${req.user.firstName} ${req.user.lastName}`,
+                reviewerEmail: req.user.email,
+                submitterId: response.createdBy?.toString() || response.submittedBy,
+                reviewOption: 'Accepted',
+                scoreChange: 0,
+                tenantId: form.tenantId
+              };
+              const review = new Review(reviewData);
+              await review.save();
+              console.log(`[BATCH ${batchId}] Created default review for response ${response.id}`);
+            } catch (reviewError) {
+              console.error(`[BATCH ${batchId}] Failed to create default review for response ${response.id}:`, reviewError.message);
+              // Don't let review creation failure stop the import
+            }
+          }
 
           // Convert Map to Object for emitting
           const answersObj = response.answers instanceof Map ?
@@ -1242,7 +1288,7 @@ export const getRank = async (req, res) => {
 
     // Count existing final responses with the SAME answer for this form
     const query = {
-      questionId: formId,
+      questionId: { $in: [form.id, form._id.toString()] },
       isSectionSubmit: { $ne: true },
     };
 
@@ -1323,7 +1369,7 @@ export const getSuggestedAnswers = async (req, res) => {
     // Find a previous response with a match in the answers map
     // For Mongoose Maps, we use dot notation: answers.questionId
     const query = {
-      questionId: formId
+      questionId: { $in: [form.id, form._id.toString()] }
     };
 
     const trackingQuestionId = `${questionId}_tracking`;
@@ -1477,7 +1523,7 @@ export const getQuestionPreviousAnswers = async (req, res) => {
     // Check both normal ID and tracking suffixed ID
     const trackingQuestionId = `${questionId}_tracking`;
     const query = {
-      questionId: formId,
+      questionId: { $in: [form.id, form._id.toString()] },
       $or: [
         { [`answers.${questionId}`]: { $exists: true, $ne: null, $ne: "" } },
         { [`answers.${trackingQuestionId}`]: { $exists: true, $ne: null, $ne: "" } },
@@ -2203,7 +2249,7 @@ export const getResponsesByForm = async (req, res) => {
     );
 
     // Build response query
-    const query = { questionId: formId };
+    const query = { questionId: { $in: [form.id, form._id.toString()] } };
 
     // Add status filter if provided
     if (status && status !== 'all') {
@@ -2423,7 +2469,7 @@ export const exportResponses = async (req, res) => {
       a => a.assignedTenants && a.assignedTenants.includes(userTenantIdStr)
     );
 
-    const query = { questionId: formId };
+    const query = { questionId: { $in: [form.id, form._id.toString()] } };
 
     // Apply tenant filtering
     if (req.user.role === 'inspector') {
