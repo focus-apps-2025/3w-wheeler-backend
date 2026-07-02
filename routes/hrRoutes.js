@@ -1,5 +1,5 @@
 import express from 'express';
-import { authenticate, adminOnly } from '../middleware/auth.js';
+import { authenticate, adminOnly, checkGranularPermission } from '../middleware/auth.js';
 import { inspectorOnly } from '../middleware/inspectorOnly.js';
 import * as shiftController from '../controllers/shiftController.js';
 import * as attendanceController from '../controllers/attendanceController.js';
@@ -62,5 +62,15 @@ router.delete('/notifications', authenticate, notificationController.deleteAllNo
 router.get('/attendance/report', authenticate, adminOnly, reportController.getAttendanceReport);
 router.get('/attendance/export', authenticate, adminOnly, reportController.exportAttendanceReport);
 router.get('/attendance/summary', authenticate, adminOnly, reportController.getTenantStats);
+
+/**
+ * CREATE ATTENDANCE (Admin with canEditAttendanceTime permission or SuperAdmin)
+ */
+router.post('/attendance/create', authenticate, checkGranularPermission('canEditAttendanceTime'), attendanceController.createAttendance);
+
+/**
+ * UPDATE ATTENDANCE TIME (Admin with canEditAttendanceTime permission or SuperAdmin)
+ */
+router.put('/attendance/:id/time', authenticate, checkGranularPermission('canEditAttendanceTime'), reportController.updateAttendanceTime);
 
 export default router;

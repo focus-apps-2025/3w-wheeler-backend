@@ -340,14 +340,14 @@ export const getFormAnalytics = async (req, res) => {
     const baseQuery = {
       $or: [{ questionId: formId }, { questionId: form._id?.toString() }]
     };
-    
+
     // If not owner/superadmin, and only have chassis share or regular share
     // We only need to bypass tenantFilter if we are NOT the owner.
     let responseQuery = { ...baseQuery };
     if (!isOwner && req.user.role !== 'superadmin') {
-       // We can't use req.tenantFilter because the responses belong to the owner
+      // We can't use req.tenantFilter because the responses belong to the owner
     } else {
-       responseQuery = { ...responseQuery, ...req.tenantFilter };
+      responseQuery = { ...responseQuery, ...req.tenantFilter };
     }
 
     let allResponses = await Response.find(responseQuery)
@@ -365,8 +365,8 @@ export const getFormAnalytics = async (req, res) => {
 
       if (myAssignedChassis.length > 0) {
         // Find the question ID that has type 'chassisNumber'
-        const chassisQuestion = form.sections?.flatMap(s => s.questions || []).find(q => q.type === 'chassisNumber') 
-                              || form.followUpQuestions?.find(q => q.type === 'chassisNumber');
+        const chassisQuestion = form.sections?.flatMap(s => s.questions || []).find(q => q.type === 'chassisNumber')
+          || form.followUpQuestions?.find(q => q.type === 'chassisNumber');
         const chassisFieldId = chassisQuestion?.id || 'chassis_number';
 
         allResponses = allResponses.filter(r => {
@@ -1218,16 +1218,16 @@ export const getAdminResponseDetails = async (req, res) => {
     const formMainQuestionMap = {};
     forms.forEach(form => {
       const formKey = form.id || form._id.toString();
-      
+
       // Find the main question (first question in first section that has options)
       let mainQuestionId = null;
       let mainQuestionOptions = [];
-      
+
       if (form.sections && form.sections.length > 0) {
         for (const section of form.sections) {
           if (section.questions && section.questions.length > 0) {
             // Find the first question that has options (main question)
-            const mainQuestion = section.questions.find(q => 
+            const mainQuestion = section.questions.find(q =>
               q.options && q.options.length > 0 && !q.showWhen
             );
             if (mainQuestion) {
@@ -1238,7 +1238,7 @@ export const getAdminResponseDetails = async (req, res) => {
           }
         }
       }
-      
+
       formMainQuestionMap[formKey] = {
         mainQuestionId,
         mainQuestionOptions,
@@ -1268,7 +1268,7 @@ export const getAdminResponseDetails = async (req, res) => {
       const formId = r.questionId;
       const formKey = formId;
       const formInfo = formMainQuestionMap[formKey];
-      
+
       // Only process if we have main question info
       if (!formInfo || !formInfo.mainQuestionId) {
         console.log(`No main question found for form: ${formId}`);
@@ -1291,18 +1291,18 @@ export const getAdminResponseDetails = async (req, res) => {
 
       // ========== ONLY process the MAIN QUESTION answer ==========
       const answers = r.answers instanceof Map ? Object.fromEntries(r.answers) : (r.answers || {});
-      
+
       // Get the answer for the main question only
       const mainAnswer = answers[formInfo.mainQuestionId];
-      
+
       if (mainAnswer !== null && mainAnswer !== undefined) {
         const answerValue = String(mainAnswer).trim();
-        
+
         // Count in overall distribution
         overallAnswerDistribution[answerValue] = (overallAnswerDistribution[answerValue] || 0) + 1;
-        
+
         // Count in form-specific distribution
-        formMap[formId].answerDistribution[answerValue] = 
+        formMap[formId].answerDistribution[answerValue] =
           (formMap[formId].answerDistribution[answerValue] || 0) + 1;
       }
 
@@ -1310,7 +1310,7 @@ export const getAdminResponseDetails = async (req, res) => {
       const formSessions = sessionMap[formId] || [];
       const metaSessionId = r.submissionMetadata?.formSessionId;
       let matchingSession = null;
-      
+
       if (metaSessionId) {
         matchingSession = formSessions.find(s => s.sessionId === metaSessionId);
       }
@@ -1359,42 +1359,42 @@ export const getAdminResponseDetails = async (req, res) => {
 
     // Sort by response count descending
     const formBreakdown = Object.values(formMap).sort((a, b) => b.responseCount - a.responseCount);
-     const followUpAnswers = {};
+    const followUpAnswers = {};
 
-responses.forEach(r => {
-  const formId = r.questionId;
-  const formInfo = formMainQuestionMap[formId];
-  if (!formInfo || !formInfo.mainQuestionId) return;
+    responses.forEach(r => {
+      const formId = r.questionId;
+      const formInfo = formMainQuestionMap[formId];
+      if (!formInfo || !formInfo.mainQuestionId) return;
 
-  const answers = r.answers instanceof Map ? Object.fromEntries(r.answers) : (r.answers || {});
-  const mainAnswer = answers[formInfo.mainQuestionId];
-  if (!mainAnswer) return;
+      const answers = r.answers instanceof Map ? Object.fromEntries(r.answers) : (r.answers || {});
+      const mainAnswer = answers[formInfo.mainQuestionId];
+      if (!mainAnswer) return;
 
-  const mainAnswerStr = String(mainAnswer).trim();
+      const mainAnswerStr = String(mainAnswer).trim();
 
-  // Only collect follow-up answers for non-first-option answers (Rejected/Rework etc.)
-  const mainOptions = formInfo.mainQuestionOptions || [];
-  const isNonApproved = mainOptions.indexOf(mainAnswerStr) > 0;
-  if (!isNonApproved) return;
+      // Only collect follow-up answers for non-first-option answers (Rejected/Rework etc.)
+      const mainOptions = formInfo.mainQuestionOptions || [];
+      const isNonApproved = mainOptions.indexOf(mainAnswerStr) > 0;
+      if (!isNonApproved) return;
 
-  if (!followUpAnswers[formId]) followUpAnswers[formId] = [];
+      if (!followUpAnswers[formId]) followUpAnswers[formId] = [];
 
-  // Collect all answers for this response (excluding main question)
-  const followUpData = {};
-  Object.entries(answers).forEach(([questionId, value]) => {
-    if (questionId !== formInfo.mainQuestionId) {
-      followUpData[questionId] = value;
-    }
-  });
+      // Collect all answers for this response (excluding main question)
+      const followUpData = {};
+      Object.entries(answers).forEach(([questionId, value]) => {
+        if (questionId !== formInfo.mainQuestionId) {
+          followUpData[questionId] = value;
+        }
+      });
 
-  followUpAnswers[formId].push({
-    responseId: r._id.toString(),
-    mainAnswer: mainAnswerStr,
-    followUpData,
-    submittedBy: r.submittedBy || r.submitterContact?.email || 'Unknown',
-    createdAt: r.createdAt
-  });
-});
+      followUpAnswers[formId].push({
+        responseId: r._id.toString(),
+        mainAnswer: mainAnswerStr,
+        followUpData,
+        submittedBy: r.submittedBy || r.submitterContact?.email || 'Unknown',
+        createdAt: r.createdAt
+      });
+    });
     // Personal submissions (only count main question responses)
     const personalSubmissions = responses
       .filter(r => (r.submittedBy === adminName || r.submitterContact?.email === adminEmail))
@@ -1416,12 +1416,12 @@ responses.forEach(r => {
         statusBreakdown,
         answerDistribution: overallAnswerDistribution,
         formBreakdown,
-        followUpTree: followUpTreeData, 
+        followUpTree: followUpTreeData,
         personalSubmissions,
-        followUpAnswers,  
+        followUpAnswers,
       }
     });
-    
+
   } catch (error) {
     console.error('getAdminResponseDetails error:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
@@ -1483,7 +1483,7 @@ export const getTenantResponseDetails = async (req, res) => {
       sessionMap[s.formId].push(s);
     });
 
-   responses.forEach(r => {
+    responses.forEach(r => {
       const formId = r.questionId;
       const formMainQuestionMap = {};
       const formKey = formId;
@@ -1884,17 +1884,17 @@ export const getInspectorSummary = async (req, res) => {
         return res.status(403).json({ success: false, message: 'Access to this tenant is denied for Inspector Summary.' });
       }
     } else {
-        // Default behavior if no tenantId is specified in query
-        if (role === 'superadmin') {
-            // No initial filter for superadmin, can see all
-        } else if (role === 'admin' || role === 'subadmin') {
-            matchFilter.tenantId = new mongoose.Types.ObjectId(userTenantId);
-        } else if (role === 'inspector') {
-            matchFilter.createdBy = new mongoose.Types.ObjectId(userId);
-        } else {
-            // Default for other roles if any
-            matchFilter.tenantId = new mongoose.Types.ObjectId(userTenantId);
-        }
+      // Default behavior if no tenantId is specified in query
+      if (role === 'superadmin') {
+        // No initial filter for superadmin, can see all
+      } else if (role === 'admin' || role === 'subadmin') {
+        matchFilter.tenantId = new mongoose.Types.ObjectId(userTenantId);
+      } else if (role === 'inspector') {
+        matchFilter.createdBy = new mongoose.Types.ObjectId(userId);
+      } else {
+        // Default for other roles if any
+        matchFilter.tenantId = new mongoose.Types.ObjectId(userTenantId);
+      }
     }
 
     if (formId) {
@@ -1920,14 +1920,14 @@ export const getInspectorSummary = async (req, res) => {
     console.log('getInspectorSummary - matchFilter:', JSON.stringify(matchFilter, null, 2));
     const responses = await Response.find(matchFilter).sort({ createdAt: 1 }).lean();
     console.log(`getInspectorSummary - found: ${responses?.length || 0} responses`);
-    
+
     if (!responses || responses.length === 0) {
-      return res.json({ success: true, data: [], allStatuses: [] });
+      return res.json({ success: true, data: { summary: [], allStatuses: [] } });
     }
 
     // Get all unique form IDs from these responses
     const formIds = [...new Set(responses.map(r => r.questionId?.toString()).filter(Boolean))];
-    const forms = await Form.find({ 
+    const forms = await Form.find({
       $or: [
         { id: { $in: formIds } },
         { _id: { $in: formIds.filter(id => mongoose.Types.ObjectId.isValid(id)) } }
@@ -1938,6 +1938,7 @@ export const getInspectorSummary = async (req, res) => {
     const formChassisMap = {};
     forms.forEach(f => {
       let chassisId = null;
+      // ✅ FIX: Use 'f' instead of 'form'
       if (f.sections) {
         for (const section of f.sections) {
           if (section.questions) {
@@ -1965,6 +1966,8 @@ export const getInspectorSummary = async (req, res) => {
       if (f.id) formChassisMap[f.id] = chassisId;
       if (f._id) formChassisMap[f._id.toString()] = chassisId;
     });
+
+    console.log('🔄 [getInspectorSummary] formChassisMap:', formChassisMap);
 
     // Group responses by item (Chassis) for status calculation
     const itemGroups = {};
@@ -2007,7 +2010,7 @@ export const getInspectorSummary = async (req, res) => {
         if (answersObj) {
           Object.values(answersObj).forEach(ans => {
             if (ans === null || ans === undefined) return;
-            
+
             let s = '';
             if (typeof ans === 'object' && ans.status) {
               s = String(ans.status).trim();
@@ -2021,10 +2024,10 @@ export const getInspectorSummary = async (req, res) => {
             if (sl === 'rework' || sl === 'reworked' || sl.includes('re-rework')) {
               isRework = true;
             } else if (
-              sl === 'accepted' || 
-              sl === 'rework completed' || 
-              sl === 'verified' || 
-              sl === 'yes' || 
+              sl === 'accepted' ||
+              sl === 'rework completed' ||
+              sl === 'verified' ||
+              sl === 'yes' ||
               sl === 'direct ok' ||
               sl === 'rework accepted'
             ) {
@@ -2043,12 +2046,12 @@ export const getInspectorSummary = async (req, res) => {
         } else if (isRework) {
           reworkCount++;
           hasBeenReworked = true;
-          finalStatus = 'Rework QC Pending'; // Combined column as requested
+          finalStatus = 'Rework QC Pending';
         } else if (isAccepted) {
           if (index === 0 && !hasBeenReworked) {
             finalStatus = 'Direct Ok';
           } else {
-            finalStatus = 'Rework QC Completed'; // Mapped from Rework Accepted
+            finalStatus = 'Rework QC Completed';
           }
         } else if (foundStatus) {
           finalStatus = foundStatus;
@@ -2092,7 +2095,7 @@ export const getInspectorSummary = async (req, res) => {
       const stats = inspectorData[key];
       const status = calculatedStatuses[r._id.toString()];
       stats.totalInspection++;
-      
+
       if (stats.statusCounts.hasOwnProperty(status)) {
         stats.statusCounts[status]++;
       } else {
@@ -2110,9 +2113,9 @@ export const getInspectorSummary = async (req, res) => {
     const entryKeys = Object.keys(inspectorData);
     const userIds = [...new Set(entryKeys.map(k => inspectorData[k].userId))];
     const formIdsToFetch = [...new Set(entryKeys.map(k => inspectorData[k].formId))].filter(id => id !== 'unknown');
-    
+
     const users = await User.find({ _id: { $in: userIds } }).lean();
-    const fetchedForms = await Form.find({ 
+    const fetchedForms = await Form.find({
       $or: [
         { id: { $in: formIdsToFetch } },
         { _id: { $in: formIdsToFetch.filter(id => mongoose.Types.ObjectId.isValid(id)) } }
@@ -2138,12 +2141,15 @@ export const getInspectorSummary = async (req, res) => {
         shift: shift ? shift.displayName : 'N/A',
         formTitle: formInfo ? formInfo.title : 'N/A',
         qcInspector: `${user.firstName} ${user.lastName}`,
+        role: user.role,
         username: user.username,
         email: user.email,
         isActive: user.isActive,
         status: user.status,
         totalInspection: stats.totalInspection,
-        statusCounts: stats.statusCounts
+        statusCounts: stats.statusCounts,
+        userId: stats.userId,
+        formId: stats.formId
       });
     }
 
@@ -2153,12 +2159,12 @@ export const getInspectorSummary = async (req, res) => {
     // Static display order for the main columns
     const allStatuses = ['Direct Ok', 'Rework QC Completed', 'Rework QC Pending', 'Rejected', 'Dispatched'];
 
-    res.json({ 
-      success: true, 
-      data: { 
-        summary: finalSummary, 
-        allStatuses 
-      } 
+    res.json({
+      success: true,
+      data: {
+        summary: finalSummary,
+        allStatuses
+      }
     });
   } catch (error) {
     console.error('getInspectorSummary error:', error);
@@ -2279,7 +2285,7 @@ export const getPerformanceTable = async (req, res) => {
       ...tenantFilter,
       createdAt: { $gte: start, $lte: end }
     };
-    
+
     if (formId) {
       responseBaseFilter.questionId = formId;
     }
@@ -2297,11 +2303,11 @@ export const getPerformanceTable = async (req, res) => {
 
     // Aggregate dispatched (assigned) responses count for all users
     const dispatchedStats = await Response.aggregate([
-      { 
-        $match: { 
+      {
+        $match: {
           ...responseBaseFilter,
           assignedTo: { $ne: null }
-        } 
+        }
       },
       {
         $group: {
@@ -2341,18 +2347,18 @@ export const getPerformanceTable = async (req, res) => {
 
     // Map stats for easy lookup
     const submissionMap = {};
-    submissionStats.forEach(s => { 
-      if (s._id) submissionMap[s._id.toString()] = s.count; 
+    submissionStats.forEach(s => {
+      if (s._id) submissionMap[s._id.toString()] = s.count;
     });
 
     const dispatchedMap = {};
-    dispatchedStats.forEach(d => { 
-      if (d._id) dispatchedMap[d._id.toString()] = d.count; 
+    dispatchedStats.forEach(d => {
+      if (d._id) dispatchedMap[d._id.toString()] = d.count;
     });
 
     const reviewMap = {};
-    reviewStats.forEach(r => { 
-      if (r._id) reviewMap[r._id.toString()] = r; 
+    reviewStats.forEach(r => {
+      if (r._id) reviewMap[r._id.toString()] = r;
     });
 
     // Format final table data
@@ -2361,9 +2367,9 @@ export const getPerformanceTable = async (req, res) => {
       const submissions = submissionMap[userId] || 0;
       const dispatched = dispatchedMap[userId] || 0;
       const reviews = reviewMap[userId] || { total: 0, accepted: 0, rejected: 0, rework: 0 };
-      
-      const performanceScore = reviews.total > 0 
-        ? Math.round((reviews.accepted / reviews.total) * 100) 
+
+      const performanceScore = reviews.total > 0
+        ? Math.round((reviews.accepted / reviews.total) * 100)
         : 0;
 
       return {
@@ -2401,7 +2407,7 @@ export const getPerformanceTable = async (req, res) => {
 export const getOverallAnalytics = async (req, res) => {
   try {
     const { startDate, endDate, formIds } = req.query;
-    
+
     // Base match with tenant filtering
     const matchFilter = { ...req.tenantFilter };
 
@@ -2430,7 +2436,7 @@ export const getOverallAnalytics = async (req, res) => {
 
     // Fetch responses for this query
     const responses = await Response.find(matchFilter).sort({ createdAt: -1 }).lean();
-    
+
     if (!responses || responses.length === 0) {
       return res.json({
         success: true,
@@ -2451,7 +2457,7 @@ export const getOverallAnalytics = async (req, res) => {
 
     // Extract formIds to get form details
     const uniqueFormIds = [...new Set(responses.map(r => r.questionId).filter(Boolean))];
-    const forms = await Form.find({ 
+    const forms = await Form.find({
       $or: [
         { id: { $in: uniqueFormIds } },
         { _id: { $in: uniqueFormIds.filter(id => mongoose.Types.ObjectId.isValid(id)) } }
@@ -2464,7 +2470,7 @@ export const getOverallAnalytics = async (req, res) => {
     forms.forEach(form => {
       const fid = form.id || form._id.toString();
       formMap[fid] = form;
-      
+
       // Identify dealer questions
       if (form.sections?.length > 0) {
         const first = form.sections[0];
@@ -2550,7 +2556,7 @@ export const getOverallAnalytics = async (req, res) => {
       if (!fid) return { name: null, rank: null };
       const dqid = dealerQuestionMap.get(fid);
       const answersObj = response.answers instanceof Map ? Object.fromEntries(response.answers) : response.answers;
-      
+
       const hasAnswerValue = (v) => {
         if (v === null || v === undefined) return false;
         if (typeof v === 'string') return v.trim() !== '';
@@ -2651,7 +2657,7 @@ export const getOverallAnalytics = async (req, res) => {
     });
 
     const sectionStats = Array.from(sectionStatsMap.values());
-    
+
     let globalStats = { yes: 0, no: 0, na: 0, accepted: 0, rejected: 0, rework: 0 };
     enrichedResponses.forEach(r => {
       if (r.stats) {

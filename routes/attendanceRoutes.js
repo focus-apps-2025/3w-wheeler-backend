@@ -6,9 +6,13 @@ import {
     getMyAttendance,
     exportAttendance,
     getAttendanceUsers,
-    updateLoginLocation
+    updateLoginLocation,
+    createAttendance,
+    getInspectors,
+    swapResponses,
+    updateAttendanceTime
 } from '../controllers/attendanceController.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, adminOnly } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -49,5 +53,24 @@ router.post('/heartbeat', updateLastActive);
 // @desc    Update login location info
 // @access  Private
 router.put('/login-location', updateLoginLocation);
+
+// @route   POST /api/attendance/create
+// @desc    Create attendance record (Admin/HR)
+// @access  Private (Admin only)
+router.post('/create', createAttendance);
+
+// @route   GET /api/attendance/inspectors
+// @desc    Get all inspectors for swapping target selection
+// @access  Private (Admin only)
+router.get('/inspectors', adminOnly, getInspectors);
+
+// @route   POST /api/attendance/swap-responses
+// @desc    Swap responses between inspectors and log it
+// @access  Private (Admin only)
+router.post('/swap-responses', adminOnly, swapResponses);
+// @route   PUT /api/attendance/:id/time
+// @desc    Update attendance time (Admin only)
+// @access  Private (Admin only)
+router.put('/:id/time', authenticate, adminOnly, updateAttendanceTime);
 
 export default router;

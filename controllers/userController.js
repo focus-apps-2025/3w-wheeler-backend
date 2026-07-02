@@ -986,6 +986,68 @@ export const submitReview = async (req, res) => {
 // @route   GET /api/responses/reviews/:responseId
 // @access  Public (reviews should be viewable by response viewers)
 // userController.js - getReviewsForResponse
+// @desc    Update granular permissions for a user (SuperAdmin only)
+// @route   PUT /api/users/:id/granular-permissions
+// @access  Private (SuperAdmin only)
+export const updateGranularPermissions = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { canEditAttendanceTime, canEditInvoices, canEditPricing } = req.body;
+
+    // Only superadmin can update granular permissions
+    if (req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. SuperAdmin only.'
+      });
+    }
+
+    const user = await User.findOne({ _id: id });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Update granular permissions
+    if (typeof canEditAttendanceTime === 'boolean') {
+      user.granularPermissions.canEditAttendanceTime = canEditAttendanceTime;
+    }
+    if (typeof canEditInvoices === 'boolean') {
+      user.granularPermissions.canEditInvoices = canEditInvoices;
+    }
+    if (typeof canEditPricing === 'boolean') {
+      user.granularPermissions.canEditPricing = canEditPricing;
+    }
+
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Granular permissions updated successfully',
+      data: {
+        user: {
+          _id: user._id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          role: user.role,
+          granularPermissions: user.granularPermissions
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Update granular permissions error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
 export const getReviewsForResponse = async (req, res) => {
   try {
     const { responseId } = req.params;

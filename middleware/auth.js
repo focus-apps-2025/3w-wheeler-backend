@@ -315,3 +315,36 @@ export const canAccessForm = async (req, res, next) => {
     });
   }
 };
+
+/**
+ * Check granular permission for admin actions
+ * SuperAdmin always has access; Admin needs specific granular permission
+ */
+export const checkGranularPermission = (permissionType) => {
+  return async (req, res, next) => {
+    const user = req.user;
+    
+    // SuperAdmin always has all granular permissions
+    if (user.role === 'superadmin') {
+      return next();
+    }
+    
+    // Admin needs to check granularPermissions
+    if (user.role === 'admin') {
+      const hasPermission = user.granularPermissions?.[permissionType] === true;
+      if (!hasPermission) {
+        return res.status(403).json({
+          success: false,
+          message: `Access denied. Admin does not have "${permissionType}" permission. Contact SuperAdmin to grant this permission.`
+        });
+      }
+      return next();
+    }
+    
+    // Other roles don't have granular permissions
+    return res.status(403).json({
+      success: false,
+      message: 'Access denied. Only SuperAdmin and Admin can perform this action.'
+    });
+  };
+};

@@ -1,10 +1,14 @@
 import Attendance from '../models/Attendance.js';
 import Shift from '../models/Shift.js';
 import User from '../models/User.js';
+import Response from '../models/Response.js';
+import Form from '../models/Form.js';
+import SwapLog from '../models/SwapLog.js';
 import { reverseGeocode } from '../utils/geocode.js';
 import mongoose from 'mongoose';
 import XLSX from 'xlsx';
 import smsService from '../services/smsService.js';
+import { v4 as uuidv4 } from 'uuid';
 
 // Helper to get current IST time
 const getISTNow = () => {
@@ -544,5 +548,599 @@ export const sendAttendanceOTP = async (req, res) => {
     res.json({ success: true, message: 'OTP sent to your mobile number' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * Create attendance record (Admin/HR)
+ */
+export const createAttendance = async (req, res) => {
+  try {
+    const { userId, date, status, checkIn, checkOut, workingHours } = req.body;
+    const tenantId = req.user.tenantId;
+
+    console.log('createAttendance - received:', { userId, date, status, checkIn, checkOut, workingHours });
+
+    // Validate required fields
+    if (!userId || !date || !status) {
+      return res.status(400).json({ success: false, message: 'Missing required fields: userId, date, status' });
+    }
+
+    // Resolve user - handle both ObjectId and name string
+    let resolvedUserId = userId;
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      resolvedUserId = userId;
+    } else {
+      // Try to find user by name or username
+      const nameParts = userId.trim().split(' ');
+      const firstName = nameParts[0] || '';
+      const lastName = nameParts.slice(1).join(' ') || '';
+
+      const userByName = await User.findOne({
+        tenantId,
+        $or: [
+          { firstName, lastName },
+          { username: userId }  // Also try username lookup
+        ]
+      }).select('_id');
+
+      if (!userByName) {
+        return res.status(404).json({ success: false, message: `User "${userId}" not found in this tenant` });
+      }
+      resolvedUserId = userByName._id;
+    }
+
+    // Parse date
+    const parseLocalDate = (dateStr) => {
+      const parts = dateStr.split('-').map(Number);
+      return new Date(parts[0], parts[1] - 1, parts[2]);
+    };
+
+    const attendanceDate = parseLocalDate(date);
+    attendanceDate.setHours(0, 0, 0, 0);
+
+    // Check if attendance already exists for this user and date
+    let attendance = await Attendance.findOne({
+      inspector: resolvedUserId,
+      date: { $gte: attendanceDate, $lt: new Date(attendanceDate.getTime() + 24 * 60 * 60 * 1000) }
+    });
+
+    // Prepare attendance data
+    const attendanceData = {
+      inspector: resolvedUserId,
+      tenantId,
+      date: attendanceDate,
+      status: status || 'present',
+      isPresent: status === 'present' || status === 'late' || status === 'half-day'
+    };
+
+    // Handle shift type with check-in/check-out times
+    if ((status === 'shift' || status === 'present' || status === 'half-day') && checkIn && checkOut) {
+      // Parse ISO datetime strings (e.g., "2026-06-03T09:03")
+      const checkInTime = new Date(checkIn);
+      const checkOutTime = new Date(checkOut);
+
+      if (!isNaN(checkInTime.getTime()) && !isNaN(checkOutTime.getTime())) {
+        attendanceData.checkInTime = checkInTime;
+        attendanceData.checkOutTime = checkOutTime;
+
+        // Calculate working hours
+        const workingHoursMs = checkOutTime - checkInTime;
+        attendanceData.workingHours = Math.round((workingHoursMs / (1000 * 60 * 60)) * 100) / 100;
+
+        // Handle provided shift name or auto-detect
+        if (req.body.shift) {
+          // Use shift name from frontend
+          attendanceData.shiftName = req.body.shift;
+        } else {
+          // Auto-detect shift based on check-in time
+          const allShifts = await Shift.find({ tenantId, isActive: true });
+          const currentMins = checkInTime.getHours() * 60 + checkInTime.getMinutes();
+
+          const toMins = (t) => {
+            if (!t) return null;
+            const [h, m] = t.split(':').map(Number);
+            return h * 60 + m;
+          };
+
+          const shift = allShifts.find(s => {
+            const startMins = toMins(s.startTime);
+            const shiftEndMins = toMins(s.endTime);
+            const isNight = s.isNightShift || startMins > shiftEndMins;
+            const bufferedStart = (startMins - 15 + 1440) % 1440;
+
+            if (isNight) {
+              return currentMins >= bufferedStart || currentMins < shiftEndMins;
+            }
+            return currentMins >= bufferedStart && currentMins < shiftEndMins;
+          });
+
+          if (shift) {
+            attendanceData.shift = shift._id;
+            attendanceData.shiftName = shift.displayName || shift.name;
+            attendanceData.shiftStartTime = shift.startTime;
+            attendanceData.shiftEndTime = shift.endTime;
+          } else {
+            // Default shift name when no shift found
+            attendanceData.shiftName = 'General';
+          }
+        }
+      }
+    }
+
+    if (attendance) {
+      // Update existing attendance
+      Object.assign(attendance, attendanceData);
+      await attendance.save();
+      console.log('createAttendance - updated:', attendance);
+    } else {
+      // Create new attendance
+      attendance = await Attendance.create(attendanceData);
+      console.log('createAttendance - created:', attendance);
+    }
+
+    // Populate and return
+    const populated = await Attendance.findById(attendance._id)
+      .populate('inspector', 'firstName lastName email username')
+      .populate('shift', 'name displayName startTime endTime');
+
+    res.status(201).json({ success: true, data: populated });
+  } catch (error) {
+    console.error('createAttendance error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * Fetch all inspectors, admins, and subadmins in current tenant
+ */
+export const getInspectors = async (req, res) => {
+  try {
+    const tenantId = req.user.tenantId;
+    const users = await User.find({
+      tenantId,
+      isActive: true,
+      role: { $in: ['inspector', 'admin', 'subadmin', 'superadmin'] }
+    }).select('firstName lastName username email role').lean();
+    res.json({ success: true, data: users });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * Swap inspector responses and log in SwapLog
+ */
+/**
+ * Swap responses between two inspectors
+ * POST /api/attendance/swap-responses
+ */
+export const swapResponses = async (req, res) => {
+  try {
+    const {
+      sourceUserId,
+      targetUserId,
+      sourceDate,
+      targetDate,
+      formId,
+      quantities
+    } = req.body;
+
+    console.log('🔄 [SWAP] Request received:', {
+      sourceUserId,
+      targetUserId,
+      sourceDate,
+      targetDate,
+      formId,
+      quantities
+    });
+
+    // ─── 1. VALIDATE INPUTS ──────────────────────────────────────────
+    if (!sourceUserId || !targetUserId || !sourceDate || !targetDate || !formId || !quantities) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields'
+      });
+    }
+
+    // Check if users exist
+    const [sourceUser, targetUser] = await Promise.all([
+      User.findById(sourceUserId),
+      User.findById(targetUserId)
+    ]);
+
+    if (!sourceUser) {
+      return res.status(404).json({ success: false, message: 'Source user not found' });
+    }
+    if (!targetUser) {
+      return res.status(404).json({ success: false, message: 'Target user not found' });
+    }
+
+    // ─── 2. BUILD DATE RANGES ──────────────────────────────────────────
+    const sourceStartDate = new Date(sourceDate);
+    sourceStartDate.setHours(0, 0, 0, 0);
+    const sourceEndDate = new Date(sourceDate);
+    sourceEndDate.setHours(23, 59, 59, 999);
+
+    const targetStartDate = new Date(targetDate);
+    targetStartDate.setHours(0, 0, 0, 0);
+    const targetEndDate = new Date(targetDate);
+    targetEndDate.setHours(23, 59, 59, 999);
+
+    // ─── 3. GET FORM ──────────────────────────────────────────────────
+    const form = await Form.findOne({ id: formId }).lean();
+    if (!form) {
+      return res.status(404).json({ success: false, message: 'Form not found' });
+    }
+
+    // ─── 4. GET SOURCE USER'S RESPONSES ──────────────────────────────
+    const sourceQuery = {
+      questionId: formId,
+      createdBy: sourceUserId,
+      createdAt: { $gte: sourceStartDate, $lte: sourceEndDate },
+      isSectionSubmit: { $ne: true }
+    };
+
+    const sourceResponses = await Response.find(sourceQuery).lean();
+    console.log(`🔄 [SWAP] Found ${sourceResponses.length} responses for source user on ${sourceDate}`);
+
+    if (sourceResponses.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: `No responses found for source user on ${sourceDate}`
+      });
+    }
+
+    // ─── 5. CATEGORIZE RESPONSES BY STATUS ────────────────────────────
+    const getResponseStatus = (answers) => {
+      const answersObj = answers instanceof Map ? Object.fromEntries(answers) : answers;
+      const formChassisMap = {};
+      // ✅ First, check if there's a chassis answer with status
+      const chassisId = formChassisMap[formId]; // You need to pass this
+      if (chassisId && answersObj[chassisId]) {
+        const chassisAnswer = answersObj[chassisId];
+        if (typeof chassisAnswer === 'object' && chassisAnswer.status) {
+          const s = String(chassisAnswer.status).toLowerCase().trim();
+          if (s === 'rejected') return 'Rejected';
+          if (s === 'rework' || s === 'rework pending') return 'Rework QC Pending';
+          if (s === 'rework completed' || s === 'rework accepted') return 'Rework QC Completed';
+          if (s === 'accepted' || s === 'direct ok' || s === 'verified') return 'Direct Ok';
+        }
+        if (typeof chassisAnswer === 'string') {
+          const s = chassisAnswer.toLowerCase().trim();
+          if (s === 'rejected') return 'Rejected';
+          if (s === 'rework' || s === 'rework pending') return 'Rework QC Pending';
+          if (s === 'rework completed' || s === 'rework accepted') return 'Rework QC Completed';
+          if (s === 'accepted' || s === 'direct ok' || s === 'verified') return 'Direct Ok';
+        }
+      }
+      // Extract all values
+      const extractAllValues = (obj, depth = 0) => {
+        const values = [];
+        if (depth > 5) return values;
+        if (obj === null || obj === undefined) return values;
+        if (typeof obj === 'string') {
+          if (obj.trim()) values.push(obj.trim());
+        } else if (Array.isArray(obj)) {
+          obj.forEach(item => values.push(...extractAllValues(item, depth + 1)));
+        } else if (typeof obj === 'object') {
+          const statusFields = ['status', 'reviewOption', 'review', 'option', 'value', 'text', 'label', 'answer'];
+          for (const field of statusFields) {
+            if (obj[field] && typeof obj[field] === 'string') {
+              values.push(obj[field]);
+            }
+          }
+          Object.values(obj).forEach(val => {
+            if (typeof val === 'string' || typeof val === 'object') {
+              values.push(...extractAllValues(val, depth + 1));
+            }
+          });
+        }
+        return values;
+      };
+
+      const allValues = extractAllValues(answersObj);
+
+      // ✅ Priority 1: Rejected
+      for (const value of allValues) {
+        if (!value) continue;
+        const str = String(value).toLowerCase().trim();
+        if (!str) continue;
+        if (str === 'rejected' || str === 'reject' || str === 'no' || str === 'nok' || str === 'fail' || str === 'failed') {
+          return 'Rejected';
+        }
+      }
+
+      // ✅ Priority 2: Rework QC Pending
+      for (const value of allValues) {
+        if (!value) continue;
+        const str = String(value).toLowerCase().trim();
+        if (!str) continue;
+        if (str === 'rework' || str === 'rework pending' || str.includes('rework')) {
+          return 'Rework QC Pending';
+        }
+      }
+
+      // ✅ Priority 3: Rework QC Completed
+      for (const value of allValues) {
+        if (!value) continue;
+        const str = String(value).toLowerCase().trim();
+        if (!str) continue;
+        if (str === 'rework completed' || str === 'rework accepted' || str === 'rework complete' || str === 'done') {
+          return 'Rework QC Completed';
+        }
+      }
+
+      // ✅ Priority 4: Direct Ok
+      for (const value of allValues) {
+        if (!value) continue;
+        const str = String(value).toLowerCase().trim();
+        if (!str) continue;
+        if (str === 'accepted' || str === 'direct ok' || str === 'directok' || str === 'yes' || str === 'verified' || str === 'ok') {
+          return 'Direct Ok';
+        }
+      }
+
+      return 'Unknown';
+    };
+
+    const categorizedResponses = {
+      'Direct Ok': [],
+      'Rework QC Completed': [],
+      'Rework QC Pending': [],
+      'Rejected': []
+    };
+
+    sourceResponses.forEach(response => {
+      const status = getResponseStatus(response.answers);
+      if (categorizedResponses[status]) {
+        categorizedResponses[status].push(response);
+      }
+    });
+
+    console.log('🔄 [SWAP] Categorized source responses:', {
+      'Direct Ok': categorizedResponses['Direct Ok'].length,
+      'Rework QC Completed': categorizedResponses['Rework QC Completed'].length,
+      'Rework QC Pending': categorizedResponses['Rework QC Pending'].length,
+      'Rejected': categorizedResponses['Rejected'].length
+    });
+
+    // ─── 6. SELECT RESPONSES TO SWAP ──────────────────────────────────
+    const responsesToSwap = [];
+    const statusMap = {
+      'Direct Ok': quantities.directOk || 0,
+      'Rework QC Completed': quantities.reworkCompleted || 0,
+      'Rework QC Pending': quantities.reworkPending || 0,
+      'Rejected': quantities.rejected || 0
+    };
+
+    console.log('🔄 [SWAP] Requested quantities:', statusMap);
+
+    for (const [status, count] of Object.entries(statusMap)) {
+      if (count > 0 && categorizedResponses[status]) {
+        const available = categorizedResponses[status];
+        if (available.length < count) {
+          return res.status(400).json({
+            success: false,
+            message: `Not enough ${status} responses. Available: ${available.length}, Requested: ${count}`
+          });
+        }
+        const selected = available.slice(0, count);
+        responsesToSwap.push(...selected);
+        console.log(`🔄 [SWAP] Selected ${selected.length} ${status} responses`);
+      }
+    }
+
+    if (responsesToSwap.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No responses selected for swap.'
+      });
+    }
+
+    console.log(`🔄 [SWAP] Total responses to swap: ${responsesToSwap.length}`);
+    const sourceResponseIds = responsesToSwap.map(r => r._id);
+
+    // ─── 7. DELETE TARGET USER'S EXISTING RESPONSES ON TARGET DATE ──
+    const deleteTargetQuery = {
+      questionId: formId,
+      createdBy: targetUserId,
+      createdAt: { $gte: targetStartDate, $lte: targetEndDate },
+      isSectionSubmit: { $ne: true }
+    };
+
+    const deletedTargetResult = await Response.deleteMany(deleteTargetQuery);
+    console.log(`🔄 [SWAP] Deleted ${deletedTargetResult.deletedCount} existing responses from target user on ${targetDate}`);
+
+    // ─── 8. CREATE NEW RESPONSES FOR TARGET USER ──────────────────────
+    const newResponses = [];
+
+    for (const sourceResponse of responsesToSwap) {
+      const originalTime = sourceResponse.createdAt;
+      const timeStr = originalTime.toTimeString().split(' ')[0];
+      const newCreatedAt = new Date(`${targetDate}T${timeStr}`);
+
+      const newResponseData = {
+        ...sourceResponse,
+        id: uuidv4(),
+        createdBy: targetUserId,
+        submittedBy: `${targetUser.firstName} ${targetUser.lastName}`,
+        createdAt: newCreatedAt,
+        updatedAt: new Date(),
+        swappedFrom: sourceUserId,
+        swappedAt: new Date(),
+      };
+
+      delete newResponseData._id;
+      delete newResponseData.__v;
+
+      const saved = await Response.create(newResponseData);
+      newResponses.push(saved);
+    }
+
+    console.log(`🔄 [SWAP] Created ${newResponses.length} new responses for target user on ${targetDate}`);
+
+    // ─── ✅ 9. DELETE SOURCE RESPONSES (THIS IS THE KEY FIX!) ──────
+    const deleteSourceQuery = {
+      _id: { $in: sourceResponseIds }
+    };
+
+    const deletedSourceResult = await Response.deleteMany(deleteSourceQuery);
+    console.log(`🔄 [SWAP] Deleted ${deletedSourceResult.deletedCount} source responses`);
+
+    // ─── 10. LOG THE SWAP ─────────────────────────────────────────────
+    try {
+      const SwapLog = mongoose.model('SwapLog');
+      await SwapLog.create({
+        sourceUser: sourceUserId,
+        targetUser: targetUserId,
+        sourceDate: sourceDate,
+        targetDate: targetDate,
+        formId: formId,
+        swappedResponses: sourceResponseIds,
+        newResponses: newResponses.map(r => r._id),
+        quantities: {
+          directOk: quantities.directOk || 0,
+          reworkCompleted: quantities.reworkCompleted || 0,
+          reworkPending: quantities.reworkPending || 0,
+          rejected: quantities.rejected || 0
+        },
+        swappedBy: req.user._id,
+        tenantId: req.user.tenantId
+      });
+      console.log('🔄 [SWAP] Swap logged successfully');
+    } catch (logError) {
+      console.warn('⚠️ [SWAP] Failed to log swap:', logError);
+    }
+
+    // ─── 11. RETURN RESPONSE ──────────────────────────────────────────
+    res.json({
+      success: true,
+      message: `Successfully swapped ${responsesToSwap.length} responses from ${sourceUser.firstName} ${sourceUser.lastName} on ${sourceDate} to ${targetUser.firstName} ${targetUser.lastName} on ${targetDate}`,
+      data: {
+        swappedCount: responsesToSwap.length,
+        statusBreakdown: statusMap,
+        sourceUser: {
+          id: sourceUserId,
+          name: `${sourceUser.firstName} ${sourceUser.lastName}`
+        },
+        targetUser: {
+          id: targetUserId,
+          name: `${targetUser.firstName} ${targetUser.lastName}`
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ [SWAP] Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to swap responses: ' + error.message
+    });
+  }
+};
+/**
+ * Update attendance time (Admin only)
+ * PUT /api/attendance/:id/time
+ */
+export const updateAttendanceTime = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { checkIn, checkOut, status, shift } = req.body;
+    const tenantId = req.user.tenantId;
+
+    console.log('🔧 [updateAttendanceTime] Request received:', { id, checkIn, checkOut, status, shift });
+
+    // Find the attendance record
+    const attendance = await Attendance.findOne({ _id: id, tenantId });
+
+    if (!attendance) {
+      return res.status(404).json({
+        success: false,
+        message: 'Attendance record not found'
+      });
+    }
+
+    console.log('🔧 [updateAttendanceTime] Found attendance:', {
+      inspector: attendance.inspector,
+      date: attendance.date,
+      currentStatus: attendance.status
+    });
+
+    // Update check-in time
+    if (checkIn !== undefined) {
+      if (checkIn === null || checkIn === '') {
+        attendance.checkInTime = null;
+      } else {
+        const parsedCheckIn = new Date(checkIn);
+        if (!isNaN(parsedCheckIn.getTime())) {
+          attendance.checkInTime = parsedCheckIn;
+        }
+      }
+    }
+
+    // Update check-out time
+    if (checkOut !== undefined) {
+      if (checkOut === null || checkOut === '') {
+        attendance.checkOutTime = null;
+      } else {
+        const parsedCheckOut = new Date(checkOut);
+        if (!isNaN(parsedCheckOut.getTime())) {
+          attendance.checkOutTime = parsedCheckOut;
+        }
+      }
+    }
+
+    // Update status
+    if (status) {
+      attendance.status = status;
+      attendance.isPresent = status === 'present' || status === 'late' || status === 'half-day';
+    }
+
+    // Update shift name
+    if (shift !== undefined) {
+      attendance.shiftName = shift || 'No shift';
+    }
+
+    // Recalculate working hours if both check-in and check-out exist
+    if (attendance.checkInTime && attendance.checkOutTime) {
+      const workingHoursMs = attendance.checkOutTime.getTime() - attendance.checkInTime.getTime();
+      attendance.workingHours = parseFloat((workingHoursMs / (1000 * 60 * 60)).toFixed(2));
+    } else if (attendance.checkInTime && !attendance.checkOutTime) {
+      // If only check-in exists, calculate from check-in to now
+      const now = new Date();
+      const workingHoursMs = now.getTime() - attendance.checkInTime.getTime();
+      attendance.workingHours = parseFloat((workingHoursMs / (1000 * 60 * 60)).toFixed(2));
+    } else {
+      attendance.workingHours = 0;
+    }
+
+    await attendance.save();
+
+    console.log('🔧 [updateAttendanceTime] Updated attendance:', {
+      id: attendance._id,
+      status: attendance.status,
+      checkIn: attendance.checkInTime,
+      checkOut: attendance.checkOutTime,
+      workingHours: attendance.workingHours
+    });
+
+    // Populate and return
+    const populated = await Attendance.findById(attendance._id)
+      .populate('inspector', 'firstName lastName email username')
+      .populate('shift', 'name displayName startTime endTime');
+
+    res.json({
+      success: true,
+      message: 'Attendance updated successfully',
+      data: populated
+    });
+
+  } catch (error) {
+    console.error('❌ [updateAttendanceTime] Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update attendance: ' + error.message
+    });
   }
 };
