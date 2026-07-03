@@ -932,27 +932,7 @@ export const batchImportResponses = async (req, res) => {
             const response = new Response(responseData);
             await response.save();
 
-            // Create a default 'Accepted' review for the imported response
-            if (req.user) {
-              try {
-                const reviewData = {
-                  responseId: response.id,
-                  reviewerId: req.user._id,
-                  reviewerName: `${req.user.firstName} ${req.user.lastName}`,
-                  reviewerEmail: req.user.email,
-                  submitterId: response.createdBy || response.submittedBy,
-                  reviewOption: 'Accepted',
-                  scoreChange: 0,
-                  tenantId: form.tenantId
-                };
-                const review = new Review(reviewData);
-                await review.save();
-                console.log(`[BATCH ${batchId}] Created default review for response ${response.id}`);
-              } catch (reviewError) {
-                console.error(`[BATCH ${batchId}] Failed to create default review for response ${response.id}:`, reviewError.message);
-                // Don't let review creation failure stop the import
-              }
-            }
+
 
             const answersObj = response.answers instanceof Map ?
               Object.fromEntries(response.answers) : response.answers;
@@ -1136,27 +1116,7 @@ export const batchImportResponses = async (req, res) => {
           const response = new Response(responseData);
           await response.save();
 
-          // Create a default 'Accepted' review for the imported response
-          if (req.user) {
-            try {
-              const reviewData = {
-                responseId: response.id,
-                reviewerId: req.user._id,
-                reviewerName: `${req.user.firstName} ${req.user.lastName}`,
-                reviewerEmail: req.user.email,
-                submitterId: response.createdBy?.toString() || response.submittedBy,
-                reviewOption: 'Accepted',
-                scoreChange: 0,
-                tenantId: form.tenantId
-              };
-              const review = new Review(reviewData);
-              await review.save();
-              console.log(`[BATCH ${batchId}] Created default review for response ${response.id}`);
-            } catch (reviewError) {
-              console.error(`[BATCH ${batchId}] Failed to create default review for response ${response.id}:`, reviewError.message);
-              // Don't let review creation failure stop the import
-            }
-          }
+
 
           // Convert Map to Object for emitting
           const answersObj = response.answers instanceof Map ?
