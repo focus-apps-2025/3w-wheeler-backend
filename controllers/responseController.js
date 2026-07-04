@@ -710,6 +710,67 @@ export const batchImportResponses = async (req, res) => {
 
     // Find form (without isVisible check for now)
     const form = await Form.findOne({ id: actualQuestionId });
+    if (!form) {
+      return res.status(404).json({
+        success: false,
+        message: `Form with ID "${actualQuestionId}" not found`
+      });
+    }
+
+    // STEP 0: Prefetch metadata and form questions once
+    const submissionMetadata = await collectSubmissionMetadata(req, {
+      includeLocation: form.locationEnabled !== false,
+    });
+
+    const collectAllQuestions = (questions, result = []) => {
+      if (!Array.isArray(questions)) return result;
+      questions.forEach(q => {
+        result.push(q);
+        if (Array.isArray(q.followUpQuestions)) {
+          collectAllQuestions(q.followUpQuestions, result);
+        }
+      });
+      return result;
+    };
+
+    const allQuestions = [];
+    if (form.sections) {
+      form.sections.forEach(section => {
+        if (section.questions) {
+          collectAllQuestions(section.questions, allQuestions);
+        }
+      });
+    }
+    if (form.followUpQuestions) {
+      collectAllQuestions(form.followUpQuestions, allQuestions);
+    }
+
+    const rankTrackedQuestions = allQuestions.filter(q => q.trackResponseRank);
+    const rankMaps = {};
+    for (const question of rankTrackedQuestions) {
+      const counts = await Response.aggregate([
+        { 
+          $match: { 
+            questionId: actualQuestionId, 
+            isSectionSubmit: { $ne: true },
+            [`answers.${question.id}`]: { $exists: true, $ne: null }
+          } 
+        },
+        { 
+          $group: { 
+            _id: `$answers.${question.id}`, 
+            count: { $sum: 1 } 
+          } 
+        }
+      ]);
+      const map = new Map();
+      counts.forEach(c => {
+        if (c._id !== undefined && c._id !== null) {
+          map.set(String(c._id).trim().toLowerCase(), c.count);
+        }
+      });
+      rankMaps[question.id] = map;
+    }
 
     // STEP 1: Collect ALL Google Drive URLs from ALL responses FIRST
     console.log(`[BATCH ${batchId}] Collecting all Google Drive URLs from ${responses.length} responses`);
@@ -821,6 +882,7 @@ export const batchImportResponses = async (req, res) => {
         console.log(`[BATCH ${batchId}] Successfully processed ${processedUrlMap.size}/${allGoogleDriveUrls.length} URLs`);
 
         // STEP 3: Process each response with already converted URLs
+        const responsesToSave = [];
         for (let index = 0; index < responses.length; index++) {
           try {
             const { answers, submittedBy, submitterContact, parentResponseId } = responses[index];
@@ -848,35 +910,6 @@ export const batchImportResponses = async (req, res) => {
               }
             });
 
-            const submissionMetadata = await collectSubmissionMetadata(req, {
-              includeLocation: form.locationEnabled !== false,
-            });
-            // Helper function to recursively collect all questions
-            const collectAllQuestions = (questions, result = []) => {
-              if (!Array.isArray(questions)) return result;
-
-              questions.forEach(q => {
-                result.push(q);
-                if (Array.isArray(q.followUpQuestions)) {
-                  collectAllQuestions(q.followUpQuestions, result);
-                }
-              });
-
-              return result;
-            };
-
-            const allQuestions = [];
-            if (form.sections) {
-              form.sections.forEach(section => {
-                if (section.questions) {
-                  collectAllQuestions(section.questions, allQuestions);
-                }
-              });
-            }
-            if (form.followUpQuestions) {
-              collectAllQuestions(form.followUpQuestions, allQuestions);
-            }
-
             let correct = 0;
             let total = 0;
 
@@ -891,26 +924,15 @@ export const batchImportResponses = async (req, res) => {
             });
             // Calculate ranks for specific questions
             const responseRanks = {};
-            console.log(`[BATCH-RANK] Calculating ranks for ${allQuestions.length} questions`);
-            for (const question of allQuestions) {
-              // Check for trackResponseRank at any level
-              if (question.trackResponseRank) {
-                const answer = processedAnswers[question.id];
-                console.log(`[BATCH-RANK] Question "${question.text}" (ID: ${question.id}) has trackResponseRank=true. Answer:`, answer);
-
-                if (answer !== undefined && answer !== null && answer !== '') {
-                  // Count existing responses with the same answer for this form
-                  const query = {
-                    questionId: actualQuestionId,
-                    [`answers.${question.id}`]: answer,
-                    isSectionSubmit: false
-                  };
-
-                  console.log(`[BATCH-RANK] Querying existing responses with:`, JSON.stringify(query));
-                  const count = await Response.countDocuments(query);
-                  console.log(`[BATCH-RANK] Found ${count} existing responses. New rank: ${count + 1}`);
-                  responseRanks[question.id] = count + 1;
-                }
+            for (const question of rankTrackedQuestions) {
+              const answer = processedAnswers[question.id];
+              if (answer !== undefined && answer !== null && answer !== '') {
+                const answerKey = String(answer).trim().toLowerCase();
+                const map = rankMaps[question.id];
+                const count = map.get(answerKey) || 0;
+                const newRank = count + 1;
+                responseRanks[question.id] = newRank;
+                map.set(answerKey, newRank);
               }
             }
 
@@ -930,42 +952,53 @@ export const batchImportResponses = async (req, res) => {
             };
 
             const response = new Response(responseData);
-            await response.save();
-
-
-
-            const answersObj = response.answers instanceof Map ?
-              Object.fromEntries(response.answers) : response.answers;
-            const ranksObj = response.responseRanks instanceof Map ?
-              Object.fromEntries(response.responseRanks) : response.responseRanks;
-
-
-            emitResponseCreated(actualQuestionId, {
-              id: response.id,
-              questionId: response.questionId,
-              status: response.status,
-              submittedBy: response.submittedBy,
-              createdAt: response.createdAt,
-              answers: answersObj,
-              responseRanks: ranksObj
-            });
-
-            createdResponses.push({
-              id: response.id,
-              submittedBy: response.submittedBy,
-              status: 'success'
-            });
-
-            console.log(`[BATCH ${batchId}] Response ${index + 1}/${responses.length} saved successfully`);
-
+            responsesToSave.push(response);
           } catch (error) {
-            console.error(`[BATCH ${batchId}] Response ${index + 1} error:`, error.message);
+            console.error(`[BATCH ${batchId}] Response prep error (index ${index}):`, error.message);
             errors.push({
               index,
-              submittedBy: responses[index].submittedBy,
+              submittedBy: responses[index]?.submittedBy || 'Unknown',
               error: error.message
             });
           }
+        }
+
+        // Save responses in parallel chunks of 50
+        const batchSize = 50;
+        for (let i = 0; i < responsesToSave.length; i += batchSize) {
+          const chunk = responsesToSave.slice(i, i + batchSize);
+          await Promise.all(chunk.map(async (response) => {
+            try {
+              await response.save();
+
+              const answersObj = response.answers instanceof Map ?
+                Object.fromEntries(response.answers) : response.answers;
+              const ranksObj = response.responseRanks instanceof Map ?
+                Object.fromEntries(response.responseRanks) : response.responseRanks;
+
+              emitResponseCreated(actualQuestionId, {
+                id: response.id,
+                questionId: response.questionId,
+                status: response.status,
+                submittedBy: response.submittedBy,
+                createdAt: response.createdAt,
+                answers: answersObj,
+                responseRanks: ranksObj
+              });
+
+              createdResponses.push({
+                id: response.id,
+                submittedBy: response.submittedBy,
+                status: 'success'
+              });
+            } catch (error) {
+              console.error(`[BATCH ${batchId}] Response chunk save error:`, error.message);
+              errors.push({
+                submittedBy: response.submittedBy,
+                error: error.message
+              });
+            }
+          }));
         }
 
         // Emit completion progress
@@ -1009,9 +1042,9 @@ export const batchImportResponses = async (req, res) => {
       // No images to process, just save responses directly
       console.log(`[BATCH ${batchId}] No images to process, saving ${responses.length} responses directly`);
 
-      // Initialize arrays here too (in case they weren't initialized above)
       const createdResponses = [];
       const errors = [];
+      const responsesToSave = [];
 
       for (let index = 0; index < responses.length; index++) {
         try {
@@ -1023,38 +1056,6 @@ export const batchImportResponses = async (req, res) => {
             Object.entries(answers).forEach(([questionId, answer]) => {
               processedAnswers[questionId] = answer;
             });
-          }
-
-          const submissionMetadata = await collectSubmissionMetadata(req, {
-            includeLocation: form.locationEnabled !== false,
-          });
-          // Helper function to recursively collect all questions
-          const collectAllQuestions = (questions, result = []) => {
-            if (!Array.isArray(questions)) return result;
-
-            questions.forEach(q => {
-              result.push(q);
-              if (Array.isArray(q.followUpQuestions)) {
-                collectAllQuestions(q.followUpQuestions, result);
-              }
-            });
-
-            return result;
-          };
-
-
-          // Get all questions from form for scoring
-          const allQuestions = [];
-          if (form.sections) {
-            form.sections.forEach(section => {
-              if (section.questions) {
-                collectAllQuestions(section.questions, allQuestions);
-
-              }
-            });
-          }
-          if (form.followUpQuestions) {
-            collectAllQuestions(form.followUpQuestions, allQuestions);
           }
 
           // Calculate score for yesNoNA questions
@@ -1072,26 +1073,15 @@ export const batchImportResponses = async (req, res) => {
 
           // Calculate ranks for specific questions
           const responseRanks = {};
-          console.log(`[BATCH-RANK] Calculating ranks for ${allQuestions.length} questions`);
-          for (const question of allQuestions) {
-            // Check for trackResponseRank at any level
-            if (question.trackResponseRank) {
-              const answer = processedAnswers[question.id];
-              console.log(`[BATCH-RANK] Question "${question.text}" (ID: ${question.id}) has trackResponseRank=true. Answer:`, answer);
-
-              if (answer !== undefined && answer !== null && answer !== '') {
-                // Count existing responses with the same answer for this form
-                const query = {
-                  questionId: actualQuestionId,
-                  [`answers.${question.id}`]: answer,
-                  isSectionSubmit: false
-                };
-
-                console.log(`[BATCH-RANK] Querying existing responses with:`, JSON.stringify(query));
-                const count = await Response.countDocuments(query);
-                console.log(`[BATCH-RANK] Found ${count} existing responses. New rank: ${count + 1}`);
-                responseRanks[question.id] = count + 1;
-              }
+          for (const question of rankTrackedQuestions) {
+            const answer = processedAnswers[question.id];
+            if (answer !== undefined && answer !== null && answer !== '') {
+              const answerKey = String(answer).trim().toLowerCase();
+              const map = rankMaps[question.id];
+              const count = map.get(answerKey) || 0;
+              const newRank = count + 1;
+              responseRanks[question.id] = newRank;
+              map.set(answerKey, newRank);
             }
           }
 
@@ -1101,7 +1091,6 @@ export const batchImportResponses = async (req, res) => {
             questionId: actualQuestionId,
             answers: new Map(Object.entries(processedAnswers)),
             responseRanks: new Map(Object.entries(responseRanks)),
-
             parentResponseId,
             submittedBy: submittedBy || 'Excel Import',
             submitterContact,
@@ -1112,48 +1101,60 @@ export const batchImportResponses = async (req, res) => {
             createdBy: req.user?._id || null
           };
 
-          // Save to database
+          // Prepare Mongoose document
           const response = new Response(responseData);
-          await response.save();
-
-
-
-          // Convert Map to Object for emitting
-          const answersObj = response.answers instanceof Map ?
-            Object.fromEntries(response.answers) : response.answers;
-          const ranksObj = response.responseRanks instanceof Map ?
-            Object.fromEntries(response.responseRanks) : response.responseRanks;
-
-          // Emit event if function exists
-          if (typeof emitResponseCreated === 'function') {
-            emitResponseCreated(actualQuestionId, {
-              id: response.id,
-              questionId: response.questionId,
-              status: response.status,
-              submittedBy: response.submittedBy,
-              createdAt: response.createdAt,
-              answers: answersObj,
-              responseRanks: ranksObj
-            });
-          }
-
-          // Track created response
-          createdResponses.push({
-            id: response.id,
-            submittedBy: response.submittedBy,
-            status: 'success'
-          });
-
-          console.log(`[BATCH ${batchId}] Response ${index + 1}/${responses.length} saved successfully`);
-
+          responsesToSave.push(response);
         } catch (error) {
-          console.error(`[BATCH ${batchId}] Response ${index + 1} error:`, error.message);
+          console.error(`[BATCH ${batchId}] Response prep error (no images, index ${index}):`, error.message);
           errors.push({
             index,
             submittedBy: responses[index]?.submittedBy || 'Unknown',
             error: error.message
           });
         }
+      }
+
+      // Save in batches of 50
+      const batchSize = 50;
+      for (let i = 0; i < responsesToSave.length; i += batchSize) {
+        const chunk = responsesToSave.slice(i, i + batchSize);
+        await Promise.all(chunk.map(async (response) => {
+          try {
+            await response.save();
+
+            // Convert Map to Object for emitting
+            const answersObj = response.answers instanceof Map ?
+              Object.fromEntries(response.answers) : response.answers;
+            const ranksObj = response.responseRanks instanceof Map ?
+              Object.fromEntries(response.responseRanks) : response.responseRanks;
+
+            // Emit event if function exists
+            if (typeof emitResponseCreated === 'function') {
+              emitResponseCreated(actualQuestionId, {
+                id: response.id,
+                questionId: response.questionId,
+                status: response.status,
+                submittedBy: response.submittedBy,
+                createdAt: response.createdAt,
+                answers: answersObj,
+                responseRanks: ranksObj
+              });
+            }
+
+            // Track created response
+            createdResponses.push({
+              id: response.id,
+              submittedBy: response.submittedBy,
+              status: 'success'
+            });
+          } catch (error) {
+            console.error(`[BATCH ${batchId}] Response save error (no images):`, error.message);
+            errors.push({
+              submittedBy: response.submittedBy,
+              error: error.message
+            });
+          }
+        }));
       }
 
       // Send success response
@@ -2251,10 +2252,21 @@ export const getResponsesByForm = async (req, res) => {
       sort: { createdAt: -1 }
     };
 
-    let responses = await Response.find(query)
-      .populate('assignedTo', 'username firstName lastName email')
-      .populate('verifiedBy', 'username firstName lastName email')
-      .populate('createdBy', 'username firstName lastName email')
+    const isAnalytics = req.query.analytics === 'true';
+
+    let responsesQuery = Response.find(query);
+    if (isAnalytics) {
+      responsesQuery = responsesQuery.select(
+        '_id id questionId formId answers status submissionMetadata responseRanks createdAt timestamp submittedBy createdBy isDispatched dispatchedAt'
+      );
+    } else {
+      responsesQuery = responsesQuery
+        .populate('assignedTo', 'username firstName lastName email')
+        .populate('verifiedBy', 'username firstName lastName email')
+        .populate('createdBy', 'username firstName lastName email');
+    }
+
+    let responses = await responsesQuery
       .sort(options.sort)
       .limit(options.limit * 1)
       .skip((options.page - 1) * options.limit);
@@ -2290,31 +2302,36 @@ export const getResponsesByForm = async (req, res) => {
 
     const total = await Response.countDocuments(query);
 
-    // Fetch reviews and chat messages for these responses to show in the "Review" column
-    const responseIds = responses.map(r => r.id);
-    const reviews = await Review.find({ responseId: { $in: responseIds } })
-      .populate('reviewerId', 'firstName lastName email username')
-      .sort({ createdAt: -1 });
+    let reviewsByResponse = {};
+    let messagesByResponse = {};
 
-    const chatMessages = await ChatMessage.find({
-      responseId: { $in: responseIds },
-      questionContexts: { $exists: true, $not: { $size: 0 } }
-    }).sort({ createdAt: -1 });
+    if (!isAnalytics) {
+      // Fetch reviews and chat messages for these responses to show in the "Review" column
+      const responseIds = responses.map(r => r.id);
+      const reviews = await Review.find({ responseId: { $in: responseIds } })
+        .populate('reviewerId', 'firstName lastName email username')
+        .sort({ createdAt: -1 });
 
-    // Group reviews and messages by responseId
-    const reviewsByResponse = reviews.reduce((acc, r) => {
-      if (!acc[r.responseId]) {
-        acc[r.responseId] = r; // Keep latest review
-      }
-      return acc;
-    }, {});
+      const chatMessages = await ChatMessage.find({
+        responseId: { $in: responseIds },
+        questionContexts: { $exists: true, $not: { $size: 0 } }
+      }).sort({ createdAt: -1 });
 
-    const messagesByResponse = chatMessages.reduce((acc, m) => {
-      if (!acc[m.responseId]) {
-        acc[m.responseId] = m; // Keep latest message with contexts
-      }
-      return acc;
-    }, {});
+      // Group reviews and messages by responseId
+      reviewsByResponse = reviews.reduce((acc, r) => {
+        if (!acc[r.responseId]) {
+          acc[r.responseId] = r; // Keep latest review
+        }
+        return acc;
+      }, {});
+
+      messagesByResponse = chatMessages.reduce((acc, m) => {
+        if (!acc[m.responseId]) {
+          acc[m.responseId] = m; // Keep latest message with contexts
+        }
+        return acc;
+      }, {});
+    }
 
     // Convert Map to Object for JSON serialization
     const formattedResponses = responses.map(response => {

@@ -22,7 +22,8 @@ export const createTenant = async (req, res) => {
       adminLastName,
       adminMobile,
       settings,
-      subscription
+      subscription,
+      officeLocation
     } = req.body;
 
     // Validate required fields
@@ -70,7 +71,10 @@ export const createTenant = async (req, res) => {
       companyName,
       adminId:[adminUser._id],
       isActive: true,
-      settings: settings || {},
+      settings: {
+        ...(settings || {}),
+        officeLocation: officeLocation || undefined
+      },
       subscription: subscription || {},
       createdBy: req.user._id
     });
