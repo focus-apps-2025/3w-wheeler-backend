@@ -749,18 +749,18 @@ export const batchImportResponses = async (req, res) => {
     const rankMaps = {};
     for (const question of rankTrackedQuestions) {
       const counts = await Response.aggregate([
-        { 
-          $match: { 
-            questionId: actualQuestionId, 
+        {
+          $match: {
+            questionId: actualQuestionId,
             isSectionSubmit: { $ne: true },
             [`answers.${question.id}`]: { $exists: true, $ne: null }
-          } 
+          }
         },
-        { 
-          $group: { 
-            _id: `$answers.${question.id}`, 
-            count: { $sum: 1 } 
-          } 
+        {
+          $group: {
+            _id: `$answers.${question.id}`,
+            count: { $sum: 1 }
+          }
         }
       ]);
       const map = new Map();
@@ -1745,6 +1745,77 @@ export const processBulkImages = async (req, res) => {
     });
   }
 };
+export const getBiwSummary = async (req, res) => {
+  try {
+    // Get all forms the user has access to
+    let formQuery = {};
+    if (req.user.role !== 'superadmin') {
+      formQuery.tenantId = req.user.tenantId;
+    }
+    
+    const forms = await Form.find(formQuery).select('id _id');
+    const formIds = forms.flatMap(f => [f.id, f._id.toString()]);
+    
+    // Get ALL responses for these forms (no pagination limit)
+    const responses = await Response.find({
+      questionId: { $in: formIds }
+    }).select('submittedBy createdBy isDispatched biwReview');
+    
+    console.log(`[BIW] Total responses found: ${responses.length}`);
+    
+    // Group by user
+    const byUser = new Map();
+    
+    responses.forEach(response => {
+      const name = response.submittedBy || response.createdBy || 'Anonymous';
+      
+      if (name === 'Excel Import' || name === 'System' || name === 'Admin Import') {
+        return;
+      }
+      
+      if (!byUser.has(name)) {
+        byUser.set(name, {
+          name,
+          totalSubmitted: 0,
+          dispatched: 0,
+          accepted: 0,
+          rejected: 0,
+          rework: 0
+        });
+      }
+      
+      const stats = byUser.get(name);
+      stats.totalSubmitted += 1;
+      if (response.isDispatched) stats.dispatched += 1;
+      
+      const status = response.biwReview?.status;
+      if (status === 'Accepted') stats.accepted += 1;
+      else if (status === 'Rejected') stats.rejected += 1;
+      else if (status === 'Reworked') stats.rework += 1;
+    });
+    
+    const result = Array.from(byUser.values()).map(stats => {
+      const totalReviewed = stats.accepted + stats.rejected + stats.rework;
+      const performanceScore = totalReviewed > 0
+        ? Math.round((stats.accepted / totalReviewed) * 100)
+        : 0;
+      return { ...stats, totalReviewed, performanceScore };
+    });
+    
+    res.json({
+      success: true,
+      data: result,
+      totalResponses: responses.length
+    });
+    
+  } catch (error) {
+    console.error('BIW summary error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
 
 export const getAllResponses = async (req, res) => {
   try {
@@ -2011,6 +2082,58 @@ export const updateResponse = async (req, res) => {
       }
     }
 
+    // ✅ BIW Review — any reviewer other than the response's own submitter
+    // can Accept / Reject / Rework. Send `{ biwReview: { status } }` to set
+    // it, or `{ biwReview: null }` to clear it. reviewedBy/reviewedAt are
+    // always set server-side from the authenticated user, never trusted
+    // from the client.
+    if (req.body.hasOwnProperty('biwReview')) {
+      const biwReview = req.body.biwReview;
+
+      if (biwReview === null || biwReview === undefined) {
+        response.biwReview = undefined;
+      } else {
+        const allowedStatuses = ['Accepted', 'Rejected', 'Reworked'];
+        if (!allowedStatuses.includes(biwReview.status)) {
+          return res.status(400).json({
+            success: false,
+            message: `Invalid biwReview status. Must be one of: ${allowedStatuses.join(', ')}`
+          });
+        }
+
+        const userEmail = req.user.email || '';
+        const userUsername = req.user.username || '';
+        const userIdStr = req.user._id ? req.user._id.toString() : '';
+        const creatorIdStr = originalCreatedBy ? originalCreatedBy.toString() : '';
+        const isAdmin = req.user.role === 'admin' || req.user.role === 'superadmin';
+        const isExcelImport = originalSubmittedBy === 'Excel Import';
+
+        const isSubmitter =
+          !isAdmin &&
+          !isExcelImport &&
+          (
+            originalSubmittedBy === userEmail ||
+            originalSubmittedBy === userUsername ||
+            (originalSubmitterContact && originalSubmitterContact.email === userEmail) ||
+            (creatorIdStr && creatorIdStr === userIdStr)
+          );
+
+        if (isSubmitter) {
+          return res.status(403).json({
+            success: false,
+            message: 'You cannot BIW review your own submission'
+          });
+        }
+
+        response.biwReview = {
+          status: biwReview.status,
+          reviewedBy: req.user._id,
+          reviewedByName: userUsername || userEmail || 'Reviewer',
+          reviewedAt: new Date()
+        };
+      }
+    }
+
     // ✅ Restore original creator info if they were accidentally changed
     response.createdBy = originalCreatedBy;
     response.submittedBy = originalSubmittedBy;
@@ -2051,6 +2174,114 @@ export const updateResponse = async (req, res) => {
       success: false,
       message: 'Internal server error'
     });
+  }
+};
+
+// Auto-fill any response for this form whose chassis_number answer is
+// missing/blank with the first chassis number configured on the form
+// (same "master list" the dashboard dropdown uses), in a single bulk
+// database operation instead of one request per response.
+export const autoFillChassisNumbers = async (req, res) => {
+  try {
+    const { formId } = req.params;
+
+    if (!formId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Form ID is required'
+      });
+    }
+
+    // Find the form the same way getResponsesByForm does, so tenant sharing
+    // rules (owner / shared / chassis-assignment) are respected here too.
+    let formSearchQuery = { id: formId };
+
+    if (req.user.role !== 'superadmin' && !req.user.isGuest && req.user.tenantId) {
+      const tenantId = req.user.tenantId instanceof mongoose.Types.ObjectId
+        ? req.user.tenantId
+        : new mongoose.Types.ObjectId(req.user.tenantId);
+      const tenantIdStr = tenantId.toString();
+
+      formSearchQuery.$or = [
+        { tenantId: tenantId },
+        { sharedWithTenants: tenantId },
+        { "chassisTenantAssignments.assignedTenants": tenantIdStr }
+      ];
+    }
+
+    let form = await Form.findOne(formSearchQuery);
+
+    if (!form && mongoose.Types.ObjectId.isValid(formId)) {
+      const alternateQuery = { _id: formId };
+      if (formSearchQuery.$or) alternateQuery.$or = formSearchQuery.$or;
+      form = await Form.findOne(alternateQuery);
+    }
+
+    if (!form) {
+      return res.status(404).json({
+        success: false,
+        message: 'Form not found'
+      });
+    }
+
+    // Build the same master chassis option list the frontend dropdown
+    // shows, sorted the same way (alphabetically by label), and take the
+    // first one as the default value to apply.
+    const seen = new Set();
+    const options = [];
+
+    (form.chassisNumbers || []).forEach(entry => {
+      const num = entry?.chassisNumber;
+      if (num && !seen.has(String(num))) {
+        seen.add(String(num));
+        options.push({
+          value: String(num),
+          label: entry.partDescription ? `${num} — ${entry.partDescription}` : String(num)
+        });
+      }
+    });
+
+    if (options.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'This form has no chassis numbers configured, so there is no default value to apply.'
+      });
+    }
+
+    options.sort((a, b) => a.label.localeCompare(b.label));
+    const defaultValue = options[0].value;
+
+    // Match every response for this form (respecting tenant filter) whose
+    // chassis_number answer is missing, null, or an empty string.
+    const query = {
+      questionId: { $in: [form.id, form._id.toString()] },
+      ...req.tenantFilter,
+      $or: [
+        { 'answers.chassis_number': { $exists: false } },
+        { 'answers.chassis_number': null },
+        { 'answers.chassis_number': '' }
+      ]
+    };
+
+    const result = await Response.updateMany(
+      query,
+      { $set: { 'answers.chassis_number': defaultValue } }
+    );
+
+    console.log(`[AUTO-FILL CHASSIS] Form ${formId}: matched ${result.matchedCount}, modified ${result.modifiedCount}, default "${defaultValue}"`);
+
+    res.json({
+      success: true,
+      message: `${result.modifiedCount} response(s) auto-filled with default chassis number`,
+      data: {
+        defaultValue,
+        matchedCount: result.matchedCount,
+        modifiedCount: result.modifiedCount
+      }
+    });
+  } catch (error) {
+    console.error('Auto-fill chassis numbers error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
 
@@ -2257,7 +2488,7 @@ export const getResponsesByForm = async (req, res) => {
     let responsesQuery = Response.find(query);
     if (isAnalytics) {
       responsesQuery = responsesQuery.select(
-        '_id id questionId formId answers status submissionMetadata responseRanks createdAt timestamp submittedBy createdBy isDispatched dispatchedAt'
+        '_id id questionId formId answers status submissionMetadata responseRanks createdAt timestamp submittedBy createdBy isDispatched dispatchedAt biwReview'
       );
     } else {
       responsesQuery = responsesQuery

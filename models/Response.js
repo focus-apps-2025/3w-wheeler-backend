@@ -178,6 +178,21 @@ const ResponseSchema = new mongoose.Schema({
   },
   dispatchedAt: {
     type: Date
+  },
+  // BIW Review — a second, independent accept/reject/rework check that any
+  // reviewer other than the response's own submitter can apply, separate
+  // from the main verifiedBy/status review flow.
+  biwReview: {
+    status: {
+      type: String,
+      enum: ['Accepted', 'Rejected', 'Reworked']
+    },
+    reviewedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    reviewedByName: String,
+    reviewedAt: Date
   }
 }, {
   timestamps: true
@@ -192,6 +207,7 @@ ResponseSchema.index({ tenantId: 1 });
 ResponseSchema.index({ startedAt: -1 }); // NEW - for time range queries
 ResponseSchema.index({ timeSpent: 1 }); // NEW - for time-based queries
 ResponseSchema.index({ sessionId: 1 });  // NEW - for session lookups
+ResponseSchema.index({ 'biwReview.status': 1 }); // NEW - for BIW review table queries
 
 // ========== PRE-SAVE HOOK FOR ROBUST CREATOR ASSIGNMENT ==========
 ResponseSchema.pre('save', async function(next) {
