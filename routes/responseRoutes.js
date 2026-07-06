@@ -18,7 +18,8 @@ import {
   getSuggestedAnswers,
   getQuestionPreviousAnswers,
   autoFillChassisNumbers,
-  getBiwSummary
+  getBiwSummary,
+  bulkUpdateBiwReview
 } from '../controllers/responseController.js';
 import { getReviewsForResponse } from '../controllers/userController.js';
 import {
@@ -196,6 +197,7 @@ router.get('/unassigned', getUnassignedResponses);
 router.post('/assign-multiple', assignResponses);
 router.post('/:responseId/auto-assign', autoAssignResponse);
 router.get('/biw-summary', getBiwSummary);
+router.patch('/bulk-biw-review', bulkUpdateBiwReview);
 
 
 // DEBUG: Log all registered routes

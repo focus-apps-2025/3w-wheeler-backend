@@ -2942,3 +2942,96 @@ export const autoAssignResponse = async (req, res) => {
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
+
+export const bulkUpdateBiwReview = async (req, res) => {
+  try {
+    const { ids, status } = req.body;
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide an array of response IDs'
+      });
+    }
+
+    const allowedStatuses = ['Accepted', 'Rejected', 'Reworked', null];
+    if (status !== undefined && !allowedStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid biwReview status. Must be one of: Accepted, Rejected, Reworked, or null`
+      });
+    }
+
+    // Find all target responses matching the IDs and the user's tenant filter
+    const responses = await Response.find({ id: { $in: ids }, ...req.tenantFilter });
+
+    if (responses.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No matching responses found'
+      });
+    }
+
+    const userEmail = req.user.email || '';
+    const userUsername = req.user.username || '';
+    const userIdStr = req.user._id ? req.user._id.toString() : '';
+    const isAdmin = req.user.role === 'admin' || req.user.role === 'superadmin';
+
+    let updatedCount = 0;
+    let skippedCount = 0;
+
+    for (const response of responses) {
+      // Check if user is trying to review their own submission (mirror single review logic)
+      const originalCreatedBy = response.createdBy;
+      const originalSubmittedBy = response.submittedBy;
+      const originalSubmitterContact = response.submitterContact;
+      const creatorIdStr = originalCreatedBy ? originalCreatedBy.toString() : '';
+      const isExcelImport = originalSubmittedBy === 'Excel Import';
+
+      const isSubmitter =
+        !isAdmin &&
+        !isExcelImport &&
+        (
+          originalSubmittedBy === userEmail ||
+          originalSubmittedBy === userUsername ||
+          (originalSubmitterContact && originalSubmitterContact.email === userEmail) ||
+          (creatorIdStr && creatorIdStr === userIdStr)
+        );
+
+      if (isSubmitter && status !== null) {
+        skippedCount++;
+        continue;
+      }
+
+      if (status === null) {
+        response.biwReview = undefined;
+      } else {
+        response.biwReview = {
+          status,
+          reviewedBy: req.user._id,
+          reviewedByName: userUsername || userEmail || 'Reviewer',
+          reviewedAt: new Date()
+        };
+      }
+
+      await response.save();
+      updatedCount++;
+    }
+
+    res.json({
+      success: true,
+      message: `Bulk BIW review update completed: ${updatedCount} updated, ${skippedCount} skipped.`,
+      data: {
+        updatedCount,
+        skippedCount
+      }
+    });
+
+  } catch (error) {
+    console.error('Bulk update BIW review error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
