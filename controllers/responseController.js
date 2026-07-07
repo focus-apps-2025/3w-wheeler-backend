@@ -700,6 +700,7 @@ export const batchImportResponses = async (req, res) => {
 
     console.log('Batch ID:', batchId);
     console.log('Searching for form ID:', actualQuestionId);
+    console.log('[BATCH IMPORT DEBUG] First response received:', JSON.stringify(responses[0]));
 
     if (!actualQuestionId || !Array.isArray(responses) || responses.length === 0) {
       return res.status(400).json({
@@ -885,7 +886,7 @@ export const batchImportResponses = async (req, res) => {
         const responsesToSave = [];
         for (let index = 0; index < responses.length; index++) {
           try {
-            const { answers, submittedBy, submitterContact, parentResponseId } = responses[index];
+            const { answers, submittedBy, submitterContact, parentResponseId, submittedAt } = responses[index];
 
             // Replace Google Drive URLs with Cloudinary URLs in this response
             const processedAnswers = {};
@@ -948,7 +949,9 @@ export const batchImportResponses = async (req, res) => {
               status: 'pending',
               tenantId: form.tenantId,
               score: { correct, total },
-              createdBy: req.user?._id || null
+              createdBy: req.user?._id || null,
+              submittedAt: submittedAt ? new Date(submittedAt) : undefined,
+              createdAt: submittedAt ? new Date(submittedAt) : undefined
             };
 
             const response = new Response(responseData);
@@ -969,7 +972,11 @@ export const batchImportResponses = async (req, res) => {
           const chunk = responsesToSave.slice(i, i + batchSize);
           await Promise.all(chunk.map(async (response) => {
             try {
-              await response.save();
+              if (response.submittedAt) {
+                await response.save({ timestamps: false });
+              } else {
+                await response.save();
+              }
 
               const answersObj = response.answers instanceof Map ?
                 Object.fromEntries(response.answers) : response.answers;
@@ -1048,7 +1055,7 @@ export const batchImportResponses = async (req, res) => {
 
       for (let index = 0; index < responses.length; index++) {
         try {
-          const { answers, submittedBy, submitterContact, parentResponseId } = responses[index];
+          const { answers, submittedBy, submitterContact, parentResponseId, submittedAt } = responses[index];
 
           // Process answers (convert to proper format)
           const processedAnswers = {};
@@ -1098,7 +1105,9 @@ export const batchImportResponses = async (req, res) => {
             status: 'pending',
             tenantId: form.tenantId,
             score: { correct, total },
-            createdBy: req.user?._id || null
+            createdBy: req.user?._id || null,
+            submittedAt: submittedAt ? new Date(submittedAt) : undefined,
+            createdAt: submittedAt ? new Date(submittedAt) : undefined
           };
 
           // Prepare Mongoose document
@@ -1120,7 +1129,11 @@ export const batchImportResponses = async (req, res) => {
         const chunk = responsesToSave.slice(i, i + batchSize);
         await Promise.all(chunk.map(async (response) => {
           try {
-            await response.save();
+            if (response.submittedAt) {
+              await response.save({ timestamps: false });
+            } else {
+              await response.save();
+            }
 
             // Convert Map to Object for emitting
             const answersObj = response.answers instanceof Map ?
@@ -2488,7 +2501,7 @@ export const getResponsesByForm = async (req, res) => {
     let responsesQuery = Response.find(query);
     if (isAnalytics) {
       responsesQuery = responsesQuery.select(
-        '_id id questionId formId answers status submissionMetadata responseRanks createdAt timestamp submittedBy createdBy isDispatched dispatchedAt biwReview'
+        '_id id questionId formId answers status submissionMetadata responseRanks createdAt timestamp submittedBy createdBy isDispatched dispatchedAt biwReview submittedAt'
       );
     } else {
       responsesQuery = responsesQuery

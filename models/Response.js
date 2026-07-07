@@ -195,7 +195,23 @@ const ResponseSchema = new mongoose.Schema({
     reviewedAt: Date
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  toObject: {
+    transform: function(doc, ret) {
+      if (ret.submittedAt) {
+        ret.createdAt = ret.submittedAt;
+      }
+      return ret;
+    }
+  },
+  toJSON: {
+    transform: function(doc, ret) {
+      if (ret.submittedAt) {
+        ret.createdAt = ret.submittedAt;
+      }
+      return ret;
+    }
+  }
 });
 
 // ========== ADD NEW INDEXES FOR TIME QUERIES ==========
