@@ -949,7 +949,7 @@ export const batchImportResponses = async (req, res) => {
               status: 'pending',
               tenantId: form.tenantId,
               score: { correct, total },
-              createdBy: req.user?._id || null,
+              createdBy: (submittedBy && submittedBy !== 'Excel Import') ? null : (req.user?._id || null),
               submittedAt: submittedAt ? new Date(submittedAt) : undefined,
               createdAt: submittedAt ? new Date(submittedAt) : undefined
             };
@@ -2059,9 +2059,23 @@ export const updateResponse = async (req, res) => {
     }
 
     // ✅ PRESERVE the createdBy field - don't let it be overwritten
-    const originalCreatedBy = response.createdBy;
-    const originalSubmittedBy = response.submittedBy;
-    const originalSubmitterContact = response.submitterContact;
+    let originalCreatedBy = response.createdBy;
+    let originalSubmittedBy = response.submittedBy;
+    let originalSubmitterContact = response.submitterContact;
+
+    if (req.body.submittedByUserId) {
+      const User = mongoose.model('User');
+      const matchedUser = await User.findById(req.body.submittedByUserId);
+      if (matchedUser) {
+        originalCreatedBy = matchedUser._id;
+        originalSubmittedBy = `${matchedUser.firstName || ''} ${matchedUser.lastName || ''}`.trim() || matchedUser.username || matchedUser.email;
+        originalSubmitterContact = {
+          email: matchedUser.email || '',
+          firstName: matchedUser.firstName || '',
+          lastName: matchedUser.lastName || ''
+        };
+      }
+    }
 
     // Update fields
     if (answers) {
