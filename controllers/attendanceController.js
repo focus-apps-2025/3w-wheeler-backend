@@ -100,15 +100,31 @@ export const checkIn = async (req, res) => {
       date: { $gte: today }
     });
 
-    if (existingAttendance && existingAttendance.checkInTime) {
-      return res.status(400).json({ success: false, message: 'Already checked in today' });
+    if (existingAttendance && existingAttendance.checkInTime && !existingAttendance.checkOutTime) {
+      return res.status(400).json({ success: false, message: 'Already checked in' });
     }
 
     // 2.5 Auto Shift Detection
     const allShifts = await Shift.find({ tenantId, isActive: true });
     const currentMins = now.getHours() * 60 + now.getMinutes();
 
-    const shift = findShiftByTime(currentMins, allShifts, 15); // 15 mins buffer
+    let shift = findShiftByTime(currentMins, allShifts, 15); // 15 mins buffer
+
+    // Overtime/Fallback Shift lookup
+    if (!shift && existingAttendance && existingAttendance.shift) {
+      shift = await Shift.findById(existingAttendance.shift);
+    }
+    if (!shift) {
+      shift = await Shift.findOne({
+        tenantId,
+        assignedInspectors: inspectorId,
+        isActive: true
+      });
+    }
+    if (!shift) {
+      // Fallback to any active shift for this tenant to avoid blocking the user
+      shift = await Shift.findOne({ tenantId, isActive: true });
+    }
 
     if (!shift) {
       return res.status(400).json({
@@ -117,35 +133,43 @@ export const checkIn = async (req, res) => {
       });
     }
 
-    // 3. Validate timing against shift (Late/Half-day marking)
-    const shiftStartMins = toMins(shift.startTime);
-    const shiftEndMins = toMins(shift.endTime);
+    // 3. Validate timing against shift (Late/Half-day marking) - only if it's the FIRST check-in today
     let status = 'present';
     let isLate = false;
     let isHalfDay = false;
 
-    // Calculate diff for status marking
-    let diff;
-    if (shift.isNightShift || shiftStartMins > shiftEndMins) {
-      if (currentMins >= shiftStartMins) {
-        diff = currentMins - shiftStartMins;
-      } else if (currentMins < shiftEndMins) {
-        // Checked in after midnight
-        diff = currentMins + (1440 - shiftStartMins);
+    if (existingAttendance && existingAttendance.checkInTime) {
+      // Preserve first check-in details for status
+      status = existingAttendance.status;
+      isLate = existingAttendance.isLate;
+      isHalfDay = existingAttendance.isHalfDay;
+    } else {
+      const shiftStartMins = toMins(shift.startTime);
+      const shiftEndMins = toMins(shift.endTime);
+
+      // Calculate diff for status marking
+      let diff;
+      if (shift.isNightShift || shiftStartMins > shiftEndMins) {
+        if (currentMins >= shiftStartMins) {
+          diff = currentMins - shiftStartMins;
+        } else if (currentMins < shiftEndMins) {
+          // Checked in after midnight
+          diff = currentMins + (1440 - shiftStartMins);
+        } else {
+          // Within the buffer before start (e.g. 21:50 for 22:00 start)
+          diff = currentMins - shiftStartMins;
+        }
       } else {
-        // Within the buffer before start (e.g. 21:50 for 22:00 start)
         diff = currentMins - shiftStartMins;
       }
-    } else {
-      diff = currentMins - shiftStartMins;
-    }
 
-    if (diff > shift.halfDayMarkingAfter) {
-      status = 'half-day';
-      isHalfDay = true;
-    } else if (diff > shift.lateMarkingAfter) {
-      status = 'late';
-      isLate = true;
+      if (diff > shift.halfDayMarkingAfter) {
+        status = 'half-day';
+        isHalfDay = true;
+      } else if (diff > shift.lateMarkingAfter) {
+        status = 'late';
+        isLate = true;
+      }
     }
 
     const place = await reverseGeocode(lat, lng);
@@ -165,16 +189,38 @@ export const checkIn = async (req, res) => {
       checkInAccuracy: accuracy,
       status,
       isLate,
-      isHalfDay
+      isHalfDay,
+      checkOutTime: null,
+      checkOutLat: null,
+      checkOutLng: null,
+      checkOutPlace: null,
+      checkOutAccuracy: null
     };
 
-    console.log('checkIn - creating attendance:', attendanceData);
+    console.log('checkIn - creating/updating attendance:', attendanceData);
+
+    const newPunch = {
+      type: 'in',
+      time: now,
+      lat,
+      lng,
+      place: attendanceData.checkInPlace,
+      accuracy
+    };
 
     if (existingAttendance) {
+      // If we are checking in again, preserve the accumulated workingHours
+      const accumulatedHours = existingAttendance.workingHours || 0;
       Object.assign(existingAttendance, attendanceData);
+      existingAttendance.workingHours = accumulatedHours;
+      if (!existingAttendance.punches) {
+        existingAttendance.punches = [];
+      }
+      existingAttendance.punches.push(newPunch);
       await existingAttendance.save();
       console.log('checkIn - updated existing attendance:', existingAttendance);
     } else {
+      attendanceData.punches = [newPunch];
       existingAttendance = await Attendance.create(attendanceData);
       console.log('checkIn - created new attendance:', existingAttendance);
     }
@@ -216,23 +262,64 @@ export const checkOut = async (req, res) => {
     attendance.checkOutPlace = place || 'Position Captured';
     attendance.checkOutAccuracy = accuracy;
 
-    // Calculate working hours
+    // Calculate working hours and add to previously accumulated hours
     const workingHoursMs = attendance.checkOutTime - attendance.checkInTime;
-    attendance.workingHours = parseFloat((workingHoursMs / (1000 * 60 * 60)).toFixed(2));
+    const currentSessionHours = parseFloat((workingHoursMs / (1000 * 60 * 60)).toFixed(2));
+    attendance.workingHours = parseFloat(((attendance.workingHours || 0) + currentSessionHours).toFixed(2));
 
-    const shiftEndStr = attendance.shiftEndTime || attendance.shift.endTime;
+    const shiftEndStr = attendance.shiftEndTime || attendance.shift?.endTime;
     const currentMins = now.getHours() * 60 + now.getMinutes();
     const shiftEndMins = toMins(shiftEndStr);
 
-    if (currentMins < shiftEndMins && !attendance.shift.isNightShift) {
-      attendance.isEarlyCheckout = true;
+    const isNight = attendance.shift?.isNightShift || (shiftEndStr && toMins(attendance.shiftStartTime) > shiftEndMins);
+
+    if (shiftEndMins) {
+      if (isNight) {
+        const startMins = toMins(attendance.shiftStartTime);
+        if (currentMins < shiftEndMins) {
+          attendance.isEarlyCheckout = false;
+        } else if (currentMins >= startMins) {
+          attendance.isEarlyCheckout = true;
+        } else {
+          attendance.isEarlyCheckout = false;
+        }
+      } else {
+        if (currentMins < shiftEndMins) {
+          attendance.isEarlyCheckout = true;
+        } else {
+          attendance.isEarlyCheckout = false;
+        }
+      }
     }
 
     // Update status based on working hours
     if (attendance.workingHours < 4) {
       attendance.status = 'half-day';
       attendance.isHalfDay = true;
+    } else {
+      attendance.isHalfDay = false;
+      if (attendance.isLate) {
+        attendance.status = 'late';
+      } else {
+        attendance.status = 'present';
+      }
     }
+
+    // Explicitly mark workingHours as modified to skip the pre-save recalculation hook
+    attendance.markModified('workingHours');
+
+    const newPunch = {
+      type: 'out',
+      time: now,
+      lat,
+      lng,
+      place: attendance.checkOutPlace,
+      accuracy
+    };
+    if (!attendance.punches) {
+      attendance.punches = [];
+    }
+    attendance.punches.push(newPunch);
 
     await attendance.save();
 
@@ -270,9 +357,21 @@ export const getMyStatus = async (req, res) => {
       const currentMins = now.getHours() * 60 + now.getMinutes();
       console.log(`getMyStatus - current IST: ${now.toString()}, currentMins: ${currentMins}, shifts found: ${allShifts.length}`);
       shift = findShiftByTime(currentMins, allShifts, 15);
+      
+      if (!shift) {
+        shift = await Shift.findOne({
+          tenantId,
+          assignedInspectors: inspectorId,
+          isActive: true
+        });
+      }
+      if (!shift) {
+        shift = await Shift.findOne({ tenantId, isActive: true });
+      }
     }
 
-    let canCheckIn = !!shift && !attendance?.checkInTime;
+    // Let them check in if they have not checked in yet today, OR if they have checked out and can check in again
+    let canCheckIn = !!shift && (!attendance || !attendance.checkInTime || !!attendance.checkOutTime);
     let canCheckOut = !!attendance && !!attendance.checkInTime && !attendance.checkOutTime;
 
     res.json({

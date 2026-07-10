@@ -949,7 +949,12 @@ export const batchImportResponses = async (req, res) => {
               status: 'pending',
               tenantId: form.tenantId,
               score: { correct, total },
-              createdBy: (submittedBy && submittedBy !== 'Excel Import') ? null : (req.user?._id || null),
+              createdBy:
+                submittedBy && submittedBy !== 'Excel Import'
+                  ? null
+                  : req.user?._id && mongoose.Types.ObjectId.isValid(req.user._id)
+                    ? req.user._id
+                    : null,
               submittedAt: submittedAt ? new Date(submittedAt) : undefined,
               createdAt: submittedAt ? new Date(submittedAt) : undefined
             };
@@ -1105,7 +1110,10 @@ export const batchImportResponses = async (req, res) => {
             status: 'pending',
             tenantId: form.tenantId,
             score: { correct, total },
-            createdBy: req.user?._id || null,
+            createdBy:
+              req.user?._id && mongoose.Types.ObjectId.isValid(req.user._id)
+                ? req.user._id
+                : null,
             submittedAt: submittedAt ? new Date(submittedAt) : undefined,
             createdAt: submittedAt ? new Date(submittedAt) : undefined
           };
@@ -1189,7 +1197,8 @@ export const batchImportResponses = async (req, res) => {
     console.error('Batch import error:', error);
     return res.status(500).json({
       success: false,
-      message: 'Internal server error during batch import'
+      message: `Internal server error during batch import: ${error?.message || 'unknown error'}`,
+      error: error?.message,
     });
   }
 };

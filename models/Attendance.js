@@ -57,7 +57,22 @@ const attendanceSchema = new mongoose.Schema({
     enum: ['present', 'late', 'half-day', 'absent'],
     default: 'present'
   },
-  notes: String
+  notes: String,
+  punches: [{
+    type: {
+      type: String,
+      enum: ['in', 'out'],
+      required: true
+    },
+    time: {
+      type: Date,
+      required: true
+    },
+    lat: Number,
+    lng: Number,
+    place: String,
+    accuracy: Number
+  }]
 }, {
   timestamps: true
 });
@@ -65,8 +80,10 @@ const attendanceSchema = new mongoose.Schema({
 // Pre-save hook to calculate working hours
 attendanceSchema.pre('save', function(next) {
   if (this.checkInTime && this.checkOutTime) {
-    this.workingHours = (this.checkOutTime - this.checkInTime) / (1000 * 60 * 60);
-    this.workingHours = Math.round(this.workingHours * 100) / 100;
+    if (!this.isModified('workingHours')) {
+      this.workingHours = (this.checkOutTime - this.checkInTime) / (1000 * 60 * 60);
+      this.workingHours = Math.round(this.workingHours * 100) / 100;
+    }
   }
   next();
 });

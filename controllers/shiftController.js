@@ -239,6 +239,12 @@ export const assignInspectors = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid inspectors selected' });
     }
 
+    // Remove these inspectors from ALL other shifts for this tenant
+    await Shift.updateMany(
+      { tenantId, _id: { $ne: id } },
+      { $pull: { assignedInspectors: { $in: inspectorIds } } }
+    );
+
     // Merge without duplicates
     const currentAssignments = shift.assignedInspectors.map(id => id.toString());
     const newAssignments = [...new Set([...currentAssignments, ...inspectorIds])];
