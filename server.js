@@ -57,6 +57,8 @@ const allowedOrigins = [
   "https://formsadmin.netlify.app",
   "https://formsuperadmin.focusengineeringapp.com",
   "https://3wheelertvs.focusengineeringapp.com",
+  "https://focus3rdeye.netlify.app",
+  "https://threew-wheeler-backend.onrender.com",
   ...(process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',').map(url => url.trim()) : [])
 ];
 
