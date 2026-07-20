@@ -779,6 +779,20 @@ export const batchImportResponses = async (req, res) => {
     const allGoogleDriveUrls = [];
     const urlToResponseMap = new Map();
 
+    const collectUrls = (val, questionId, responseIndex) => {
+      if (typeof val === 'string' && isGoogleDriveUrl(val)) {
+        allGoogleDriveUrls.push({
+          url: val,
+          questionId,
+          responseIndex
+        });
+      } else if (Array.isArray(val)) {
+        val.forEach(item => collectUrls(item, questionId, responseIndex));
+      } else if (typeof val === 'object' && val !== null) {
+        Object.values(val).forEach(item => collectUrls(item, questionId, responseIndex));
+      }
+    };
+
     responses.forEach((response, responseIndex) => {
       const { answers } = response;
 
@@ -786,31 +800,7 @@ export const batchImportResponses = async (req, res) => {
 
       Object.entries(answers).forEach(([questionId, answer]) => {
         if (!answer) return;
-
-        if (typeof answer === 'string' && isGoogleDriveUrl(answer)) {
-          const urlKey = `${responseIndex}_${questionId}`;
-          allGoogleDriveUrls.push({
-            url: answer,
-            questionId,
-            responseIndex,
-            type: 'single'
-          });
-          urlToResponseMap.set(urlKey, answer);
-        } else if (Array.isArray(answer)) {
-          answer.forEach((item, itemIndex) => {
-            if (typeof item === 'string' && isGoogleDriveUrl(item)) {
-              const urlKey = `${responseIndex}_${questionId}_${itemIndex}`;
-              allGoogleDriveUrls.push({
-                url: item,
-                questionId,
-                responseIndex,
-                arrayIndex: itemIndex,
-                type: 'array'
-              });
-              urlToResponseMap.set(urlKey, item);
-            }
-          });
-        }
+        collectUrls(answer, questionId, responseIndex);
       });
     });
 
@@ -889,26 +879,26 @@ export const batchImportResponses = async (req, res) => {
             const { answers, submittedBy, submitterContact, parentResponseId, submittedAt } = responses[index];
 
             // Replace Google Drive URLs with Cloudinary URLs in this response
+            const replaceUrls = (val) => {
+              if (typeof val === 'string' && isGoogleDriveUrl(val)) {
+                return processedUrlMap.get(val) || val;
+              }
+              if (Array.isArray(val)) {
+                return val.map(item => replaceUrls(item));
+              }
+              if (typeof val === 'object' && val !== null) {
+                const newVal = {};
+                Object.entries(val).forEach(([k, v]) => {
+                  newVal[k] = replaceUrls(v);
+                });
+                return newVal;
+              }
+              return val;
+            };
+
             const processedAnswers = {};
             Object.entries(answers).forEach(([questionId, answer]) => {
-              if (!answer) {
-                processedAnswers[questionId] = answer;
-                return;
-              }
-
-              if (typeof answer === 'string' && isGoogleDriveUrl(answer)) {
-                // Replace with processed URL if available
-                processedAnswers[questionId] = processedUrlMap.get(answer) || answer;
-              } else if (Array.isArray(answer)) {
-                // Process array answers
-                processedAnswers[questionId] = answer.map(item =>
-                  (typeof item === 'string' && isGoogleDriveUrl(item))
-                    ? (processedUrlMap.get(item) || item)
-                    : item
-                );
-              } else {
-                processedAnswers[questionId] = answer;
-              }
+              processedAnswers[questionId] = replaceUrls(answer);
             });
 
             let correct = 0;
@@ -2011,11 +2001,21 @@ export const getAllResponses = async (req, res) => {
   }
 };
 
+const findResponseByIdOrObjectId = (id, tenantFilter) => {
+  const query = { ...tenantFilter };
+  if (mongoose.Types.ObjectId.isValid(id)) {
+    query.$or = [{ id }, { _id: id }];
+  } else {
+    query.id = id;
+  }
+  return Response.findOne(query);
+};
+
 export const getResponseById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const response = await Response.findOne({ id, ...req.tenantFilter })
+    const response = await findResponseByIdOrObjectId(id, req.tenantFilter)
       .populate('assignedTo', 'username firstName lastName email')
       .populate('verifiedBy', 'username firstName lastName email');
 
@@ -2056,7 +2056,7 @@ export const updateResponse = async (req, res) => {
 
     console.log('Updating response:', { id, answers: !!answers, notes, status, tenantFilter: req.tenantFilter });
 
-    const response = await Response.findOne({ id, ...req.tenantFilter });
+    const response = await findResponseByIdOrObjectId(id, req.tenantFilter);
 
     console.log('Found response:', !!response, response?._id);
 
@@ -2366,7 +2366,7 @@ export const deleteResponse = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const response = await Response.findOne({ id, ...req.tenantFilter });
+    const response = await findResponseByIdOrObjectId(id, req.tenantFilter);
 
     if (!response) {
       return res.status(404).json({
@@ -2376,7 +2376,7 @@ export const deleteResponse = async (req, res) => {
     }
 
     const questionId = response.questionId;
-    await Response.findOneAndDelete({ id, ...req.tenantFilter });
+    await Response.findOneAndDelete({ _id: response._id });
 
     // Emit real-time event for deleted response
     emitResponseDeleted(questionId, id);
