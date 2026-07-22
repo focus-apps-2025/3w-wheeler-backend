@@ -33,12 +33,61 @@ const parseDateUTC = (dateStr) => {
   return null;
 };
 
-const MODULE_PERMISSIONS = [
-  'dashboard:view',
-  'analytics:view',
-  'requests:view',
-  'requests:manage'
-];
+// Permission validator - accepts static leaf keys and dynamic analytics form keys
+const isValidPermissionKey = (permission) => {
+  // Static permission keys (including new analytics global actions)
+  const staticPermissions = new Set([
+    'dashboard:view',
+    'Overall:view',
+    'admin:manage',
+    'chat',
+    'attendance:activityLogs',
+    'attendance:record:report',
+    'attendance:record:response',
+    'attendance:record:calendar',
+    'attendance:record:summary',
+    'hr:leaves',
+    'hr:permission',
+    'hr:shifts',
+    'hr:reports',
+    // New analytics global actions
+    'analytics:downloadTemplate',
+    'analytics:importExcel',
+    'analytics:createService',
+    // Customer requests
+    'requests:dashboard',
+    'requests:response',
+  ]);
+
+  // Check if it's a static permission
+  if (staticPermissions.has(permission)) {
+    return true;
+  }
+
+  // Check if it's a dynamic analytics form permission
+  // Pattern: analytics:form:<24-char-hex-formId>:<subType>
+  const analyticsFormPattern = /^analytics:form:[a-fA-F0-9]{24}:(response|dashboard|overall|questions|sections)$/;
+  if (analyticsFormPattern.test(permission)) {
+    return true;
+  }
+
+  // Check if it's the analytics parent (should not be stored directly)
+  const parentPermissions = new Set([
+    'analytics',
+    'analytics:form',
+    'requests',
+    'attendance',
+    'attendance:record',
+    'hr'
+  ]);
+  
+  // Reject if it's a parent permission
+  if (parentPermissions.has(permission)) {
+    return false;
+  }
+
+  return false;
+};
 import mongoose from 'mongoose';
 
 export const createUser = async (req, res) => {
@@ -71,7 +120,7 @@ export const createUser = async (req, res) => {
     }
 
     const sanitizedPermissions = Array.isArray(permissions)
-      ? Array.from(new Set(permissions.filter((permission) => MODULE_PERMISSIONS.includes(permission))))
+      ? Array.from(new Set(permissions.filter((permission) => isValidPermissionKey(permission))))
       : [];
 
     // Create new user
@@ -271,7 +320,7 @@ export const updateUser = async (req, res) => {
           message: 'Permissions must be an array of strings'
         });
       }
-      sanitizedPermissions = Array.from(new Set(permissions.filter((permission) => MODULE_PERMISSIONS.includes(permission))));
+      sanitizedPermissions = Array.from(new Set(permissions.filter((permission) => isValidPermissionKey(permission))));
     }
 
     // Update user fields
