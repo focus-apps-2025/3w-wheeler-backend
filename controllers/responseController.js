@@ -1820,7 +1820,7 @@ export const getBiwSummary = async (req, res) => {
       formQuery.tenantId = req.user.tenantId;
     }
 
-    const forms = await Form.find(formQuery).select('id _id');
+    const forms = await Form.find(formQuery).select('id _id').lean();
     const formIds = forms.flatMap(f => [f.id, f._id.toString()]);
 
     // Get ALL responses for these forms (no pagination limit)
