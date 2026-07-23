@@ -2060,7 +2060,11 @@ export const getResponseById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const response = await Response.findOne({ id })
+    const query = mongoose.Types.ObjectId.isValid(id)
+      ? { $or: [{ _id: id }, { id }] }
+      : { id };
+
+    const response = await Response.findOne(query)
       .populate('assignedTo', 'username firstName lastName email')
       .populate('verifiedBy', 'username firstName lastName email');
 
@@ -2101,7 +2105,11 @@ export const updateResponse = async (req, res) => {
 
     console.log('Updating response:', { id, answers: !!answers, notes, status, tenantFilter: req.tenantFilter });
 
-    let response = await Response.findOne({ id });
+    const query = mongoose.Types.ObjectId.isValid(id)
+      ? { $or: [{ _id: id }, { id }] }
+      : { id };
+
+    let response = await Response.findOne(query);
 
     if (!response) {
       return res.status(404).json({
@@ -2385,7 +2393,11 @@ export const assignResponse = async (req, res) => {
     const { id } = req.params;
     const { assignedTo } = req.body;
 
-    const response = await Response.findOne({ id });
+    const query = mongoose.Types.ObjectId.isValid(id)
+      ? { $or: [{ _id: id }, { id }] }
+      : { id };
+
+    const response = await Response.findOne(query);
 
     if (!response || !(await canAccessResponseTenant(req, response))) {
       return res.status(404).json({
@@ -2425,7 +2437,11 @@ export const deleteResponse = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const response = await Response.findOne({ id });
+    const query = mongoose.Types.ObjectId.isValid(id)
+      ? { $or: [{ _id: id }, { id }] }
+      : { id };
+
+    const response = await Response.findOne(query);
 
     if (!response || !(await canAccessResponseTenant(req, response))) {
       return res.status(404).json({
@@ -2435,10 +2451,10 @@ export const deleteResponse = async (req, res) => {
     }
 
     const questionId = response.questionId;
-    await Response.findOneAndDelete({ id });
+    await Response.findOneAndDelete({ _id: response._id });
 
-    // Emit real-time event for deleted response
-    emitResponseDeleted(questionId, id);
+    // Emit real-time event for deleted response (using response.id which is the UUID expected by frontend socket listener)
+    emitResponseDeleted(questionId, response.id);
 
     res.json({
       success: true,
@@ -2465,23 +2481,32 @@ export const deleteMultipleResponses = async (req, res) => {
       });
     }
 
-    const candidateResponses = await Response.find({ id: { $in: ids } }).select('id questionId tenantId');
+    const objectIds = ids.filter(id => mongoose.Types.ObjectId.isValid(id));
+    const findQuery = {
+      $or: [
+        { id: { $in: ids } },
+        { _id: { $in: objectIds } }
+      ]
+    };
+
+    const candidateResponses = await Response.find(findQuery).select('id _id questionId tenantId');
     const accessChecks = await Promise.all(
       candidateResponses.map(async (r) => ({
-        id: r.id,
+        doc: r,
         allowed: await canAccessResponseTenant(req, r),
       })),
     );
-    const allowedIds = accessChecks.filter((c) => c.allowed).map((c) => c.id);
+    const allowedDocs = accessChecks.filter((c) => c.allowed).map((c) => c.doc);
+    const allowedDbIds = allowedDocs.map((doc) => doc._id);
 
-    if (allowedIds.length === 0) {
+    if (allowedDbIds.length === 0) {
       return res.json({
         success: true,
         message: '0 responses deleted successfully'
       });
     }
 
-    const result = await Response.deleteMany({ id: { $in: allowedIds } });
+    const result = await Response.deleteMany({ _id: { $in: allowedDbIds } });
 
     res.json({
       success: true,
@@ -3079,7 +3104,14 @@ export const bulkUpdateBiwReview = async (req, res) => {
     // would silently exclude every response on a form merely shared with
     // this user's tenant, since Response.tenantId always reflects the form
     // OWNER's tenant, not the acting user's.
-    const candidateResponses = await Response.find({ id: { $in: ids } });
+    const objectIds = ids.filter(id => mongoose.Types.ObjectId.isValid(id));
+    const findQuery = {
+      $or: [
+        { id: { $in: ids } },
+        { _id: { $in: objectIds } }
+      ]
+    };
+    const candidateResponses = await Response.find(findQuery);
     const accessFlags = await Promise.all(
       candidateResponses.map((r) => canAccessResponseTenant(req, r)),
     );

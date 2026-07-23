@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import ChatMessage from '../models/ChatMessage.js';
 import User from '../models/User.js';
 import Response from '../models/Response.js';
@@ -116,11 +117,19 @@ export const getTenantMessages = async (req, res) => {
 
     console.log("[getTenantMessages] Found messages:", messages.length);
 
-    // Manually attach responses because responseId is a custom string ID
+    // Manually attach responses because responseId can be either custom string ID (id) or ObjectId (_id)
     const responseIds = [...new Set(messages.map(m => m.responseId))].filter(Boolean);
-    const responses = await Response.find({ id: { $in: responseIds } });
+    const objectIds = responseIds.filter(id => mongoose.Types.ObjectId.isValid(id));
+    const findQuery = {
+      $or: [
+        { id: { $in: responseIds } },
+        { _id: { $in: objectIds } }
+      ]
+    };
+    const responses = await Response.find(findQuery);
     const responseMap = responses.reduce((acc, r) => {
       acc[r.id] = r;
+      acc[r._id.toString()] = r;
       return acc;
     }, {});
 

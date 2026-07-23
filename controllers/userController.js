@@ -1109,7 +1109,10 @@ export const getReviewsForResponse = async (req, res) => {
 
     // Optional: Check if response exists (don't block if not found)
     try {
-      const response = await Response.findOne({ id: responseId });
+      const query = mongoose.Types.ObjectId.isValid(responseId)
+        ? { $or: [{ _id: responseId }, { id: responseId }] }
+        : { id: responseId };
+      const response = await Response.findOne(query);
       if (!response) {
         console.log(`[getReviewsForResponse] Response not found: ${responseId}`);
         // Return empty reviews instead of error
