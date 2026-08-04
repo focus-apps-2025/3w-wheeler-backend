@@ -30,7 +30,7 @@ const canAccessResponseTenant = async (req, response) => {
   if (req.user?.role === 'superadmin') return true;
 
   const or_conditions = [{ id: response.questionId }];
-  if(mongoose.Types.ObjectId.isValid(response.questionId)) {
+  if (mongoose.Types.ObjectId.isValid(response.questionId)) {
     or_conditions.push({ _id: response.questionId });
   }
 
@@ -214,23 +214,51 @@ export const createResponse = async (req, res) => {
         });
       }
 
-      form = await Form.findOne({ id: questionId, tenantId: tenant._id, isVisible: true });
+      // 🔧 FIX: Search by BOTH id (string) AND _id (ObjectId)
+      const searchConditions = [];
+
+      // Search by the string 'id' field
+      searchConditions.push({ id: questionId });
+
+      // Search by MongoDB _id if it's a valid ObjectId
+      if (mongoose.Types.ObjectId.isValid(questionId)) {
+        searchConditions.push({ _id: questionId });
+      }
+
+      form = await Form.findOne({
+        $or: searchConditions,
+        tenantId: tenant._id,
+        isVisible: true
+      });
+
       console.log(`[CREATE RESPONSE DEBUG] Step 3: Form lookup done, found: ${!!form}`);
+      console.log(`[CREATE RESPONSE DEBUG] Search conditions:`, JSON.stringify(searchConditions));
 
       if (!form) {
         return res.status(404).json({
           success: false,
-          message: 'Form not found'
+          message: `Form not found with ID: ${questionId}`
         });
       }
     } else {
-      form = await Form.findOne({ id: questionId, ...req.tenantFilter });
+      // For the else branch (no tenantSlug)
+      const searchConditions = [];
+      searchConditions.push({ id: questionId });
+      if (mongoose.Types.ObjectId.isValid(questionId)) {
+        searchConditions.push({ _id: questionId });
+      }
+
+      form = await Form.findOne({
+        $or: searchConditions,
+        ...req.tenantFilter
+      });
+
       console.log(`[CREATE RESPONSE DEBUG] Step 2: Form lookup done (no tenant), found: ${!!form}`);
 
       if (!form) {
         return res.status(404).json({
           success: false,
-          message: 'Form not found'
+          message: `Form not found with ID: ${questionId}`
         });
       }
 
@@ -2179,9 +2207,17 @@ export const updateResponse = async (req, res) => {
       if (req.body.isDispatched === true && !response.isDispatched) {
         response.isDispatched = true;
         response.dispatchedAt = new Date();
+        response.dispatchedBy = req.user._id;
+        response.dispatchedByName =
+          `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim() ||
+          req.user.username ||
+          req.user.email ||
+          'Unknown user';
       } else if (req.body.isDispatched === false) {
         response.isDispatched = false;
         response.dispatchedAt = null;
+        response.dispatchedBy = null;
+        response.dispatchedByName = null;
       }
     }
 
@@ -2624,7 +2660,7 @@ export const getResponsesByForm = async (req, res) => {
     let responsesQuery = Response.find(query);
     if (isAnalytics) {
       responsesQuery = responsesQuery.select(
-        '_id id questionId formId answers status submissionMetadata responseRanks createdAt timestamp submittedBy createdBy isDispatched dispatchedAt biwReview submittedAt'
+        '_id id questionId formId answers status submissionMetadata responseRanks createdAt timestamp submittedBy createdBy isDispatched dispatchedAt dispatchedBy dispatchedByName biwReview submittedAt tenantId'
       );
     } else {
       responsesQuery = responsesQuery
