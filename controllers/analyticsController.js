@@ -2244,7 +2244,6 @@ export const getPerformanceTable = async (req, res) => {
     const { startDate, endDate, formId, tenantId: queryTenantId } = req.query;
     const { role, tenantId: userTenantId, _id: userId } = req.user;
 
-    // ✅ DECLARE start AND end HERE
     const start = startDate ? new Date(startDate) : new Date(0);
     const end = endDate ? new Date(endDate) : new Date();
     if (endDate) end.setHours(23, 59, 59, 999);
@@ -2253,7 +2252,7 @@ export const getPerformanceTable = async (req, res) => {
     let crossTenantAccess = false;
     let targetTenantId = null;
 
-    // ✅ 1. CHECK CROSS-TENANT ACCESS
+    // Check cross-tenant access
     if (queryTenantId && queryTenantId !== userTenantId?.toString()) {
       let hasAccess = false;
 
@@ -2279,7 +2278,7 @@ export const getPerformanceTable = async (req, res) => {
       }
     }
 
-    // ✅ 2. DETERMINE WHICH USERS TO SHOW - EXPAND TO INCLUDE CROSS-TENANT
+    // Determine which users to show
     let usersQuery = { ...tenantFilter };
 
     if (crossTenantAccess && targetTenantId) {
@@ -2293,7 +2292,6 @@ export const getPerformanceTable = async (req, res) => {
       usersQuery = { tenantId: new mongoose.Types.ObjectId(queryTenantId) };
     }
 
-    // Get all users in scope
     let users = await User.find(usersQuery)
       .populate('tenantId', 'name companyName')
       .select('firstName lastName username email role tenantId isActive status')
@@ -2301,7 +2299,7 @@ export const getPerformanceTable = async (req, res) => {
 
     console.log(`[Performance Table] Found ${users.length} users from current tenant(s)`);
 
-    // ✅ 3. FIND THE FORM AND ITS TENANT RELATIONSHIPS
+    // Find form and its relationships
     let formIdVariants = null;
     let formDoc = null;
     let formTenantId = null;
@@ -2322,15 +2320,12 @@ export const getPerformanceTable = async (req, res) => {
         sharedWithTenants = (formDoc.sharedWithTenants || []).map(id => id.toString());
         chassisTenantAssignments = formDoc.chassisTenantAssignments || [];
         formIdVariants = [formDoc.id, formDoc._id?.toString()].filter(Boolean);
-
-        console.log(`[Performance Table] Form owner tenant: ${formTenantId}`);
-        console.log(`[Performance Table] Form shared with: ${sharedWithTenants.join(', ')}`);
       } else {
         formIdVariants = [formId];
       }
     }
 
-    // ✅ 4. BUILD RESPONSE QUERY
+    // Build response query
     const responseBaseFilter = {
       createdAt: { $gte: start, $lte: end }
     };
@@ -2343,14 +2338,14 @@ export const getPerformanceTable = async (req, res) => {
       Object.assign(responseBaseFilter, tenantFilter);
     }
 
-    // ✅ 5. GET ALL RESPONSES
+    // Get all responses
     const allResponses = await Response.find(responseBaseFilter)
       .select('createdBy submittedBy isDispatched biwReview answers questionId createdAt id _id')
       .lean();
 
     console.log(`[Performance Table] Found ${allResponses.length} total responses`);
 
-    // ✅ 6. FILTER RESPONSES FOR CHASSIS-SHARED TENANTS
+    // Filter responses for chassis-shared tenants
     let filteredResponses = allResponses;
 
     if (formDoc && crossTenantAccess) {
@@ -2397,12 +2392,11 @@ export const getPerformanceTable = async (req, res) => {
       }
     }
 
-    // ✅ 7. GET ALL UNIQUE USER IDs FROM RESPONSES AND REVIEWS
+    // Get all unique user IDs from responses
     const userIdsFromResponses = filteredResponses
       .map(r => r.createdBy?.toString())
       .filter(Boolean);
 
-    // Also get user IDs from responses that might be stored as ObjectId
     const objectIdsFromResponses = filteredResponses
       .map(r => r.createdBy)
       .filter(id => id && mongoose.Types.ObjectId.isValid(id))
@@ -2411,7 +2405,7 @@ export const getPerformanceTable = async (req, res) => {
     const allUserIds = [...new Set([...userIdsFromResponses, ...objectIdsFromResponses])];
     console.log(`[Performance Table] Found ${allUserIds.length} unique user IDs from responses`);
 
-    // ✅ 8. FETCH CROSS-TENANT USERS (users from other tenants who have responses)
+    // Fetch cross-tenant users
     const crossTenantUserIds = allUserIds.filter(id =>
       !users.some(u => u._id.toString() === id)
     );
@@ -2419,21 +2413,30 @@ export const getPerformanceTable = async (req, res) => {
     if (crossTenantUserIds.length > 0) {
       console.log(`[Performance Table] Fetching ${crossTenantUserIds.length} cross-tenant users`);
 
-      // Fetch cross-tenant users by their IDs
-      const crossTenantUsers = await User.find({
-        _id: { $in: crossTenantUserIds.map(id => new mongoose.Types.ObjectId(id)) }
-      })
-        .select('firstName lastName username email role tenantId isActive status')
-        .populate('tenantId', 'name companyName')
-        .lean();
+      // FIX: Only fetch valid ObjectIds
+      const validObjectIds = crossTenantUserIds
+        .filter(id => /^[0-9a-f]{24}$/i.test(id))
+        .map(id => new mongoose.Types.ObjectId(id));
 
-      console.log(`[Performance Table] Found ${crossTenantUsers.length} cross-tenant users`);
+      if (validObjectIds.length > 0) {
+        const crossTenantUsers = await User.find({
+          _id: { $in: validObjectIds }
+        })
+          .select('firstName lastName username email role tenantId isActive status')
+          .populate('tenantId', 'name companyName')
+          .lean();
 
-      // Merge cross-tenant users into the users array
-      users = [...users, ...crossTenantUsers];
+        if (crossTenantUsers.length > 0) {
+          // Avoid duplicates
+          const existingIds = new Set(users.map(u => u._id.toString()));
+          const newUsers = crossTenantUsers.filter(u => !existingIds.has(u._id.toString()));
+          users = [...users, ...newUsers];
+          console.log(`[Performance Table] Added ${newUsers.length} cross-tenant users`);
+        }
+      }
     }
 
-    // ✅ 9. GET RESPONSE IDs FOR REVIEW FETCHING
+    // Get response IDs for review fetching
     const responseIds = [];
     filteredResponses.forEach(r => {
       if (r._id) responseIds.push(r._id.toString());
@@ -2452,7 +2455,7 @@ export const getPerformanceTable = async (req, res) => {
       });
     }
 
-    // ✅ 10. FETCH REVIEWS
+    // Fetch reviews
     const reviewQuery = {
       $or: [
         { responseId: { $in: uniqueResponseIds } },
@@ -2465,7 +2468,7 @@ export const getPerformanceTable = async (req, res) => {
     const reviews = await Review.find(reviewQuery).lean();
     console.log(`[Performance Table] Found ${reviews.length} reviews`);
 
-    // ✅ 11. GET REVIEWER IDs FROM REVIEWS
+    // Get reviewer IDs from reviews
     const reviewerIds = reviews
       .map(r => r.submitterId || r.submittedBy || r.createdBy || r.userId || r.revieweeId)
       .filter(Boolean)
@@ -2474,7 +2477,7 @@ export const getPerformanceTable = async (req, res) => {
     const uniqueReviewerIds = [...new Set(reviewerIds)];
     console.log(`[Performance Table] Found ${uniqueReviewerIds.length} unique reviewer IDs from reviews`);
 
-    // ✅ 12. FETCH CROSS-TENANT REVIEWERS
+    // ============ FIX: Fetch cross-tenant reviewers safely ============
     const crossTenantReviewerIds = uniqueReviewerIds.filter(id =>
       !users.some(u => u._id.toString() === id)
     );
@@ -2482,20 +2485,75 @@ export const getPerformanceTable = async (req, res) => {
     if (crossTenantReviewerIds.length > 0) {
       console.log(`[Performance Table] Fetching ${crossTenantReviewerIds.length} cross-tenant reviewers`);
 
-      const crossTenantReviewers = await User.find({
-        _id: { $in: crossTenantReviewerIds.map(id => new mongoose.Types.ObjectId(id)) }
-      })
-        .select('firstName lastName username email role tenantId isActive status')
-        .populate('tenantId', 'name companyName')
-        .lean();
+      // FIX: Only fetch valid ObjectIds
+      const validObjectIds = crossTenantReviewerIds
+        .filter(id => /^[0-9a-f]{24}$/i.test(id))
+        .map(id => new mongoose.Types.ObjectId(id));
 
-      console.log(`[Performance Table] Found ${crossTenantReviewers.length} cross-tenant reviewers`);
+      if (validObjectIds.length > 0) {
+        try {
+          const crossTenantReviewers = await User.find({
+            _id: { $in: validObjectIds }
+          })
+            .select('firstName lastName username email role tenantId isActive status')
+            .populate('tenantId', 'name companyName')
+            .lean();
 
-      // Merge cross-tenant reviewers into the users array
-      users = [...users, ...crossTenantReviewers];
+          if (crossTenantReviewers.length > 0) {
+            // Avoid duplicates
+            const existingIds = new Set(users.map(u => u._id.toString()));
+            const newReviewers = crossTenantReviewers.filter(u => !existingIds.has(u._id.toString()));
+            users = [...users, ...newReviewers];
+            console.log(`[Performance Table] Added ${newReviewers.length} cross-tenant reviewers`);
+          }
+        } catch (err) {
+          console.error('Error fetching cross-tenant reviewers:', err);
+        }
+      }
+
+      // Handle non-ObjectId reviewers (emails, usernames, etc.)
+      const nonObjectIdReviewers = crossTenantReviewerIds.filter(id => {
+        if (typeof id !== 'string') return true;
+        return !/^[0-9a-f]{24}$/i.test(id);
+      });
+
+      if (nonObjectIdReviewers.length > 0) {
+        console.log(`[Performance Table] Searching for ${nonObjectIdReviewers.length} reviewers by email/username`);
+
+        const orConditions = [];
+        nonObjectIdReviewers.forEach(id => {
+          const idStr = String(id).toLowerCase().trim();
+          if (idStr) {
+            orConditions.push(
+              { email: { $regex: `^${idStr}$`, $options: 'i' } },
+              { username: { $regex: `^${idStr}$`, $options: 'i' } }
+            );
+          }
+        });
+
+        if (orConditions.length > 0) {
+          try {
+            const additionalReviewers = await User.find({
+              $or: orConditions
+            })
+              .select('firstName lastName username email role tenantId isActive status')
+              .populate('tenantId', 'name companyName')
+              .lean();
+
+            if (additionalReviewers.length > 0) {
+              const existingIds = new Set(users.map(u => u._id.toString()));
+              const newReviewers = additionalReviewers.filter(u => !existingIds.has(u._id.toString()));
+              users = [...users, ...newReviewers];
+              console.log(`[Performance Table] Added ${newReviewers.length} reviewers by email/username`);
+            }
+          } catch (err) {
+            console.error('Error fetching reviewers by email/username:', err);
+          }
+        }
+      }
     }
 
-    // ✅ 13. Build user lookup maps
+    // Build user lookup maps
     const userMap = {};
     const emailToUserId = {};
     const usernameToUserId = {};
@@ -2514,7 +2572,7 @@ export const getPerformanceTable = async (req, res) => {
 
     console.log(`[Performance Table] Total users available: ${Object.keys(userMap).length}`);
 
-    // ✅ 14. Process reviews and build review map
+    // Process reviews and build review map
     const reviewMap = {};
 
     reviews.forEach(review => {
@@ -2524,34 +2582,27 @@ export const getPerformanceTable = async (req, res) => {
 
       let submitterIdStr = String(submitterId);
 
-      // Try to map to a user ID
       let mappedUserId = null;
 
-      // Try direct match
       if (userMap[submitterIdStr]) {
         mappedUserId = submitterIdStr;
-      }
-      // Try email match
-      else if (emailToUserId[submitterIdStr.toLowerCase()]) {
+      } else if (emailToUserId[submitterIdStr.toLowerCase()]) {
         mappedUserId = emailToUserId[submitterIdStr.toLowerCase()];
-      }
-      // Try username match
-      else if (usernameToUserId[submitterIdStr.toLowerCase()]) {
+      } else if (usernameToUserId[submitterIdStr.toLowerCase()]) {
         mappedUserId = usernameToUserId[submitterIdStr.toLowerCase()];
-      }
-      // Try name match
-      else if (nameToUserId[submitterIdStr.toLowerCase()]) {
+      } else if (nameToUserId[submitterIdStr.toLowerCase()]) {
         mappedUserId = nameToUserId[submitterIdStr.toLowerCase()];
-      }
-      // Try ObjectId match
-      else if (mongoose.Types.ObjectId.isValid(submitterIdStr)) {
-        const objId = new mongoose.Types.ObjectId(submitterIdStr);
-        if (userMap[objId.toString()]) {
-          mappedUserId = objId.toString();
+      } else if (mongoose.Types.ObjectId.isValid(submitterIdStr)) {
+        try {
+          const objId = new mongoose.Types.ObjectId(submitterIdStr);
+          if (userMap[objId.toString()]) {
+            mappedUserId = objId.toString();
+          }
+        } catch (err) {
+          // Not a valid ObjectId
         }
       }
 
-      // Use mapped ID or original
       const finalUserId = mappedUserId || submitterIdStr;
 
       if (!reviewMap[finalUserId]) {
@@ -2573,7 +2624,7 @@ export const getPerformanceTable = async (req, res) => {
 
     console.log(`[Performance Table] Review map has ${Object.keys(reviewMap).length} entries`);
 
-    // ✅ 15. Helper: Determine inspection status
+    // Helper: Determine inspection status
     const getInspectionStatus = (response) => {
       let isRework = false;
       let isAccepted = false;
@@ -2622,10 +2673,9 @@ export const getPerformanceTable = async (req, res) => {
       return 'Pending';
     };
 
-    // ✅ 16. Initialize stats for all users
+    // Initialize stats for all users
     const userStatsMap = new Map();
 
-    // Add all users from the user list (including cross-tenant)
     Object.values(userMap).forEach(user => {
       const userId = user._id.toString();
       userStatsMap.set(userId, {
@@ -2652,10 +2702,10 @@ export const getPerformanceTable = async (req, res) => {
       });
     });
 
-    // ✅ 17. Add reviewers who aren't in the user map
+    // Add reviewers who aren't in the user map
     Object.keys(reviewMap).forEach(reviewerId => {
       if (!userStatsMap.has(reviewerId)) {
-        if (mongoose.Types.ObjectId.isValid(reviewerId)) {
+        if (/^[0-9a-f]{24}$/i.test(reviewerId)) {
           userStatsMap.set(reviewerId, {
             userId: reviewerId,
             userName: `User ${reviewerId.substring(0, 8)}`,
@@ -2682,7 +2732,7 @@ export const getPerformanceTable = async (req, res) => {
       }
     });
 
-    // ✅ 18. Process responses
+    // Process responses (same as before)
     filteredResponses.forEach(response => {
       let userId = response.createdBy?.toString();
 
@@ -2728,13 +2778,11 @@ export const getPerformanceTable = async (req, res) => {
       stats.totalSubmitted++;
       stats.responses.push(response);
 
-      // Inspection Status
       const status = getInspectionStatus(response);
       if (status === 'Direct Ok') stats.directOk++;
       else if (status === 'Rework QC Pending') stats.reworkQcPending++;
       else if (status === 'Rejected') stats.rejected++;
 
-      // Dispatch Status
       if (response.isDispatched) {
         stats.dispatched++;
       } else {
@@ -2744,7 +2792,6 @@ export const getPerformanceTable = async (req, res) => {
         }
       }
 
-      // BIW Review Stats
       const biwStatus = response.biwReview?.status;
       if (biwStatus === 'Accepted') {
         stats.accepted++;
@@ -2758,7 +2805,7 @@ export const getPerformanceTable = async (req, res) => {
       }
     });
 
-    // ✅ 19. Apply review stats
+    // Apply review stats
     console.log('[Performance Table] Applying review stats to users...');
 
     Object.entries(reviewMap).forEach(([reviewerId, reviewData]) => {
@@ -2768,22 +2815,16 @@ export const getPerformanceTable = async (req, res) => {
         stats.rejectedReview += reviewData.rejected;
         stats.reworked += reviewData.rework;
         stats.totalReviewed += reviewData.total;
-
-        console.log(`[Performance Table] Applied ${reviewData.total} reviews to user ${reviewerId}`);
       }
     });
 
-    // ✅ 20. Calculate final metrics
+    // Calculate final metrics
     for (const [userId, stats] of userStatsMap) {
-      // ✅ CORRECT: Review Pending = Dispatched - Total Reviewed
       stats.reviewPending = Math.max(0, stats.dispatched - stats.totalReviewed);
-
-      // Performance score based on total reviewed
       stats.performanceScore = stats.totalReviewed > 0
         ? Math.round((stats.accepted / stats.totalReviewed) * 100)
         : 0;
 
-      // Calculate Rework QC Completed
       if (stats.responses.length > 0) {
         const chassisGroups = new Map();
         stats.responses.forEach(response => {
@@ -2821,7 +2862,7 @@ export const getPerformanceTable = async (req, res) => {
       }
     }
 
-    // ✅ 21. Format final table data with proper user names
+    // Format final table data
     const tableData = Array.from(userStatsMap.values())
       .filter(stats => stats.totalSubmitted > 0 || stats.totalReviewed > 0)
       .map(stats => {
@@ -2837,7 +2878,7 @@ export const getPerformanceTable = async (req, res) => {
           displayEmail = user.email || '';
           displayRole = user.role || 'inspector';
           tenantName = user.tenantId?.name || user.tenantId?.companyName || 'Cross-Tenant User';
-        } else if (mongoose.Types.ObjectId.isValid(stats.userId)) {
+        } else if (/^[0-9a-f]{24}$/i.test(stats.userId)) {
           displayName = `User ${stats.userId.substring(0, 8)}`;
         }
 
@@ -2865,7 +2906,6 @@ export const getPerformanceTable = async (req, res) => {
         };
       });
 
-    // Sort by performance score descending
     tableData.sort((a, b) => b.performanceScore - a.performanceScore);
 
     const summary = {
@@ -2890,8 +2930,7 @@ export const getPerformanceTable = async (req, res) => {
         formTenantId: formTenantId || null,
         totalResponses: filteredResponses.length,
         totalReviewsFound: reviews.length,
-        totalUsersFetched: users.length,
-        crossTenantUsersFetched: (crossTenantUserIds || []).length + (crossTenantReviewerIds || []).length
+        totalUsersFetched: users.length
       }
     });
 

@@ -2059,7 +2059,7 @@ export const getAllResponses = async (req, res) => {
     // Convert Map to Object for JSON serialization
     const formattedResponses = responses.map(response => {
       const responseObj = response.toObject();
-      console.log('[DEBUG] Response metadata from DB in getAllResponses:', responseObj.submissionMetadata);
+      //console.log('[DEBUG] Response metadata from DB in getAllResponses:', responseObj.submissionMetadata);
       return {
         ...responseObj,
         answers: Object.fromEntries(response.answers),
