@@ -2239,10 +2239,41 @@ export const getMyReviewStats = async (req, res) => {
   }
 };
 
+// ─── Simple in-memory cache for the performance table (5 min TTL) ───────────
+// Keyed by every input that changes the result. Cleared automatically once
+// stale entries are read (lazy eviction) so this never needs a background
+// timer. This is process-local, so it resets on redeploy/restart - that's
+// fine for a "nice to have" speed boost, not a correctness requirement.
+const PERFORMANCE_TABLE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const performanceTableCache = new Map();
+
+const buildPerformanceTableCacheKey = ({
+  tenantKey, startDate, endDate, formId, queryTenantId, page, limit
+}) => JSON.stringify({ tenantKey, startDate, endDate, formId, queryTenantId, page, limit });
+
+const getCachedPerformanceTable = (key) => {
+  const entry = performanceTableCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.cachedAt > PERFORMANCE_TABLE_CACHE_TTL_MS) {
+    performanceTableCache.delete(key);
+    return null;
+  }
+  return entry.payload;
+};
+
+const setCachedPerformanceTable = (key, payload) => {
+  performanceTableCache.set(key, { payload, cachedAt: Date.now() });
+};
+
 export const getPerformanceTable = async (req, res) => {
   try {
     const { startDate, endDate, formId, tenantId: queryTenantId } = req.query;
     const { role, tenantId: userTenantId, _id: userId } = req.user;
+
+    // ── Pagination params ────────────────────────────────────────────────
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const skip = (page - 1) * limit;
 
     const start = startDate ? new Date(startDate) : new Date(0);
     const end = endDate ? new Date(endDate) : new Date();
@@ -2259,7 +2290,7 @@ export const getPerformanceTable = async (req, res) => {
       if (role === 'superadmin') {
         hasAccess = true;
       } else if (userTenantId) {
-        const currentUserTenant = await Tenant.findById(userTenantId).lean();
+        const currentUserTenant = await Tenant.findById(userTenantId).maxTimeMS(30000).lean();
         if (currentUserTenant && currentUserTenant.internalTrackingEnabled) {
           const allowedIds = (currentUserTenant.allowedTenantIds || []).map(id => id.toString());
           if (allowedIds.includes(queryTenantId)) {
@@ -2276,6 +2307,23 @@ export const getPerformanceTable = async (req, res) => {
           message: 'Access to this tenant is denied for Performance Table.'
         });
       }
+    }
+
+    // ── Cache check ─────────────────────────────────────────────────────
+    const cacheKey = buildPerformanceTableCacheKey({
+      tenantKey: userTenantId?.toString() || 'superadmin',
+      startDate: startDate || null,
+      endDate: endDate || null,
+      formId: formId || null,
+      queryTenantId: queryTenantId || null,
+      page,
+      limit
+    });
+
+    const cached = getCachedPerformanceTable(cacheKey);
+    if (cached) {
+      console.log('[Performance Table] Cache hit', cacheKey);
+      return res.json(cached);
     }
 
     // Determine which users to show
@@ -2295,6 +2343,7 @@ export const getPerformanceTable = async (req, res) => {
     let users = await User.find(usersQuery)
       .populate('tenantId', 'name companyName')
       .select('firstName lastName username email role tenantId isActive status')
+      .maxTimeMS(30000)
       .lean();
 
     console.log(`[Performance Table] Found ${users.length} users from current tenant(s)`);
@@ -2313,6 +2362,7 @@ export const getPerformanceTable = async (req, res) => {
       }
       formDoc = await Form.findOne({ $or: formLookupOr })
         .select('id _id tenantId sharedWithTenants chassisTenantAssignments sections')
+        .maxTimeMS(30000)
         .lean();
 
       if (formDoc) {
@@ -2338,12 +2388,26 @@ export const getPerformanceTable = async (req, res) => {
       Object.assign(responseBaseFilter, tenantFilter);
     }
 
-    // Get all responses
+    // ── Total count (for hasMore) + paginated fetch ────────────────────
+    // NOTE: pagination here is applied to the *responses* query itself
+    // (skip/limit), not to the aggregated per-user table below - the
+    // aggregation is computed only over the current page of responses.
+    // This keeps memory bounded and response times fast even with
+    // thousands of responses, at the cost of the performance table
+    // reflecting only the responses in the current page rather than the
+    // full date range in one shot. The frontend pages through with
+    // `hasMore` to see the rest.
+    const totalResponsesInRange = await Response.countDocuments(responseBaseFilter).maxTimeMS(30000);
+
     const allResponses = await Response.find(responseBaseFilter)
       .select('createdBy submittedBy isDispatched biwReview answers questionId createdAt id _id')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .maxTimeMS(30000)
       .lean();
 
-    console.log(`[Performance Table] Found ${allResponses.length} total responses`);
+    console.log(`[Performance Table] Found ${allResponses.length} responses on page ${page} (of ${totalResponsesInRange} total in range)`);
 
     // Filter responses for chassis-shared tenants
     let filteredResponses = allResponses;
@@ -2413,7 +2477,7 @@ export const getPerformanceTable = async (req, res) => {
     if (crossTenantUserIds.length > 0) {
       console.log(`[Performance Table] Fetching ${crossTenantUserIds.length} cross-tenant users`);
 
-      // FIX: Only fetch valid ObjectIds
+      // Only fetch valid ObjectIds
       const validObjectIds = crossTenantUserIds
         .filter(id => /^[0-9a-f]{24}$/i.test(id))
         .map(id => new mongoose.Types.ObjectId(id));
@@ -2424,6 +2488,7 @@ export const getPerformanceTable = async (req, res) => {
         })
           .select('firstName lastName username email role tenantId isActive status')
           .populate('tenantId', 'name companyName')
+          .maxTimeMS(30000)
           .lean();
 
         if (crossTenantUsers.length > 0) {
@@ -2447,15 +2512,28 @@ export const getPerformanceTable = async (req, res) => {
     console.log(`[Performance Table] Looking for reviews with ${uniqueResponseIds.length} response IDs`);
 
     if (uniqueResponseIds.length === 0) {
-      return res.json({
+      const emptyPayload = {
         success: true,
         data: [],
         summary: { totalUsers: 0, totalSubmissions: 0, totalDispatched: 0, totalReviewed: 0, averageScore: 0 },
-        meta: { formId: formId || null, totalResponses: 0 }
-      });
+        meta: {
+          formId: formId || null,
+          totalResponses: 0,
+          totalResponsesInRange
+        },
+        pagination: {
+          page,
+          limit,
+          hasMore: skip + limit < totalResponsesInRange
+        }
+      };
+      setCachedPerformanceTable(cacheKey, emptyPayload);
+      return res.json(emptyPayload);
     }
 
-    // Fetch reviews
+    // Fetch reviews - handle both ObjectId and non-ObjectId (email/username)
+    // submitterId values by splitting the response-id lookup from the
+    // submitter-type lookup up front, with maxTimeMS to avoid hanging.
     const reviewQuery = {
       $or: [
         { responseId: { $in: uniqueResponseIds } },
@@ -2465,7 +2543,7 @@ export const getPerformanceTable = async (req, res) => {
       ]
     };
 
-    const reviews = await Review.find(reviewQuery).lean();
+    const reviews = await Review.find(reviewQuery).maxTimeMS(30000).lean();
     console.log(`[Performance Table] Found ${reviews.length} reviews`);
 
     // Get reviewer IDs from reviews
@@ -2477,7 +2555,7 @@ export const getPerformanceTable = async (req, res) => {
     const uniqueReviewerIds = [...new Set(reviewerIds)];
     console.log(`[Performance Table] Found ${uniqueReviewerIds.length} unique reviewer IDs from reviews`);
 
-    // ============ FIX: Fetch cross-tenant reviewers safely ============
+    // ============ Fetch cross-tenant reviewers, split by type ============
     const crossTenantReviewerIds = uniqueReviewerIds.filter(id =>
       !users.some(u => u._id.toString() === id)
     );
@@ -2485,7 +2563,7 @@ export const getPerformanceTable = async (req, res) => {
     if (crossTenantReviewerIds.length > 0) {
       console.log(`[Performance Table] Fetching ${crossTenantReviewerIds.length} cross-tenant reviewers`);
 
-      // FIX: Only fetch valid ObjectIds
+      // Step 1: valid ObjectId strings -> fetch by _id
       const validObjectIds = crossTenantReviewerIds
         .filter(id => /^[0-9a-f]{24}$/i.test(id))
         .map(id => new mongoose.Types.ObjectId(id));
@@ -2497,10 +2575,10 @@ export const getPerformanceTable = async (req, res) => {
           })
             .select('firstName lastName username email role tenantId isActive status')
             .populate('tenantId', 'name companyName')
+            .maxTimeMS(30000)
             .lean();
 
           if (crossTenantReviewers.length > 0) {
-            // Avoid duplicates
             const existingIds = new Set(users.map(u => u._id.toString()));
             const newReviewers = crossTenantReviewers.filter(u => !existingIds.has(u._id.toString()));
             users = [...users, ...newReviewers];
@@ -2511,7 +2589,7 @@ export const getPerformanceTable = async (req, res) => {
         }
       }
 
-      // Handle non-ObjectId reviewers (emails, usernames, etc.)
+      // Step 2: non-ObjectId strings (emails / usernames) -> fetch by email or username
       const nonObjectIdReviewers = crossTenantReviewerIds.filter(id => {
         if (typeof id !== 'string') return true;
         return !/^[0-9a-f]{24}$/i.test(id);
@@ -2538,6 +2616,7 @@ export const getPerformanceTable = async (req, res) => {
             })
               .select('firstName lastName username email role tenantId isActive status')
               .populate('tenantId', 'name companyName')
+              .maxTimeMS(30000)
               .lean();
 
             if (additionalReviewers.length > 0) {
@@ -2561,18 +2640,20 @@ export const getPerformanceTable = async (req, res) => {
     const idToUser = {};
 
     users.forEach(u => {
-      const userId = u._id.toString();
-      userMap[userId] = u;
-      idToUser[userId] = u;
-      if (u.email) emailToUserId[u.email.toLowerCase()] = userId;
-      if (u.username) usernameToUserId[u.username.toLowerCase()] = userId;
+      const uId = u._id.toString();
+      userMap[uId] = u;
+      idToUser[uId] = u;
+      if (u.email) emailToUserId[u.email.toLowerCase()] = uId;
+      if (u.username) usernameToUserId[u.username.toLowerCase()] = uId;
       const fullName = `${u.firstName} ${u.lastName}`.toLowerCase();
-      if (fullName.trim()) nameToUserId[fullName] = userId;
+      if (fullName.trim()) nameToUserId[fullName] = uId;
     });
 
     console.log(`[Performance Table] Total users available: ${Object.keys(userMap).length}`);
 
-    // Process reviews and build review map
+    // Process reviews and build review map. `submitterIdType` (when present
+    // on the review doc) short-circuits the lookup instead of trying every
+    // map in sequence.
     const reviewMap = {};
 
     reviews.forEach(review => {
@@ -2581,11 +2662,14 @@ export const getPerformanceTable = async (req, res) => {
       if (!submitterId) return;
 
       let submitterIdStr = String(submitterId);
-
       let mappedUserId = null;
 
       if (userMap[submitterIdStr]) {
         mappedUserId = submitterIdStr;
+      } else if (review.submitterIdType === 'email' && emailToUserId[submitterIdStr.toLowerCase()]) {
+        mappedUserId = emailToUserId[submitterIdStr.toLowerCase()];
+      } else if (review.submitterIdType === 'username' && usernameToUserId[submitterIdStr.toLowerCase()]) {
+        mappedUserId = usernameToUserId[submitterIdStr.toLowerCase()];
       } else if (emailToUserId[submitterIdStr.toLowerCase()]) {
         mappedUserId = emailToUserId[submitterIdStr.toLowerCase()];
       } else if (usernameToUserId[submitterIdStr.toLowerCase()]) {
@@ -2677,9 +2761,9 @@ export const getPerformanceTable = async (req, res) => {
     const userStatsMap = new Map();
 
     Object.values(userMap).forEach(user => {
-      const userId = user._id.toString();
-      userStatsMap.set(userId, {
-        userId,
+      const uId = user._id.toString();
+      userStatsMap.set(uId, {
+        userId: uId,
         userName: `${user.firstName} ${user.lastName}`,
         userEmail: user.email,
         userRole: user.role,
@@ -2732,7 +2816,7 @@ export const getPerformanceTable = async (req, res) => {
       }
     });
 
-    // Process responses (same as before)
+    // Process responses (same logic as before, just over the current page)
     filteredResponses.forEach(response => {
       let userId = response.createdBy?.toString();
 
@@ -2845,15 +2929,12 @@ export const getPerformanceTable = async (req, res) => {
         });
 
         let reworkCompletedCount = 0;
-        for (const [chassisKey, responses] of chassisGroups) {
-          const sorted = responses.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-          let reworkIndex = 0;
+        for (const [chassisKey, chassisResponses] of chassisGroups) {
+          const sorted = chassisResponses.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 
           sorted.forEach((response, index) => {
             const status = getInspectionStatus(response);
-            if (status === 'Rework QC Pending') {
-              reworkIndex++;
-            } else if (status === 'Direct Ok' && index > 0) {
+            if (status === 'Direct Ok' && index > 0) {
               reworkCompletedCount++;
             }
           });
@@ -2921,7 +3002,9 @@ export const getPerformanceTable = async (req, res) => {
 
     console.log('[Performance Table] Final summary:', summary);
 
-    res.json({
+    const hasMore = skip + allResponses.length < totalResponsesInRange;
+
+    const payload = {
       success: true,
       data: tableData,
       summary,
@@ -2929,10 +3012,20 @@ export const getPerformanceTable = async (req, res) => {
         formId: formId || null,
         formTenantId: formTenantId || null,
         totalResponses: filteredResponses.length,
+        totalResponsesInRange,
         totalReviewsFound: reviews.length,
         totalUsersFetched: users.length
+      },
+      pagination: {
+        page,
+        limit,
+        hasMore
       }
-    });
+    };
+
+    setCachedPerformanceTable(cacheKey, payload);
+
+    res.json(payload);
 
   } catch (error) {
     console.error('Error in getPerformanceTable:', error);
