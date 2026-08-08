@@ -2676,10 +2676,20 @@ export const getResponsesByForm = async (req, res) => {
         .populate('createdBy', 'username firstName lastName email');
     }
 
-    let responses = await responsesQuery
-      .sort(options.sort)
-      .limit(options.limit * 1)
-      .skip((options.page - 1) * options.limit);
+    // .lean() skips Mongoose document hydration (getters/setters/change
+    // tracking) since this endpoint only ever reads the data. For the
+    // analytics path (up to 10k docs per request) this is the single
+    // biggest win available here. Combined with the count query, both run
+    // in parallel instead of as two sequential round trips to Mongo.
+    const [responsesRaw, total] = await Promise.all([
+      responsesQuery
+        .sort(options.sort)
+        .limit(options.limit * 1)
+        .skip((options.page - 1) * options.limit)
+        .lean(),
+      Response.countDocuments(query)
+    ]);
+    let responses = responsesRaw;
 
     console.log('[GET RESPONSES] Query:', JSON.stringify(query));
     console.log('[GET RESPONSES] Responses found:', responses.length);
@@ -2710,22 +2720,23 @@ export const getResponsesByForm = async (req, res) => {
       }
     }
 
-    const total = await Response.countDocuments(query);
-
     let reviewsByResponse = {};
     let messagesByResponse = {};
 
     if (!isAnalytics) {
-      // Fetch reviews and chat messages for these responses to show in the "Review" column
+      // Fetch reviews and chat messages for these responses to show in the
+      // "Review" column. These two lookups don't depend on each other, so
+      // run them concurrently instead of one after the other.
       const responseIds = responses.map(r => r.id);
-      const reviews = await Review.find({ responseId: { $in: responseIds } })
-        .populate('reviewerId', 'firstName lastName email username')
-        .sort({ createdAt: -1 });
-
-      const chatMessages = await ChatMessage.find({
-        responseId: { $in: responseIds },
-        questionContexts: { $exists: true, $not: { $size: 0 } }
-      }).sort({ createdAt: -1 });
+      const [reviews, chatMessages] = await Promise.all([
+        Review.find({ responseId: { $in: responseIds } })
+          .populate('reviewerId', 'firstName lastName email username')
+          .sort({ createdAt: -1 }),
+        ChatMessage.find({
+          responseId: { $in: responseIds },
+          questionContexts: { $exists: true, $not: { $size: 0 } }
+        }).sort({ createdAt: -1 }),
+      ]);
 
       // Group reviews and messages by responseId
       reviewsByResponse = reviews.reduce((acc, r) => {
@@ -2743,9 +2754,12 @@ export const getResponsesByForm = async (req, res) => {
       }, {});
     }
 
-    // Convert Map to Object for JSON serialization
+    // With .lean(), `response` is already a plain object (no .toObject(),
+    // and Map-typed fields like `answers`/`responseRanks` come back as
+    // plain objects rather than Map instances) — handle both shapes so
+    // this keeps working if lean() is ever removed on this path.
     const formattedResponses = responses.map(response => {
-      const responseObj = response.toObject();
+      const responseObj = typeof response.toObject === 'function' ? response.toObject() : response;
       const review = reviewsByResponse[response.id];
       const message = messagesByResponse[response.id];
 
@@ -2778,10 +2792,15 @@ export const getResponsesByForm = async (req, res) => {
         flaggedQuestions: message ? message.questionContexts.map(c => c.title) : []
       } : null;
 
+      const toPlainObject = (val) => {
+        if (!val) return {};
+        return val instanceof Map ? Object.fromEntries(val) : val;
+      };
+
       return {
         ...responseObj,
-        answers: response.answers ? Object.fromEntries(response.answers) : {},
-        responseRanks: response.responseRanks ? Object.fromEntries(response.responseRanks) : {},
+        answers: toPlainObject(response.answers),
+        responseRanks: toPlainObject(response.responseRanks),
         submissionMetadata: responseObj.submissionMetadata || null,
         submittedBy: displaySubmittedBy, // Override with better display name
         review: reviewInfo

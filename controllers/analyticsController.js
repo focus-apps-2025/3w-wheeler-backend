@@ -125,104 +125,110 @@ export const getDashboardStats = async (req, res) => {
       };
     }
 
-    const totalForms = await Form.countDocuments(effectiveFormFilter);
-    const totalResponses = await Response.countDocuments(req.tenantFilter);
-    const totalUsers = await User.countDocuments({ ...req.tenantFilter, role: { $ne: 'admin' } });
-    const publicForms = await Form.countDocuments({ ...effectiveFormFilter, isVisible: true });
-
-    // Get period-specific data
-    const formsInPeriod = await Form.countDocuments({
-      ...effectiveFormFilter,
-      createdAt: { $gte: startDate }
-    });
-
-    const responsesInPeriod = await Response.countDocuments({
-      ...req.tenantFilter,
-      createdAt: { $gte: startDate }
-    });
-
-    // Get response status distribution
-    const statusDistribution = await Response.aggregate([
-      { $match: req.tenantFilter },
-      {
-        $group: {
-          _id: '$status',
-          count: { $sum: 1 }
+    // All of the following are independent reads (none depend on another's
+    // result), so they run concurrently instead of as 10 sequential round
+    // trips to Mongo - this was the single biggest latency source in this
+    // handler.
+    const [
+      totalForms,
+      totalResponses,
+      totalUsers,
+      publicForms,
+      formsInPeriod,
+      responsesInPeriod,
+      statusDistribution,
+      topForms,
+      dailyResponses,
+      recentForms,
+      recentResponses,
+    ] = await Promise.all([
+      Form.countDocuments(effectiveFormFilter),
+      Response.countDocuments(req.tenantFilter),
+      User.countDocuments({ ...req.tenantFilter, role: { $ne: 'admin' } }),
+      Form.countDocuments({ ...effectiveFormFilter, isVisible: true }),
+      Form.countDocuments({
+        ...effectiveFormFilter,
+        createdAt: { $gte: startDate }
+      }),
+      Response.countDocuments({
+        ...req.tenantFilter,
+        createdAt: { $gte: startDate }
+      }),
+      Response.aggregate([
+        { $match: req.tenantFilter },
+        {
+          $group: {
+            _id: '$status',
+            count: { $sum: 1 }
+          }
         }
-      }
+      ]),
+      Response.aggregate([
+        { $match: req.tenantFilter },
+        {
+          $group: {
+            _id: '$questionId',
+            responseCount: { $sum: 1 }
+          }
+        },
+        {
+          $sort: { responseCount: -1 }
+        },
+        {
+          $limit: 5
+        },
+        {
+          $lookup: {
+            from: 'forms',
+            localField: '_id',
+            foreignField: 'id',
+            as: 'form'
+          }
+        },
+        {
+          $unwind: '$form'
+        },
+        {
+          $project: {
+            formId: '$_id',
+            title: '$form.title',
+            responseCount: 1
+          }
+        }
+      ]),
+      Response.aggregate([
+        {
+          $match: {
+            ...req.tenantFilter,
+            createdAt: { $gte: startDate }
+          }
+        },
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format: '%Y-%m-%d',
+                date: '$createdAt'
+              }
+            },
+            count: { $sum: 1 }
+          }
+        },
+        {
+          $sort: { '_id': 1 }
+        }
+      ]),
+      Form.find(effectiveFormFilter)
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .populate('createdBy', 'username firstName lastName')
+        .select('id title description createdAt createdBy'),
+      Response.find(req.tenantFilter)
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .populate('assignedTo', 'username firstName lastName')
+        .select('id questionId submittedBy status createdAt assignedTo'),
     ]);
-
-    // Get top forms by responses
-    const topForms = await Response.aggregate([
-      { $match: req.tenantFilter },
-      {
-        $group: {
-          _id: '$questionId',
-          responseCount: { $sum: 1 }
-        }
-      },
-      {
-        $sort: { responseCount: -1 }
-      },
-      {
-        $limit: 5
-      },
-      {
-        $lookup: {
-          from: 'forms',
-          localField: '_id',
-          foreignField: 'id',
-          as: 'form'
-        }
-      },
-      {
-        $unwind: '$form'
-      },
-      {
-        $project: {
-          formId: '$_id',
-          title: '$form.title',
-          responseCount: 1
-        }
-      }
-    ]);
-
-    // Get daily response counts for the period
-    const dailyResponses = await Response.aggregate([
-      {
-        $match: {
-          ...req.tenantFilter,
-          createdAt: { $gte: startDate }
-        }
-      },
-      {
-        $group: {
-          _id: {
-            $dateToString: {
-              format: '%Y-%m-%d',
-              date: '$createdAt'
-            }
-          },
-          count: { $sum: 1 }
-        }
-      },
-      {
-        $sort: { '_id': 1 }
-      }
-    ]);
-
-    // Get recent activity
-    const recentForms = await Form.find(effectiveFormFilter)
-      .sort({ createdAt: -1 })
-      .limit(5)
-      .populate('createdBy', 'username firstName lastName')
-      .select('id title description createdAt createdBy');
-
-    const recentResponses = await Response.find(req.tenantFilter)
-      .sort({ createdAt: -1 })
-      .limit(5)
-      .populate('assignedTo', 'username firstName lastName')
-      .select('id questionId submittedBy status createdAt assignedTo');
 
     res.json({
       success: true,
@@ -2340,31 +2346,40 @@ export const getPerformanceTable = async (req, res) => {
       usersQuery = { tenantId: new mongoose.Types.ObjectId(queryTenantId) };
     }
 
-    let users = await User.find(usersQuery)
-      .populate('tenantId', 'name companyName')
-      .select('firstName lastName username email role tenantId isActive status')
-      .maxTimeMS(30000)
-      .lean();
-
-    console.log(`[Performance Table] Found ${users.length} users from current tenant(s)`);
-
-    // Find form and its relationships
+    // `users` and the form lookup are independent of each other - the form
+    // lookup only feeds the *response* query below, not the users query -
+    // so fetch both concurrently instead of one after another.
     let formIdVariants = null;
     let formDoc = null;
     let formTenantId = null;
     let sharedWithTenants = [];
     let chassisTenantAssignments = [];
 
-    if (formId) {
-      const formLookupOr = [{ id: formId }];
-      if (mongoose.Types.ObjectId.isValid(formId)) {
-        formLookupOr.push({ _id: formId });
-      }
-      formDoc = await Form.findOne({ $or: formLookupOr })
+    const formLookupPromise = formId
+      ? Form.findOne({
+        $or: [
+          { id: formId },
+          ...(mongoose.Types.ObjectId.isValid(formId) ? [{ _id: formId }] : []),
+        ],
+      })
         .select('id _id tenantId sharedWithTenants chassisTenantAssignments sections')
         .maxTimeMS(30000)
-        .lean();
+        .lean()
+      : Promise.resolve(null);
 
+    let [users, formLookupResult] = await Promise.all([
+      User.find(usersQuery)
+        .populate('tenantId', 'name companyName')
+        .select('firstName lastName username email role tenantId isActive status')
+        .maxTimeMS(30000)
+        .lean(),
+      formLookupPromise,
+    ]);
+
+    console.log(`[Performance Table] Found ${users.length} users from current tenant(s)`);
+
+    if (formId) {
+      formDoc = formLookupResult;
       if (formDoc) {
         formTenantId = formDoc.tenantId?.toString();
         sharedWithTenants = (formDoc.sharedWithTenants || []).map(id => id.toString());
@@ -2397,15 +2412,16 @@ export const getPerformanceTable = async (req, res) => {
     // reflecting only the responses in the current page rather than the
     // full date range in one shot. The frontend pages through with
     // `hasMore` to see the rest.
-    const totalResponsesInRange = await Response.countDocuments(responseBaseFilter).maxTimeMS(30000);
-
-    const allResponses = await Response.find(responseBaseFilter)
-      .select('createdBy submittedBy isDispatched biwReview answers questionId createdAt id _id')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .maxTimeMS(30000)
-      .lean();
+    const [totalResponsesInRange, allResponses] = await Promise.all([
+      Response.countDocuments(responseBaseFilter).maxTimeMS(30000),
+      Response.find(responseBaseFilter)
+        .select('createdBy submittedBy isDispatched biwReview answers questionId createdAt id _id')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .maxTimeMS(30000)
+        .lean(),
+    ]);
 
     console.log(`[Performance Table] Found ${allResponses.length} responses on page ${page} (of ${totalResponsesInRange} total in range)`);
 
