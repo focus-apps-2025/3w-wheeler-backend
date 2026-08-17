@@ -47,20 +47,7 @@ const RoleSchema = new mongoose.Schema({
   },
   description: String,
   permissions: [{
-    type: String,
-    enum: [
-      'create_forms',
-      'edit_forms',
-      'delete_forms',
-      'view_all_responses',
-      'manage_users',
-      'manage_roles',
-      'view_analytics',
-      'export_data',
-      'system_settings',
-      'upload:create',
-      'upload:delete'
-    ]
+    type: String
   }],
   formPermissions: [FormPermissionSchema],
   canCreateForms: {
@@ -74,6 +61,10 @@ const RoleSchema = new mongoose.Schema({
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
+  },
+  tenantId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Tenant'
   }
 }, {
   timestamps: true

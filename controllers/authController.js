@@ -193,6 +193,7 @@ export const login = async (req, res) => {
     // Update last login
     user.lastLogin = new Date();
     await user.save();
+    await user.populate('customRole');
 
     // Generate token
     const token = generateToken(user._id);
@@ -231,7 +232,12 @@ export const login = async (req, res) => {
         role: user.role,
         tenantId: user.tenantId,
         lastLogin: user.lastLogin,
-        permissions: user.permissions || [],
+        permissions: [
+          ...new Set([
+            ...(user.permissions || []),
+            ...(user.customRole?.permissions || [])
+          ])
+        ],
         granularPermissions: user.granularPermissions || {
           canEditAttendanceTime: false,
           canEditInvoices: false,
@@ -290,9 +296,15 @@ export const getProfile = async (req, res) => {
         };
       }
     }
-    // Include granularPermissions in user profile
+    // Include granularPermissions and combined customRole permissions in user profile
     const userWithPermissions = {
       ...req.user.toObject(),
+      permissions: [
+        ...new Set([
+          ...(req.user.permissions || []),
+          ...(req.user.customRole?.permissions || [])
+        ])
+      ],
       granularPermissions: req.user.granularPermissions || {
         canEditAttendanceTime: false,
         canEditInvoices: false,

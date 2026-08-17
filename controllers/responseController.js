@@ -489,11 +489,28 @@ export const createResponse = async (req, res) => {
         );
 
         if (answer !== undefined && answer !== null && answer !== "") {
-          // Count existing responses with the SAME answer for this form
+          const strAnswer = String(answer).trim();
+          const escapedAnswer = strAnswer.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const exactRegex = new RegExp(`^${escapedAnswer}$`, "i");
+
+          const formIds = [form.id, form._id ? form._id.toString() : null, questionId].filter(Boolean);
+
+          const orConditions = [
+            { [`answers.${trackingQId}`]: exactRegex },
+            { [`answers.${qId}`]: exactRegex }
+          ];
+
+          const numAnswer = Number(strAnswer);
+          if (!isNaN(numAnswer)) {
+            orConditions.push({ [`answers.${trackingQId}`]: numAnswer });
+            orConditions.push({ [`answers.${qId}`]: numAnswer });
+          }
+
+          // Count existing responses with the EXACT SAME answer for this form
           // We filter by tenantId to avoid cross-business rank contamination
           const query = {
-            questionId: questionId,
-            [`answers.${trackingQId}`]: answer,
+            questionId: { $in: formIds },
+            $or: orConditions,
             isSectionSubmit: { $ne: true },
             tenantId: form.tenantId,
           };
@@ -501,7 +518,7 @@ export const createResponse = async (req, res) => {
           try {
             const count = await Response.countDocuments(query);
             console.log(
-              `[RANK DEBUG] Found ${count} existing final responses for form ${questionId}, question ${qId}, trackingField ${trackingQId}, answer "${answer}". New rank: ${count + 1}`,
+              `[RANK DEBUG] Found ${count} existing final responses for form ${questionId}, question ${qId}, trackingField ${trackingQId}, answer "${strAnswer}". New rank: ${count + 1}`,
             );
             responseRanks[qId] = count + 1;
           } catch (countError) {
@@ -1349,23 +1366,28 @@ export const getRank = async (req, res) => {
       trackingQId = `${questionId}_tracking`;
     }
 
-    // Count existing final responses with the SAME answer for this form
-    const query = {
-      questionId: { $in: [form.id, form._id.toString()] },
-      isSectionSubmit: { $ne: true },
-    };
+    // Count existing final responses with the EXACT SAME answer for this form
+    const formIds = [form.id, form._id ? form._id.toString() : null, formId].filter(Boolean);
+    const strAnswer = String(answer).trim();
+    const escapedAnswer = strAnswer.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const exactRegex = new RegExp(`^${escapedAnswer}$`, "i");
 
-    // Try both exact match and numeric match if applicable
     const orConditions = [
-      { [`answers.${trackingQId}`]: answer }
+      { [`answers.${trackingQId}`]: exactRegex },
+      { [`answers.${questionId}`]: exactRegex }
     ];
 
-    const numAnswer = Number(answer);
+    const numAnswer = Number(strAnswer);
     if (!isNaN(numAnswer)) {
       orConditions.push({ [`answers.${trackingQId}`]: numAnswer });
+      orConditions.push({ [`answers.${questionId}`]: numAnswer });
     }
 
-    query.$or = orConditions;
+    const query = {
+      questionId: { $in: formIds },
+      $or: orConditions,
+      isSectionSubmit: { $ne: true },
+    };
 
     if (tenantId) query.tenantId = tenantId;
 

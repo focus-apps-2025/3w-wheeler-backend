@@ -92,7 +92,7 @@ import mongoose from 'mongoose';
 
 export const createUser = async (req, res) => {
   try {
-    const { username, email, password, firstName, lastName, role, mobile, permissions, accessType } = req.body;
+    const { username, email, password, firstName, lastName, role, mobile, permissions, accessType, customRole } = req.body;
 
     if (req.user.role === 'admin' && role === 'admin') {
       return res.status(403).json({
@@ -133,7 +133,8 @@ export const createUser = async (req, res) => {
       role,
       mobile,
       createdBy: req.user._id,
-      tenantId: req.user.role === 'superadmin' ? req.body.tenantId : req.user.tenantId
+      tenantId: req.user.role === 'superadmin' ? req.body.tenantId : req.user.tenantId,
+      customRole: customRole || undefined
     };
 
     // Add accessType for inspector role
@@ -150,6 +151,7 @@ export const createUser = async (req, res) => {
     const newUser = new User(newUserData);
 
     await newUser.save();
+    await newUser.populate('customRole');
 
     res.status(201).json({
       success: true,
@@ -209,6 +211,7 @@ export const getAllUsers = async (req, res) => {
 
     const users = await User.find(query)
       .populate(options.populate.path, options.populate.select)
+      .populate('customRole')
       .sort(options.sort)
       .limit(options.limit * 1)
       .skip((options.page - 1) * options.limit);
@@ -242,7 +245,9 @@ export const getUserById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const user = await User.findOne({ _id: id, ...req.tenantFilter }).populate('createdBy', 'username firstName lastName');
+    const user = await User.findOne({ _id: id, ...req.tenantFilter })
+      .populate('createdBy', 'username firstName lastName')
+      .populate('customRole');
 
     if (!user) {
       return res.status(404).json({
@@ -270,7 +275,7 @@ export const getUserById = async (req, res) => {
 export const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const { username, email, firstName, lastName, role, isActive, permissions, accessType } = req.body;
+    const { username, email, firstName, lastName, role, isActive, permissions, accessType, customRole } = req.body;
 
     const user = await User.findOne({ _id: id, ...req.tenantFilter });
 
@@ -331,8 +336,10 @@ export const updateUser = async (req, res) => {
     if (role) user.role = role;
     if (typeof isActive === 'boolean') user.isActive = isActive;
     if (sanitizedPermissions !== undefined) user.permissions = sanitizedPermissions;
+    if (customRole !== undefined) user.customRole = customRole || null;
 
     await user.save();
+    await user.populate('customRole');
 
     res.json({
       success: true,

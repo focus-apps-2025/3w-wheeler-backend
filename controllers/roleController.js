@@ -22,7 +22,8 @@ export const createRole = async (req, res) => {
       permissions: permissions || [],
       formPermissions: formPermissions || [],
       canCreateForms: canCreateForms || false,
-      createdBy: req.user._id
+      createdBy: req.user._id,
+      tenantId: req.user.tenantId
     });
 
     await role.save();
@@ -46,19 +47,30 @@ export const getAllRoles = async (req, res) => {
   try {
     const { page = 1, limit = 10, search, includeSystem = true } = req.query;
     
-    const query = { ...req.tenantFilter };
+    const baseQuery = req.user.role === 'superadmin'
+      ? {}
+      : { tenantId: req.user.tenantId };
+
+    const query = { ...baseQuery };
 
     // Search by name or description
     if (search) {
-      query.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } }
+      query.$and = [
+        {
+          $or: [
+            { name: { $regex: search, $options: 'i' } },
+            { description: { $regex: search, $options: 'i' } }
+          ]
+        }
       ];
     }
     
     // Include/exclude system roles
     if (includeSystem === 'false') {
-      query.isSystem = { $ne: true };
+      if (!query.$and) {
+        query.$and = [];
+      }
+      query.$and.push({ isSystem: { $ne: true } });
     }
 
     const options = {
@@ -105,8 +117,11 @@ export const getAllRoles = async (req, res) => {
 export const getRoleById = async (req, res) => {
   try {
     const { id } = req.params;
+    const query = mongoose.Types.ObjectId.isValid(id)
+      ? { $or: [{ _id: id }, { id }] }
+      : { id };
 
-    const role = await Role.findOne({ id })
+    const role = await Role.findOne(query)
       .populate('createdBy', 'username firstName lastName');
 
     if (!role) {
@@ -135,7 +150,10 @@ export const updateRole = async (req, res) => {
     const { id } = req.params;
     const { name, description, permissions, formPermissions, canCreateForms } = req.body;
 
-    const role = await Role.findOne({ id });
+    const query = mongoose.Types.ObjectId.isValid(id)
+      ? { $or: [{ _id: id }, { id }] }
+      : { id };
+    const role = await Role.findOne(query);
 
     if (!role) {
       return res.status(404).json({
@@ -191,7 +209,11 @@ export const deleteRole = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const role = await Role.findOne({ id });
+    const query = mongoose.Types.ObjectId.isValid(id)
+      ? { $or: [{ _id: id }, { id }] }
+      : { id };
+
+    const role = await Role.findOne(query);
 
     if (!role) {
       return res.status(404).json({
@@ -217,7 +239,7 @@ export const deleteRole = async (req, res) => {
       });
     }
 
-    await Role.findOneAndDelete({ id });
+    await Role.findOneAndDelete({ _id: role._id });
 
     res.json({
       success: true,
