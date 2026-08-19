@@ -1163,3 +1163,40 @@ export const getReviewsForResponse = async (req, res) => {
     });
   }
 };
+
+export const getBulkReviewsForResponses = async (req, res) => {
+  try {
+    const { responseIds } = req.body;
+
+    if (!Array.isArray(responseIds) || responseIds.length === 0) {
+      return res.json({ success: true, data: [] });
+    }
+
+    const Review = mongoose.model('Review');
+    const reviews = await Review.find({ responseId: { $in: responseIds } }).sort({ createdAt: -1 }).lean();
+
+    const formattedReviews = reviews.map(review => ({
+      id: review._id,
+      responseId: review.responseId,
+      reviewer: {
+        id: review.reviewerId,
+        name: review.reviewerName || 'Unknown',
+        email: review.reviewerEmail || ''
+      },
+      option: review.reviewOption,
+      scoreChange: review.scoreChange,
+      createdAt: review.createdAt
+    }));
+
+    res.json({
+      success: true,
+      data: formattedReviews
+    });
+  } catch (error) {
+    console.error('[getBulkReviewsForResponses] ERROR:', error);
+    res.json({
+      success: true,
+      data: []
+    });
+  }
+};

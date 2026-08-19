@@ -1512,43 +1512,48 @@ export const getSuggestedAnswers = async (req, res) => {
       });
     }
 
-    // Find a previous response with a match in the answers map
-    // For Mongoose Maps, we use dot notation: answers.questionId
+    const strAnswer = extractAnswerString(answer);
+    if (!strAnswer) {
+      return res.status(200).json({
+        success: true,
+        data: { suggestedAnswers: null }
+      });
+    }
+
+    const formIds = [form.id, form._id ? form._id.toString() : null, formId].filter(Boolean);
     const query = {
-      questionId: { $in: [form.id, form._id.toString()] }
+      questionId: { $in: formIds },
+      isSectionSubmit: { $ne: true }
     };
 
     const trackingQuestionId = `${questionId}_tracking`;
+    const escapedAnswer = strAnswer.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const exactRegex = {
+      $regex: `^${escapedAnswer}$`,
+      $options: 'i'
+    };
 
-    if (typeof answer === 'string') {
-      // Use case-insensitive prefix match for strings
-      const regex = {
-        $regex: `^${answer.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
-        $options: 'i'
-      };
+    query.$or = [
+      { [`answers.${questionId}`]: exactRegex },
+      { [`answers.${trackingQuestionId}`]: exactRegex },
+      { [`answers._${questionId}`]: exactRegex },
+      { [`answers._${trackingQuestionId}`]: exactRegex },
+      { [`answers.${questionId}.chassisNumber`]: exactRegex },
+      { [`answers.${trackingQuestionId}.chassisNumber`]: exactRegex },
+      { [`answers.${questionId}.value`]: exactRegex },
+      { [`answers.${trackingQuestionId}.value`]: exactRegex }
+    ];
 
-      query.$or = [
-        { [`answers.${questionId}`]: regex },
-        { [`answers.${trackingQuestionId}`]: regex },
-        { [`answers._${questionId}`]: regex },
-        { [`answers._${trackingQuestionId}`]: regex }
-      ];
-
-      // If the answer is numeric, also try exact number match
-      const numAnswer = Number(answer);
-      if (!isNaN(numAnswer)) {
-        query.$or.push({ [`answers.${questionId}`]: numAnswer });
-        query.$or.push({ [`answers.${trackingQuestionId}`]: numAnswer });
-        query.$or.push({ [`answers._${questionId}`]: numAnswer });
-        query.$or.push({ [`answers._${trackingQuestionId}`]: numAnswer });
-      }
-    } else {
-      query.$or = [
-        { [`answers.${questionId}`]: answer },
-        { [`answers.${trackingQuestionId}`]: answer },
-        { [`answers._${questionId}`]: answer },
-        { [`answers._${trackingQuestionId}`]: answer }
-      ];
+    const numAnswer = Number(strAnswer);
+    if (!isNaN(numAnswer)) {
+      query.$or.push({ [`answers.${questionId}`]: numAnswer });
+      query.$or.push({ [`answers.${trackingQuestionId}`]: numAnswer });
+      query.$or.push({ [`answers._${questionId}`]: numAnswer });
+      query.$or.push({ [`answers._${trackingQuestionId}`]: numAnswer });
+      query.$or.push({ [`answers.${questionId}.chassisNumber`]: numAnswer });
+      query.$or.push({ [`answers.${trackingQuestionId}.chassisNumber`]: numAnswer });
+      query.$or.push({ [`answers.${questionId}.value`]: numAnswer });
+      query.$or.push({ [`answers.${trackingQuestionId}.value`]: numAnswer });
     }
 
     // Only filter by tenantId if the form is NOT global or if we have a specific tenantSlug

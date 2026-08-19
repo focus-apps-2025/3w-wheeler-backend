@@ -21,7 +21,7 @@ import {
   getBiwSummary,
   bulkUpdateBiwReview
 } from '../controllers/responseController.js';
-import { getReviewsForResponse } from '../controllers/userController.js';
+import { getReviewsForResponse, getBulkReviewsForResponses } from '../controllers/userController.js';
 import {
   authenticate,
   authenticateOptional,
@@ -33,6 +33,7 @@ import { addTenantFilter } from '../middleware/tenantIsolation.js';
 import { processResponseImages, processGoogleDriveImage } from '../services/googleDriveService.js';
 
 const router = express.Router();
+router.post('/reviews/bulk', getBulkReviewsForResponses);
 router.get('/reviews/:responseId', getReviewsForResponse);
 // Middleware for guest access control
 const guestAccessControl = (req, res, next) => {
