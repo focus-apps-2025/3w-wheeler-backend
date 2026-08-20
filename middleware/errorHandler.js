@@ -1,4 +1,11 @@
 export const errorHandler = (err, req, res, next) => {
+  // Ensure CORS headers are attached on all error responses
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+
   console.error('Error Stack:', err.stack);
 
   // Mongoose bad ObjectId

@@ -79,7 +79,7 @@ export const authenticate = async (req, res, next) => {
     }
 
     user.lastLogin = new Date();
-    await user.save();
+    await user.save().catch((err) => console.warn('Failed to update lastLogin:', err.message));
 
     console.log('authenticate - user logged in:', user.firstName, user.lastName, 'role:', user.role, 'tenantId:', user.tenantId, 'accessType:', user.accessType);
     req.user = user;
