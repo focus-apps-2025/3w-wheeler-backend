@@ -491,8 +491,7 @@ export const getAllForms = async (req, res) => {
         const countAgg = await Response.aggregate([
           {
             $match: {
-              questionId: { $in: normalFormIds },
-              isSectionSubmit: { $ne: true }
+              questionId: { $in: normalFormIds }
             }
           },
           {
@@ -521,7 +520,6 @@ export const getAllForms = async (req, res) => {
           // Count only responses whose chassis answer matches assigned chassis numbers
           const filteredCount = await Response.countDocuments({
             questionId: formId,
-            isSectionSubmit: { $ne: true },
             $or: [
               { [`answers.${chassisFieldId}`]: { $in: myChassis } },
               { [`answers.chassis_number`]: { $in: myChassis } }

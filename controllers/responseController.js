@@ -1251,8 +1251,20 @@ export const batchImportResponses = async (req, res) => {
               req.user?._id && mongoose.Types.ObjectId.isValid(req.user._id)
                 ? req.user._id
                 : null,
-            submittedAt: submittedAt ? new Date(submittedAt) : undefined,
-            createdAt: submittedAt ? new Date(submittedAt) : undefined
+            submittedAt: (() => {
+              if (!submittedAt) return undefined;
+              const d = new Date(submittedAt);
+              if (isNaN(d.getTime())) return undefined;
+              const y = d.getFullYear();
+              return y >= 1900 && y <= 2100 ? d : undefined;
+            })(),
+            createdAt: (() => {
+              if (!submittedAt) return undefined;
+              const d = new Date(submittedAt);
+              if (isNaN(d.getTime())) return undefined;
+              const y = d.getFullYear();
+              return y >= 1900 && y <= 2100 ? d : undefined;
+            })()
           };
 
           // Prepare Mongoose document
@@ -2656,7 +2668,7 @@ export const deleteMultipleResponses = async (req, res) => {
 export const getResponsesByForm = async (req, res) => {
   try {
     const { formId } = req.params;
-    const { page = 1, limit = 10000, status, includePartial = 'false' } = req.query;
+    const { page = 1, limit = 10000, status, includePartial = 'false', startDate, endDate } = req.query;
 
     console.log('[getResponsesByForm] Looking for form with ID:', formId);
     // Verify form exists
@@ -2718,6 +2730,22 @@ export const getResponsesByForm = async (req, res) => {
     // Add partial submission filter
     if (includePartial !== 'true') {
       query.isSectionSubmit = { $ne: true };
+    }
+
+    // Add date range filter if provided
+    if (startDate || endDate) {
+      const dateFilter = {};
+      if (startDate) {
+        const sDate = new Date(startDate);
+        sDate.setHours(0, 0, 0, 0);
+        dateFilter.$gte = sDate;
+      }
+      if (endDate) {
+        const eDate = new Date(endDate);
+        eDate.setHours(23, 59, 59, 999);
+        dateFilter.$lte = eDate;
+      }
+      query.createdAt = dateFilter;
     }
 
     // Apply tenant filtering

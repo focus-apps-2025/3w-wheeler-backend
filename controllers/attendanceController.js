@@ -856,26 +856,57 @@ export const swapResponses = async (req, res) => {
     }
 
     // ─── 2. BUILD DATE RANGES ──────────────────────────────────────────
-    const sourceStartDate = new Date(sourceDate);
-    sourceStartDate.setHours(0, 0, 0, 0);
-    const sourceEndDate = new Date(sourceDate);
-    sourceEndDate.setHours(23, 59, 59, 999);
+    const parseDateBoundaries = (dateStr) => {
+      const parts = dateStr.split('-').map(Number);
+      if (parts.length === 3) {
+        const [year, month, day] = parts;
+        const start = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+        start.setHours(start.getHours() - 6);
+        const end = new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
+        end.setHours(end.getHours() + 6);
+        return { start, end };
+      }
+      const d = new Date(dateStr);
+      d.setHours(0, 0, 0, 0);
+      const e = new Date(dateStr);
+      e.setHours(23, 59, 59, 999);
+      return { start: d, end: e };
+    };
 
-    const targetStartDate = new Date(targetDate);
-    targetStartDate.setHours(0, 0, 0, 0);
-    const targetEndDate = new Date(targetDate);
-    targetEndDate.setHours(23, 59, 59, 999);
+    const { start: sourceStartDate, end: sourceEndDate } = parseDateBoundaries(sourceDate);
+    const { start: targetStartDate, end: targetEndDate } = parseDateBoundaries(targetDate);
 
     // ─── 3. GET FORM ──────────────────────────────────────────────────
-    const form = await Form.findOne({ id: formId }).lean();
+    const form = await Form.findOne({
+      $or: [
+        { id: formId },
+        ...(mongoose.Types.ObjectId.isValid(formId) ? [{ _id: formId }] : [])
+      ]
+    }).lean();
+
     if (!form) {
       return res.status(404).json({ success: false, message: 'Form not found' });
     }
 
     // ─── 4. GET SOURCE USER'S RESPONSES ──────────────────────────────
+    const sourceUserObjectId = mongoose.Types.ObjectId.isValid(sourceUserId)
+      ? new mongoose.Types.ObjectId(sourceUserId)
+      : null;
+
+    const sourceUserMatch = [
+      sourceUserId,
+      ...(sourceUserObjectId ? [sourceUserObjectId] : []),
+      sourceUser.email,
+      sourceUser.username,
+      `${sourceUser.firstName} ${sourceUser.lastName}`
+    ].filter(Boolean);
+
     const sourceQuery = {
-      questionId: formId,
-      createdBy: sourceUserId,
+      questionId: { $in: [form.id, form._id?.toString()].filter(Boolean) },
+      $or: [
+        { createdBy: { $in: sourceUserMatch } },
+        { submittedBy: { $in: sourceUserMatch } }
+      ],
       createdAt: { $gte: sourceStartDate, $lte: sourceEndDate },
       isSectionSubmit: { $ne: true }
     };
@@ -886,38 +917,17 @@ export const swapResponses = async (req, res) => {
     if (sourceResponses.length === 0) {
       return res.status(400).json({
         success: false,
-        message: `No responses found for source user on ${sourceDate}`
+        message: `No responses found for source user ${sourceUser.firstName} ${sourceUser.lastName} on ${sourceDate}`
       });
     }
 
     // ─── 5. CATEGORIZE RESPONSES BY STATUS ────────────────────────────
     const getResponseStatus = (answers) => {
-      const answersObj = answers instanceof Map ? Object.fromEntries(answers) : answers;
-      const formChassisMap = {};
-      // ✅ First, check if there's a chassis answer with status
-      const chassisId = formChassisMap[formId]; // You need to pass this
-      if (chassisId && answersObj[chassisId]) {
-        const chassisAnswer = answersObj[chassisId];
-        if (typeof chassisAnswer === 'object' && chassisAnswer.status) {
-          const s = String(chassisAnswer.status).toLowerCase().trim();
-          if (s === 'rejected') return 'Rejected';
-          if (s === 'rework' || s === 'rework pending') return 'Rework QC Pending';
-          if (s === 'rework completed' || s === 'rework accepted') return 'Rework QC Completed';
-          if (s === 'accepted' || s === 'direct ok' || s === 'verified') return 'Direct Ok';
-        }
-        if (typeof chassisAnswer === 'string') {
-          const s = chassisAnswer.toLowerCase().trim();
-          if (s === 'rejected') return 'Rejected';
-          if (s === 'rework' || s === 'rework pending') return 'Rework QC Pending';
-          if (s === 'rework completed' || s === 'rework accepted') return 'Rework QC Completed';
-          if (s === 'accepted' || s === 'direct ok' || s === 'verified') return 'Direct Ok';
-        }
-      }
-      // Extract all values
+      const answersObj = answers instanceof Map ? Object.fromEntries(answers) : (answers || {});
+
       const extractAllValues = (obj, depth = 0) => {
         const values = [];
-        if (depth > 5) return values;
-        if (obj === null || obj === undefined) return values;
+        if (depth > 5 || !obj) return values;
         if (typeof obj === 'string') {
           if (obj.trim()) values.push(obj.trim());
         } else if (Array.isArray(obj)) {
@@ -940,7 +950,6 @@ export const swapResponses = async (req, res) => {
 
       const allValues = extractAllValues(answersObj);
 
-      // ✅ Priority 1: Rejected
       for (const value of allValues) {
         if (!value) continue;
         const str = String(value).toLowerCase().trim();
@@ -950,7 +959,6 @@ export const swapResponses = async (req, res) => {
         }
       }
 
-      // ✅ Priority 2: Rework QC Pending
       for (const value of allValues) {
         if (!value) continue;
         const str = String(value).toLowerCase().trim();
@@ -960,7 +968,6 @@ export const swapResponses = async (req, res) => {
         }
       }
 
-      // ✅ Priority 3: Rework QC Completed
       for (const value of allValues) {
         if (!value) continue;
         const str = String(value).toLowerCase().trim();
@@ -970,17 +977,7 @@ export const swapResponses = async (req, res) => {
         }
       }
 
-      // ✅ Priority 4: Direct Ok
-      for (const value of allValues) {
-        if (!value) continue;
-        const str = String(value).toLowerCase().trim();
-        if (!str) continue;
-        if (str === 'accepted' || str === 'direct ok' || str === 'directok' || str === 'yes' || str === 'verified' || str === 'ok') {
-          return 'Direct Ok';
-        }
-      }
-
-      return 'Unknown';
+      return 'Direct Ok';
     };
 
     const categorizedResponses = {
@@ -994,6 +991,8 @@ export const swapResponses = async (req, res) => {
       const status = getResponseStatus(response.answers);
       if (categorizedResponses[status]) {
         categorizedResponses[status].push(response);
+      } else {
+        categorizedResponses['Direct Ok'].push(response);
       }
     });
 
@@ -1007,10 +1006,10 @@ export const swapResponses = async (req, res) => {
     // ─── 6. SELECT RESPONSES TO SWAP ──────────────────────────────────
     const responsesToSwap = [];
     const statusMap = {
-      'Direct Ok': quantities.directOk || 0,
-      'Rework QC Completed': quantities.reworkCompleted || 0,
-      'Rework QC Pending': quantities.reworkPending || 0,
-      'Rejected': quantities.rejected || 0
+      'Direct Ok': quantities.directOk || quantities['Direct Ok'] || 0,
+      'Rework QC Completed': quantities.reworkCompleted || quantities['Rework QC Completed'] || 0,
+      'Rework QC Pending': quantities.reworkPending || quantities['Rework QC Pending'] || 0,
+      'Rejected': quantities.rejected || quantities['Rejected'] || 0
     };
 
     console.log('🔄 [SWAP] Requested quantities:', statusMap);
@@ -1021,7 +1020,7 @@ export const swapResponses = async (req, res) => {
         if (available.length < count) {
           return res.status(400).json({
             success: false,
-            message: `Not enough ${status} responses. Available: ${available.length}, Requested: ${count}`
+            message: `Not enough ${status} responses for ${sourceUser.firstName}. Available: ${available.length}, Requested: ${count}`
           });
         }
         const selected = available.slice(0, count);
@@ -1041,9 +1040,24 @@ export const swapResponses = async (req, res) => {
     const sourceResponseIds = responsesToSwap.map(r => r._id);
 
     // ─── 7. DELETE TARGET USER'S EXISTING RESPONSES ON TARGET DATE ──
+    const targetUserObjectId = mongoose.Types.ObjectId.isValid(targetUserId)
+      ? new mongoose.Types.ObjectId(targetUserId)
+      : null;
+
+    const targetUserMatch = [
+      targetUserId,
+      ...(targetUserObjectId ? [targetUserObjectId] : []),
+      targetUser.email,
+      targetUser.username,
+      `${targetUser.firstName} ${targetUser.lastName}`
+    ].filter(Boolean);
+
     const deleteTargetQuery = {
-      questionId: formId,
-      createdBy: targetUserId,
+      questionId: { $in: [form.id, form._id?.toString()].filter(Boolean) },
+      $or: [
+        { createdBy: { $in: targetUserMatch } },
+        { submittedBy: { $in: targetUserMatch } }
+      ],
       createdAt: { $gte: targetStartDate, $lte: targetEndDate },
       isSectionSubmit: { $ne: true }
     };
@@ -1055,18 +1069,28 @@ export const swapResponses = async (req, res) => {
     const newResponses = [];
 
     for (const sourceResponse of responsesToSwap) {
-      const originalTime = sourceResponse.createdAt;
-      const timeStr = originalTime.toTimeString().split(' ')[0];
+      const originalTime = sourceResponse.createdAt
+        ? new Date(sourceResponse.createdAt)
+        : new Date();
+      const timeStr = !isNaN(originalTime.getTime())
+        ? originalTime.toTimeString().split(' ')[0]
+        : '12:00:00';
       const newCreatedAt = new Date(`${targetDate}T${timeStr}`);
+      const validCreatedAt = !isNaN(newCreatedAt.getTime())
+        ? newCreatedAt
+        : new Date(targetDate);
+
+      const targetObjectIdToSave = targetUserObjectId || targetUserId;
+      const sourceObjectIdToSave = sourceUserObjectId || sourceUserId;
 
       const newResponseData = {
         ...sourceResponse,
         id: uuidv4(),
-        createdBy: targetUserId,
+        createdBy: targetObjectIdToSave,
         submittedBy: `${targetUser.firstName} ${targetUser.lastName}`,
-        createdAt: newCreatedAt,
+        createdAt: validCreatedAt,
         updatedAt: new Date(),
-        swappedFrom: sourceUserId,
+        swappedFrom: sourceObjectIdToSave,
         swappedAt: new Date(),
       };
 
@@ -1079,7 +1103,7 @@ export const swapResponses = async (req, res) => {
 
     console.log(`🔄 [SWAP] Created ${newResponses.length} new responses for target user on ${targetDate}`);
 
-    // ─── ✅ 9. DELETE SOURCE RESPONSES (THIS IS THE KEY FIX!) ──────
+    // ─── 9. DELETE SOURCE RESPONSES ──────────────────────────────────
     const deleteSourceQuery = {
       _id: { $in: sourceResponseIds }
     };
@@ -1089,20 +1113,19 @@ export const swapResponses = async (req, res) => {
 
     // ─── 10. LOG THE SWAP ─────────────────────────────────────────────
     try {
-      const SwapLog = mongoose.model('SwapLog');
       await SwapLog.create({
-        sourceUser: sourceUserId,
-        targetUser: targetUserId,
+        sourceUser: sourceUserObjectId || sourceUserId,
+        targetUser: targetUserObjectId || targetUserId,
         sourceDate: sourceDate,
         targetDate: targetDate,
-        formId: formId,
+        formId: form.id || formId,
         swappedResponses: sourceResponseIds,
         newResponses: newResponses.map(r => r._id),
         quantities: {
-          directOk: quantities.directOk || 0,
-          reworkCompleted: quantities.reworkCompleted || 0,
-          reworkPending: quantities.reworkPending || 0,
-          rejected: quantities.rejected || 0
+          directOk: statusMap['Direct Ok'],
+          reworkCompleted: statusMap['Rework QC Completed'],
+          reworkPending: statusMap['Rework QC Pending'],
+          rejected: statusMap['Rejected']
         },
         swappedBy: req.user._id,
         tenantId: req.user.tenantId

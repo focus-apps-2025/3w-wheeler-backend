@@ -84,6 +84,9 @@ columns.forEach((col, index) => {
   if (col.type) {
     commentLines.push(`Type: ${col.type}`);
   }
+  if (col.type === "date" || col.id === "submittedAt") {
+    commentLines.push("Format: dd-mm-yyyy");
+  }
   if (col.options && col.options.length > 0) {
     commentLines.push(`Options: ${col.options.join(", ")}`);
   }
