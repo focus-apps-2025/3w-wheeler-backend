@@ -18,12 +18,10 @@ const parseDate = (dateStr) => {
   // Try DD-MM-YYYY or DD/MM/YYYY
   const parts = dateStr.split(/[-/]/);
   if (parts.length === 3) {
-    // If year is the first part (YYYY-MM-DD), it would have been caught by new Date() 
-    // unless it's a weird format. Let's assume DD is parts[0] or parts[2].
     let y, m, d_part;
     if (parts[2].length === 4) { // DD-MM-YYYY
       y = parts[2]; m = parts[1]; d_part = parts[0];
-    } else if (parts[0].length === 4) { // YYYY-MM-DD (already tried but just in case)
+    } else if (parts[0].length === 4) { // YYYY-MM-DD
       y = parts[0]; m = parts[1]; d_part = parts[2];
     }
 
@@ -34,6 +32,43 @@ const parseDate = (dateStr) => {
     }
   }
   return null;
+};
+
+export const getStartDateFromPeriod = (period, queryStartDate = null) => {
+  if (queryStartDate) {
+    const parsed = parseDate(queryStartDate);
+    if (parsed) return parsed;
+  }
+  if (!period || period === 'overall' || period === 'all') {
+    return null;
+  }
+  const now = new Date();
+  switch (period) {
+    case '7d':
+    case 'last_7_days':
+      return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    case '15d':
+    case 'last_15_days':
+      return new Date(now.getTime() - 15 * 24 * 60 * 60 * 1000);
+    case '30d':
+    case '1m':
+    case 'last_1_month':
+      return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    case '90d':
+    case '3m':
+    case 'last_3_months':
+      return new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+    case '180d':
+    case '6m':
+    case 'last_6_months':
+      return new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000);
+    case '365d':
+    case '1y':
+    case 'last_1_year':
+      return new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+    default:
+      return null;
+  }
 };
 
 // ─── Active Hours Calculator - Session Based (Server Side) ───────────────────
@@ -324,34 +359,7 @@ export const getFormAnalytics = async (req, res) => {
     }
 
     // Calculate date range
-    const now = new Date();
-    let startDate;
-
-    if (queryStartDate) {
-      startDate = parseDate(queryStartDate);
-    } else if (period && period !== 'overall' && period !== 'all') {
-      switch (period) {
-        case '7d':
-          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-          break;
-        case '15d':
-          startDate = new Date(now.getTime() - 15 * 24 * 60 * 60 * 1000);
-          break;
-        case '30d':
-          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-          break;
-        case '90d':
-          startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
-          break;
-        case '180d':
-          startDate = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000);
-          break;
-        case '365d':
-        case '1y':
-          startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
-          break;
-      }
-    }
+    const startDate = getStartDateFromPeriod(period, queryStartDate);
 
     // Get responses for this form
     const baseQuery = {
@@ -2214,25 +2222,29 @@ export const getMyReviewStats = async (req, res) => {
     const userId = req.user._id;
     const userEmail = req.user.email;
     const userUsername = req.user.username;
+    const { period, startDate: queryStartDate } = req.query;
+
+    const startDate = getStartDateFromPeriod(period, queryStartDate);
+    const dateFilter = startDate ? { createdAt: { $gte: startDate } } : {};
 
     // Get total responses by this user
-    // We match by createdBy (ObjectId) or submittedBy (email/username)
     const totalResponses = await Response.countDocuments({
       $or: [
         { createdBy: userId },
         { submittedBy: userEmail },
         { submittedBy: userUsername }
-      ]
+      ],
+      ...dateFilter
     });
 
     // Find all reviews for this user to calculate accurate stats
-    // submitterId can be stored as ObjectId string or email/name
     const reviews = await Review.find({
       $or: [
         { submitterId: userId.toString() },
         { submitterId: userEmail },
         { submitterId: userUsername }
-      ]
+      ],
+      ...dateFilter
     });
 
     const total = reviews.length;
