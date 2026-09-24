@@ -51,6 +51,10 @@ const tenantSchema = new mongoose.Schema({
       type: Boolean,
       default: false
     },
+    defaultDataScope: {
+      type: String,
+      default: 'overall'
+    },
     timezone: {
       type: String,
       default: 'UTC'

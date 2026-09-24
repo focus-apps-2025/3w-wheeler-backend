@@ -273,7 +273,7 @@ export const getDashboardStats = async (req, res) => {
 export const getFormAnalytics = async (req, res) => {
   try {
     const { formId } = req.params;
-    const { period = '30d' } = req.query;
+    const { period = '30d', startDate: queryStartDate, endDate: queryEndDate } = req.query;
 
     console.log('[getFormAnalytics] Looking for form with ID:', formId);
     // Verify form exists (support both id and _id)
@@ -327,33 +327,53 @@ export const getFormAnalytics = async (req, res) => {
     const now = new Date();
     let startDate;
 
-    switch (period) {
-      case '7d':
-        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        break;
-      case '30d':
-        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-        break;
-      case '90d':
-        startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
-        break;
-      default:
-        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    if (queryStartDate) {
+      startDate = parseDate(queryStartDate);
+    } else if (period && period !== 'overall' && period !== 'all') {
+      switch (period) {
+        case '7d':
+          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          break;
+        case '15d':
+          startDate = new Date(now.getTime() - 15 * 24 * 60 * 60 * 1000);
+          break;
+        case '30d':
+          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+          break;
+        case '90d':
+          startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+          break;
+        case '180d':
+          startDate = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000);
+          break;
+        case '365d':
+        case '1y':
+          startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+          break;
+      }
     }
 
-    // Get all responses for this form (not just period) 
-    // If it's a chassis share, we need to bypass the tenantFilter and manually filter by chassis
+    // Get responses for this form
     const baseQuery = {
       $or: [{ questionId: formId }, { questionId: form._id?.toString() }]
     };
 
-    // If not owner/superadmin, and only have chassis share or regular share
-    // We only need to bypass tenantFilter if we are NOT the owner.
     let responseQuery = { ...baseQuery };
     if (!isOwner && req.user.role !== 'superadmin') {
-      // We can't use req.tenantFilter because the responses belong to the owner
+      // Bypassing tenantFilter if not owner
     } else {
       responseQuery = { ...responseQuery, ...req.tenantFilter };
+    }
+
+    if (startDate) {
+      responseQuery.createdAt = { $gte: startDate };
+      if (queryEndDate) {
+        const endDateParsed = parseDate(queryEndDate);
+        if (endDateParsed) {
+          endDateParsed.setHours(23, 59, 59, 999);
+          responseQuery.createdAt.$lte = endDateParsed;
+        }
+      }
     }
 
     let allResponses = await Response.find(responseQuery)
