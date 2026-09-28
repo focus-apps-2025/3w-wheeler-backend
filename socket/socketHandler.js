@@ -7,6 +7,9 @@ export const initializeSocket = (server) => {
     "https://servicerequests.netlify.app",
     "https://formsadmin.netlify.app",
     "https://formsuperadmin.focusengineeringapp.com",
+    "https://3wheelertvs.focusengineeringapp.com",
+    "https://3wtvs.focusengineeringapp.com",
+    "https://threew-wheeler-backend.onrender.com",
     ...(process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',').map(url => url.trim()) : [])
   ];
 
