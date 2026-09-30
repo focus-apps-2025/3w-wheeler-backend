@@ -614,7 +614,7 @@ export const createResponse = async (req, res) => {
         const rawAnswer = answers[trackingQId] !== undefined ? answers[trackingQId] : answers[qId];
         const strAnswer = extractAnswerString(rawAnswer);
 
-        if (strAnswer !== "") {
+        if (strAnswer !== "" && strAnswer !== "[object Object]" && strAnswer !== "undefined") {
           const escapedAnswer = strAnswer.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
           const exactRegex = new RegExp(`^${escapedAnswer}$`, "i");
 
@@ -627,6 +627,12 @@ export const createResponse = async (req, res) => {
             { [`answers.${qId}.chassisNumber`]: exactRegex },
             { [`answers.${trackingQId}.value`]: exactRegex },
             { [`answers.${qId}.value`]: exactRegex },
+            { [`answers.chassis_number`]: exactRegex },
+            { [`answers.chassisNumber`]: exactRegex },
+            { [`answers.chassis_id`]: exactRegex },
+            { [`answers.chassis`]: exactRegex },
+            { [`answers.chassis_number.chassisNumber`]: exactRegex },
+            { [`answers.chassisNumber.chassisNumber`]: exactRegex },
           ];
 
           const numAnswer = Number(strAnswer);
@@ -637,6 +643,10 @@ export const createResponse = async (req, res) => {
             orConditions.push({ [`answers.${qId}.chassisNumber`]: numAnswer });
             orConditions.push({ [`answers.${trackingQId}.value`]: numAnswer });
             orConditions.push({ [`answers.${qId}.value`]: numAnswer });
+            orConditions.push({ [`answers.chassis_number`]: numAnswer });
+            orConditions.push({ [`answers.chassisNumber`]: numAnswer });
+            orConditions.push({ [`answers.chassis_id`]: numAnswer });
+            orConditions.push({ [`answers.chassis`]: numAnswer });
           }
 
           // Count existing responses with the EXACT SAME answer for this form
@@ -1531,7 +1541,7 @@ export const getRank = async (req, res) => {
     }
 
     const strAnswer = extractAnswerString(answer);
-    if (!strAnswer) {
+    if (!strAnswer || strAnswer === "[object Object]" || strAnswer === "undefined") {
       return res.status(200).json({
         success: true,
         data: { rank: 1 }
@@ -1550,6 +1560,12 @@ export const getRank = async (req, res) => {
       { [`answers.${questionId}.chassisNumber`]: exactRegex },
       { [`answers.${trackingQId}.value`]: exactRegex },
       { [`answers.${questionId}.value`]: exactRegex },
+      { [`answers.chassis_number`]: exactRegex },
+      { [`answers.chassisNumber`]: exactRegex },
+      { [`answers.chassis_id`]: exactRegex },
+      { [`answers.chassis`]: exactRegex },
+      { [`answers.chassis_number.chassisNumber`]: exactRegex },
+      { [`answers.chassisNumber.chassisNumber`]: exactRegex },
     ];
 
     const numAnswer = Number(strAnswer);
@@ -1560,6 +1576,10 @@ export const getRank = async (req, res) => {
       orConditions.push({ [`answers.${questionId}.chassisNumber`]: numAnswer });
       orConditions.push({ [`answers.${trackingQId}.value`]: numAnswer });
       orConditions.push({ [`answers.${questionId}.value`]: numAnswer });
+      orConditions.push({ [`answers.chassis_number`]: numAnswer });
+      orConditions.push({ [`answers.chassisNumber`]: numAnswer });
+      orConditions.push({ [`answers.chassis_id`]: numAnswer });
+      orConditions.push({ [`answers.chassis`]: numAnswer });
     }
 
     const query = {
