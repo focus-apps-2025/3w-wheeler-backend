@@ -3,7 +3,7 @@ import express from 'express';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { v4 as uuidv4 } from 'uuid';
-import { authenticate,  hasPermission } from '../middleware/auth.js';
+import { authenticate, authenticateOptional, hasPermission } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -47,7 +47,7 @@ const CATEGORY_MAPPING = {
   'attachment': 'attachments'
 };
 
-router.post('/presigned-url', authenticate, async (req, res) => {
+router.post('/presigned-url', authenticateOptional, async (req, res) => {
   try {
     // Check if AWS credentials are configured
     if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) {

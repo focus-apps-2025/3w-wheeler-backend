@@ -80,6 +80,63 @@ const extractAnswerString = (ans) => {
   return String(ans).trim();
 };
 
+// In-memory lock map for rapid duplicate submission prevention
+const recentChassisSubmissions = new Map();
+
+/**
+ * Helper to extract chassis number from submission answers map/object
+ */
+export const extractChassisNumberFromAnswers = (answers, form = null) => {
+  if (!answers) return null;
+
+  const answersObj = answers instanceof Map ? Object.fromEntries(answers) : answers;
+
+  // 1. Direct key check for 'chassis_number', 'chassisNumber', 'chassis_id', 'chassis'
+  const directKeys = ['chassis_number', 'chassisNumber', 'chassis_id', 'chassis'];
+  for (const key of directKeys) {
+    if (answersObj[key] !== undefined && answersObj[key] !== null) {
+      const strVal = extractAnswerString(answersObj[key]);
+      if (strVal) return strVal;
+    }
+  }
+
+  // 2. Match questions defined in the form schema
+  if (form) {
+    const questions = [
+      ...(form.sections?.flatMap(s => s.questions || []) || []),
+      ...(form.followUpQuestions || [])
+    ];
+    for (const q of questions) {
+      const qType = (q.type || '').toLowerCase();
+      const qText = (q.text || '').toLowerCase();
+      const qId = q.id;
+
+      const isChassisQ = qType.includes('chassis') || qText.includes('chassis') || qId === 'chassis_number';
+
+      if (isChassisQ && answersObj[qId] !== undefined && answersObj[qId] !== null) {
+        const strVal = extractAnswerString(answersObj[qId]);
+        if (strVal) return strVal;
+      }
+    }
+  }
+
+  // 3. Fallback scan of answersObj keys and values
+  for (const [key, val] of Object.entries(answersObj)) {
+    if (val === null || val === undefined) continue;
+    const lowerKey = key.toLowerCase();
+    if (lowerKey.includes('chassis')) {
+      const strVal = extractAnswerString(val);
+      if (strVal) return strVal;
+    } else if (typeof val === 'object') {
+      const strVal = extractAnswerString(val);
+      if (val.chassisNumber && strVal) return strVal;
+    }
+  }
+
+  return null;
+};
+
+
 export const createResponse = async (req, res) => {
   try {
     console.log('[CREATE RESPONSE] === START ===');
@@ -296,6 +353,55 @@ export const createResponse = async (req, res) => {
           success: false,
           message: 'Form is not publicly available'
         });
+      }
+    }
+
+    // ========== DUPLICATE CHASSIS SUBMISSION CHECK (2-MINUTE RESTRICTION) ==========
+    if (!isSectionSubmit) {
+      const submittedChassisNumber = extractChassisNumberFromAnswers(answers, form);
+      if (submittedChassisNumber) {
+        const cacheKey = `${questionId}_${submittedChassisNumber.toLowerCase()}`;
+        const now = Date.now();
+
+        // Check 1: In-memory lock for rapid double clicks/sub-second race conditions
+        const lastSubmittedAt = recentChassisSubmissions.get(cacheKey);
+        if (lastSubmittedAt && (now - lastSubmittedAt < 120000)) {
+          console.warn(`[CREATE RESPONSE] Duplicate submission blocked by memory lock for chassis "${submittedChassisNumber}" on form ${questionId}`);
+          return res.status(400).json({
+            success: false,
+            message: `Chassis number "${submittedChassisNumber}" was already submitted within the last 2 minutes. Please wait before submitting again.`
+          });
+        }
+
+        // Check 2: MongoDB check for responses created in the last 2 minutes (120,000 ms)
+        const twoMinutesAgo = new Date(now - 120000);
+        const formIds = [form.id, form._id ? form._id.toString() : null, questionId].filter(Boolean);
+
+        const recentResponses = await Response.find({
+          questionId: { $in: formIds },
+          createdAt: { $gte: twoMinutesAgo },
+          isSectionSubmit: { $ne: true }
+        }).select('answers createdAt').lean();
+
+        for (const r of recentResponses) {
+          const recentChassis = extractChassisNumberFromAnswers(r.answers, form);
+          if (recentChassis && recentChassis.toLowerCase() === submittedChassisNumber.toLowerCase()) {
+            recentChassisSubmissions.set(cacheKey, now);
+            console.warn(`[CREATE RESPONSE] Duplicate submission blocked by DB check for chassis "${submittedChassisNumber}" on form ${questionId}`);
+            return res.status(400).json({
+              success: false,
+              message: `Chassis number "${submittedChassisNumber}" was already submitted within the last 2 minutes. Please wait before submitting again.`
+            });
+          }
+        }
+
+        // Lock in memory immediately for 2 minutes to block instant duplicate clicks
+        recentChassisSubmissions.set(cacheKey, now);
+        setTimeout(() => {
+          if (recentChassisSubmissions.get(cacheKey) === now) {
+            recentChassisSubmissions.delete(cacheKey);
+          }
+        }, 120000);
       }
     }
 
