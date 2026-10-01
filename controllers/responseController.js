@@ -620,6 +620,13 @@ export const createResponse = async (req, res) => {
 
           const formIds = [form.id, form._id ? form._id.toString() : null, questionId].filter(Boolean);
 
+          const isChassisQ =
+            qId === 'chassis_number' ||
+            qId === 'chassisNumber' ||
+            qId === 'chassis_id' ||
+            qId === 'chassis' ||
+            (question && (question.type || '').toLowerCase().includes('chassis'));
+
           const orConditions = [
             { [`answers.${trackingQId}`]: exactRegex },
             { [`answers.${qId}`]: exactRegex },
@@ -627,26 +634,37 @@ export const createResponse = async (req, res) => {
             { [`answers.${qId}.chassisNumber`]: exactRegex },
             { [`answers.${trackingQId}.value`]: exactRegex },
             { [`answers.${qId}.value`]: exactRegex },
-            { [`answers.chassis_number`]: exactRegex },
-            { [`answers.chassisNumber`]: exactRegex },
-            { [`answers.chassis_id`]: exactRegex },
-            { [`answers.chassis`]: exactRegex },
-            { [`answers.chassis_number.chassisNumber`]: exactRegex },
-            { [`answers.chassisNumber.chassisNumber`]: exactRegex },
           ];
+
+          if (isChassisQ) {
+            orConditions.push(
+              { [`answers.chassis_number`]: exactRegex },
+              { [`answers.chassisNumber`]: exactRegex },
+              { [`answers.chassis_id`]: exactRegex },
+              { [`answers.chassis`]: exactRegex },
+              { [`answers.chassis_number.chassisNumber`]: exactRegex },
+              { [`answers.chassisNumber.chassisNumber`]: exactRegex }
+            );
+          }
 
           const numAnswer = Number(strAnswer);
           if (!isNaN(numAnswer)) {
-            orConditions.push({ [`answers.${trackingQId}`]: numAnswer });
-            orConditions.push({ [`answers.${qId}`]: numAnswer });
-            orConditions.push({ [`answers.${trackingQId}.chassisNumber`]: numAnswer });
-            orConditions.push({ [`answers.${qId}.chassisNumber`]: numAnswer });
-            orConditions.push({ [`answers.${trackingQId}.value`]: numAnswer });
-            orConditions.push({ [`answers.${qId}.value`]: numAnswer });
-            orConditions.push({ [`answers.chassis_number`]: numAnswer });
-            orConditions.push({ [`answers.chassisNumber`]: numAnswer });
-            orConditions.push({ [`answers.chassis_id`]: numAnswer });
-            orConditions.push({ [`answers.chassis`]: numAnswer });
+            orConditions.push(
+              { [`answers.${trackingQId}`]: numAnswer },
+              { [`answers.${qId}`]: numAnswer },
+              { [`answers.${trackingQId}.chassisNumber`]: numAnswer },
+              { [`answers.${qId}.chassisNumber`]: numAnswer },
+              { [`answers.${trackingQId}.value`]: numAnswer },
+              { [`answers.${qId}.value`]: numAnswer }
+            );
+            if (isChassisQ) {
+              orConditions.push(
+                { [`answers.chassis_number`]: numAnswer },
+                { [`answers.chassisNumber`]: numAnswer },
+                { [`answers.chassis_id`]: numAnswer },
+                { [`answers.chassis`]: numAnswer }
+              );
+            }
           }
 
           // Count existing responses with the EXACT SAME answer for this form
@@ -1553,6 +1571,13 @@ export const getRank = async (req, res) => {
     const escapedAnswer = strAnswer.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const exactRegex = new RegExp(`^${escapedAnswer}$`, "i");
 
+    const isChassisQuestion =
+      questionId === 'chassis_number' ||
+      questionId === 'chassisNumber' ||
+      questionId === 'chassis_id' ||
+      questionId === 'chassis' ||
+      (question && (question.type || '').toLowerCase().includes('chassis'));
+
     const orConditions = [
       { [`answers.${trackingQId}`]: exactRegex },
       { [`answers.${questionId}`]: exactRegex },
@@ -1560,26 +1585,37 @@ export const getRank = async (req, res) => {
       { [`answers.${questionId}.chassisNumber`]: exactRegex },
       { [`answers.${trackingQId}.value`]: exactRegex },
       { [`answers.${questionId}.value`]: exactRegex },
-      { [`answers.chassis_number`]: exactRegex },
-      { [`answers.chassisNumber`]: exactRegex },
-      { [`answers.chassis_id`]: exactRegex },
-      { [`answers.chassis`]: exactRegex },
-      { [`answers.chassis_number.chassisNumber`]: exactRegex },
-      { [`answers.chassisNumber.chassisNumber`]: exactRegex },
     ];
+
+    if (isChassisQuestion) {
+      orConditions.push(
+        { [`answers.chassis_number`]: exactRegex },
+        { [`answers.chassisNumber`]: exactRegex },
+        { [`answers.chassis_id`]: exactRegex },
+        { [`answers.chassis`]: exactRegex },
+        { [`answers.chassis_number.chassisNumber`]: exactRegex },
+        { [`answers.chassisNumber.chassisNumber`]: exactRegex }
+      );
+    }
 
     const numAnswer = Number(strAnswer);
     if (!isNaN(numAnswer)) {
-      orConditions.push({ [`answers.${trackingQId}`]: numAnswer });
-      orConditions.push({ [`answers.${questionId}`]: numAnswer });
-      orConditions.push({ [`answers.${trackingQId}.chassisNumber`]: numAnswer });
-      orConditions.push({ [`answers.${questionId}.chassisNumber`]: numAnswer });
-      orConditions.push({ [`answers.${trackingQId}.value`]: numAnswer });
-      orConditions.push({ [`answers.${questionId}.value`]: numAnswer });
-      orConditions.push({ [`answers.chassis_number`]: numAnswer });
-      orConditions.push({ [`answers.chassisNumber`]: numAnswer });
-      orConditions.push({ [`answers.chassis_id`]: numAnswer });
-      orConditions.push({ [`answers.chassis`]: numAnswer });
+      orConditions.push(
+        { [`answers.${trackingQId}`]: numAnswer },
+        { [`answers.${questionId}`]: numAnswer },
+        { [`answers.${trackingQId}.chassisNumber`]: numAnswer },
+        { [`answers.${questionId}.chassisNumber`]: numAnswer },
+        { [`answers.${trackingQId}.value`]: numAnswer },
+        { [`answers.${questionId}.value`]: numAnswer }
+      );
+      if (isChassisQuestion) {
+        orConditions.push(
+          { [`answers.chassis_number`]: numAnswer },
+          { [`answers.chassisNumber`]: numAnswer },
+          { [`answers.chassis_id`]: numAnswer },
+          { [`answers.chassis`]: numAnswer }
+        );
+      }
     }
 
     const query = {
