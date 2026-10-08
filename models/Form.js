@@ -111,12 +111,6 @@ const FollowUpQuestionSchema = new mongoose.Schema({
   },
   description: String,
   suggestion: String,
-  trackResponseRank: {
-    type: Boolean,
-    default: false
-  },
-  trackResponseRankLabel: String,
-  trackResponseRankType: String,
   trackResponseQuestion: {
     type: Boolean,
     default: false

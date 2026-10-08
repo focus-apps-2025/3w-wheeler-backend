@@ -11,7 +11,6 @@ import {
   getResponsesByForm,
   exportResponses,
   processBulkImages,
-  getRank,
   getUnassignedResponses,
   assignResponses,
   autoAssignResponse,
@@ -156,9 +155,6 @@ router.post('/convert-image', async (req, res) => {
 // 6. SINGLE RESPONSE CREATION (optional auth - allows public with token if provided)
 router.post('/:tenantSlug/forms/:formId/responses', authenticateOptional, createResponse);
 
-// 7. GET RANK (PUBLIC)
-router.get('/rank', getRank);
-router.get('/:tenantSlug/forms/:formId/rank', getRank);
 
 // 8. GET SUGGESTIONS (PUBLIC)
 router.get('/suggestions', getSuggestedAnswers);

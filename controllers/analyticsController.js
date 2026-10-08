@@ -1984,8 +1984,6 @@ export const getInspectorSummary = async (req, res) => {
                 q.type === 'zone-in' ||
                 q.type === 'zone-out' ||
                 q.text?.toLowerCase().includes('chassis') ||
-                q.trackResponseRank === true ||
-                q.trackResponseRank === 'true' ||
                 q.trackResponseQuestion === true ||
                 q.trackResponseQuestion === 'true'
               ) {
@@ -3250,7 +3248,7 @@ export const getOverallAnalytics = async (req, res) => {
       if (dqid) {
         const ans = answersObj[dqid];
         if (ans && hasAnswerValue(ans)) {
-          return { name: renderAnswerDisplay(ans), rank: response.responseRanks?.[dqid] || null };
+          return { name: renderAnswerDisplay(ans), rank: null };
         }
       }
       if (form.sections?.length > 0) {
@@ -3259,7 +3257,7 @@ export const getOverallAnalytics = async (req, res) => {
           for (const q of first.questions) {
             const ans = answersObj[q.id];
             if (ans && hasAnswerValue(ans)) {
-              return { name: renderAnswerDisplay(ans), rank: response.responseRanks?.[q.id] || null };
+              return { name: renderAnswerDisplay(ans), rank: null };
             }
           }
         }
@@ -3298,7 +3296,6 @@ export const getOverallAnalytics = async (req, res) => {
         formId: r.formId,
         parentResponseId: r.parentResponseId,
         answers: answersObj,
-        responseRanks: r.responseRanks,
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
         status: r.status,

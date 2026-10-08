@@ -603,8 +603,6 @@ export const createResponse = async (req, res) => {
 
       // Check for tracking (handle both boolean and string "true")
       const isTrackingEnabled =
-        question.trackResponseRank === true ||
-        question.trackResponseRank === "true" ||
         question.trackResponseQuestion === true ||
         question.trackResponseQuestion === "true";
 
@@ -1004,7 +1002,7 @@ export const batchImportResponses = async (req, res) => {
       collectAllQuestions(form.followUpQuestions, allQuestions);
     }
 
-    const rankTrackedQuestions = allQuestions.filter(q => q.trackResponseRank || q.trackResponseQuestion);
+    const rankTrackedQuestions = allQuestions.filter(q => q.trackResponseQuestion);
     const rankMaps = {};
     for (const question of rankTrackedQuestions) {
       const qId = question.id;
