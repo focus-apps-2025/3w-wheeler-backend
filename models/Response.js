@@ -17,6 +17,11 @@ const ResponseSchema = new mongoose.Schema({
     of: mongoose.Schema.Types.Mixed,
     required: true
   },
+  responseRanks: {
+    type: Map,
+    of: Number,
+    default: {}
+  },
   parentResponseId: String,
   assignedTo: {
     type: mongoose.Schema.Types.ObjectId,
@@ -129,28 +134,6 @@ const ResponseSchema = new mongoose.Schema({
     default: null
   },
   // When the user completed/submitted
-  completedAt: {
-    type: Date,
-    default: null
-
-  },
-
-  // ========== ADD NEW TOP-LEVEL TIMING FIELDS (for easier querying) ==========
-  // These make it easier to query and aggregate time data
-  timeSpent: {
-    type: Number, // in seconds
-    default: 0,
-    index: true
-  },
-  sessionId: {
-    type: String,
-    index: true,
-    default: null
-  },
-  startedAt: {
-    type: Date,
-    default: null
-  },
   completedAt: {
     type: Date,
     default: null

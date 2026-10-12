@@ -601,10 +601,21 @@ export const createResponse = async (req, res) => {
     for (const question of allQs) {
       const qId = question.id;
 
-      // Check for tracking (handle both boolean and string "true")
+      // Check for tracking (handle both boolean and string "true" or chassis/identification questions)
       const isTrackingEnabled =
+        question.trackResponseRank === true ||
+        question.trackResponseRank === "true" ||
         question.trackResponseQuestion === true ||
-        question.trackResponseQuestion === "true";
+        question.trackResponseQuestion === "true" ||
+        qId === 'chassis_number' ||
+        qId === 'chassisNumber' ||
+        qId === 'chassis_id' ||
+        qId === 'chassis' ||
+        qId === 'identification_number' ||
+        qId === 'identificationNumber' ||
+        (question && (question.type || '').toLowerCase().includes('chassis')) ||
+        (question && /identification|chassis|id\s*number|id_number|id\s*no|vin|serial/i.test(question.text || '')) ||
+        /identification|chassis|id\s*number|vin|serial/i.test(qId);
 
       if (isTrackingEnabled) {
         // If trackResponseQuestion is enabled, we use the value from that field for ranking
@@ -623,7 +634,11 @@ export const createResponse = async (req, res) => {
             qId === 'chassisNumber' ||
             qId === 'chassis_id' ||
             qId === 'chassis' ||
-            (question && (question.type || '').toLowerCase().includes('chassis'));
+            qId === 'identification_number' ||
+            qId === 'identificationNumber' ||
+            (question && (question.type || '').toLowerCase().includes('chassis')) ||
+            (question && /identification|chassis|id\s*number|id_number|id\s*no|vin|serial/i.test(question.text || '')) ||
+            /identification|chassis|id\s*number|vin|serial/i.test(qId);
 
           const orConditions = [
             { [`answers.${trackingQId}`]: exactRegex },
@@ -1490,7 +1505,9 @@ export const batchImportResponses = async (req, res) => {
 
 export const getRank = async (req, res) => {
   try {
-    const { formId, questionId, answer } = req.query;
+    const formId = req.params.formId || req.query.formId;
+    const questionId = req.params.questionId || req.query.questionId;
+    const answer = req.query.answer !== undefined ? req.query.answer : req.body?.answer;
     const { tenantSlug } = req.params;
 
     if (!formId || !questionId || answer === undefined) {
@@ -1574,7 +1591,11 @@ export const getRank = async (req, res) => {
       questionId === 'chassisNumber' ||
       questionId === 'chassis_id' ||
       questionId === 'chassis' ||
-      (question && (question.type || '').toLowerCase().includes('chassis'));
+      questionId === 'identification_number' ||
+      questionId === 'identificationNumber' ||
+      (question && (question.type || '').toLowerCase().includes('chassis')) ||
+      (question && /identification|chassis|id\s*number|vin|serial/i.test(question.text || '')) ||
+      /identification|chassis|id\s*number|vin|serial/i.test(questionId);
 
     const orConditions = [
       { [`answers.${trackingQId}`]: exactRegex },
@@ -1585,12 +1606,24 @@ export const getRank = async (req, res) => {
       { [`answers.${questionId}.value`]: exactRegex },
     ];
 
+    if (question?.text) {
+      orConditions.push(
+        { [`answers.${question.text}`]: exactRegex },
+        { [`answers.${question.text}.value`]: exactRegex }
+      );
+    }
+
     if (isChassisQuestion) {
       orConditions.push(
         { [`answers.chassis_number`]: exactRegex },
         { [`answers.chassisNumber`]: exactRegex },
         { [`answers.chassis_id`]: exactRegex },
         { [`answers.chassis`]: exactRegex },
+        { [`answers.identification_number`]: exactRegex },
+        { [`answers.identificationNumber`]: exactRegex },
+        { [`answers.Identification Number`]: exactRegex },
+        { [`answers.Identification number`]: exactRegex },
+        { [`answers.id_number`]: exactRegex },
         { [`answers.chassis_number.chassisNumber`]: exactRegex },
         { [`answers.chassisNumber.chassisNumber`]: exactRegex }
       );
@@ -1606,12 +1639,23 @@ export const getRank = async (req, res) => {
         { [`answers.${trackingQId}.value`]: numAnswer },
         { [`answers.${questionId}.value`]: numAnswer }
       );
+      if (question?.text) {
+        orConditions.push(
+          { [`answers.${question.text}`]: numAnswer },
+          { [`answers.${question.text}.value`]: numAnswer }
+        );
+      }
       if (isChassisQuestion) {
         orConditions.push(
           { [`answers.chassis_number`]: numAnswer },
           { [`answers.chassisNumber`]: numAnswer },
           { [`answers.chassis_id`]: numAnswer },
-          { [`answers.chassis`]: numAnswer }
+          { [`answers.chassis`]: numAnswer },
+          { [`answers.identification_number`]: numAnswer },
+          { [`answers.identificationNumber`]: numAnswer },
+          { [`answers.Identification Number`]: numAnswer },
+          { [`answers.Identification number`]: numAnswer },
+          { [`answers.id_number`]: numAnswer }
         );
       }
     }
