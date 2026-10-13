@@ -163,9 +163,9 @@ router.post('/:tenantSlug/forms/:formId/responses', authenticateOptional, create
 // router.get('/rank', getRank);
 // router.get('/:tenantSlug/forms/:formId/rank', getRank);
 
-// 8. GET SUGGESTIONS (PUBLIC)
-router.get('/suggestions', getSuggestedAnswers);
-router.get('/:tenantSlug/forms/:formId/suggestions', getSuggestedAnswers);
+// 8. GET SUGGESTIONS (PUBLIC) - Historical attempt suggestions commented out
+// router.get('/suggestions', getSuggestedAnswers);
+// router.get('/:tenantSlug/forms/:formId/suggestions', getSuggestedAnswers);
 
 // 8b. GET ATTEMPTS & BATCH SYNC
 router.get('/attempts/:formId', getFormAttempts);

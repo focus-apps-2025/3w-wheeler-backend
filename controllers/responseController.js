@@ -1949,6 +1949,12 @@ export const getRank = async (req, res) => {
  * This is used to auto-fill or suggest previous answers when a user starts filling a form.
  */
 export const getSuggestedAnswers = async (req, res) => {
+  // Suggested answers & historical attempts commented out
+  return res.status(200).json({
+    success: true,
+    data: { suggestedAnswers: null }
+  });
+  /*
   const startTime = Date.now();
   try {
     const { formId: queryFormId, questionId, answer } = req.query;
@@ -2097,6 +2103,7 @@ export const getSuggestedAnswers = async (req, res) => {
       message: 'Failed to fetch suggested answers'
     });
   }
+  */
 };
 
 /**
