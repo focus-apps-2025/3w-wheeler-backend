@@ -1498,11 +1498,107 @@ export const batchImportResponses = async (req, res) => {
     });
   }
 };
+const getThisFormIds = (form, baseFormId) => {
+  const formIds = [
+    form.id,
+    form._id ? form._id.toString() : null,
+    baseFormId
+  ].filter(Boolean);
+  return Array.from(new Set(formIds));
+};
+
+const getThisFormExtraQuestionIds = (form) => {
+  const extraQIds = [];
+  const collectQ = (qs) => {
+    (qs || []).forEach(q => {
+      if (q.id) extraQIds.push(q.id);
+      if (q._id) extraQIds.push(q._id.toString());
+      if (q.text) extraQIds.push(q.text);
+      if (q.followUpQuestions) collectQ(q.followUpQuestions);
+    });
+  };
+  (form.sections || []).forEach(s => collectQ(s.questions));
+  collectQ(form.followUpQuestions);
+  return Array.from(new Set(extraQIds));
+};
+
+const buildChassisOrConditions = (questionId, trackingQId, strAnswer, extraQuestionIds = []) => {
+  const trimmed = String(strAnswer || '').trim();
+  if (!trimmed) return [];
+  const possibleStrings = Array.from(new Set([
+    trimmed,
+    trimmed.toLowerCase(),
+    trimmed.toUpperCase(),
+    trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase()
+  ]));
+
+  const orConditions = [
+    { chassisNumber: { $in: possibleStrings } },
+    { chassisNumber: trimmed },
+    { [`answers.${trackingQId}`]: { $in: possibleStrings } },
+    { [`answers.${questionId}`]: { $in: possibleStrings } },
+    { [`answers._${questionId}`]: { $in: possibleStrings } },
+    { [`answers._${trackingQId}`]: { $in: possibleStrings } },
+    { [`answers.${trackingQId}.chassisNumber`]: { $in: possibleStrings } },
+    { [`answers.${questionId}.chassisNumber`]: { $in: possibleStrings } },
+    { [`answers.${trackingQId}.value`]: { $in: possibleStrings } },
+    { [`answers.${questionId}.value`]: { $in: possibleStrings } },
+    { 'answers.chassis_number': { $in: possibleStrings } },
+    { 'answers.chassis_number.chassisNumber': { $in: possibleStrings } },
+    { 'answers.chassisNumber': { $in: possibleStrings } },
+    { 'answers.id_number': { $in: possibleStrings } },
+    { 'answers.idNumber': { $in: possibleStrings } },
+    { 'answers.Identification': { $in: possibleStrings } },
+    { 'answers.identification': { $in: possibleStrings } },
+    { 'answers.Identification Number': { $in: possibleStrings } },
+    { 'answers.identification_number': { $in: possibleStrings } },
+    { 'answers.identificationNumber': { $in: possibleStrings } },
+    { 'answers.IDENTIFICATION NUMBER': { $in: possibleStrings } },
+    { 'answers.Identification No': { $in: possibleStrings } },
+    { 'answers.identification_no': { $in: possibleStrings } },
+    { 'answers.ID number': { $in: possibleStrings } },
+    { 'answers.ID Number': { $in: possibleStrings } },
+    { 'answers.ID NUMBER': { $in: possibleStrings } },
+    { 'answers.ID_NUMBER': { $in: possibleStrings } },
+    { 'answers.chassis_no': { $in: possibleStrings } },
+    { 'answers.chassisNo': { $in: possibleStrings } },
+    { 'answers.Chassis / VIN': { $in: possibleStrings } },
+    { 'answers.VIN': { $in: possibleStrings } },
+  ];
+
+  (extraQuestionIds || []).forEach(qId => {
+    if (qId && qId !== questionId && qId !== trackingQId) {
+      orConditions.push({ [`answers.${qId}`]: { $in: possibleStrings } });
+      orConditions.push({ [`answers.${qId}.chassisNumber`]: { $in: possibleStrings } });
+      orConditions.push({ [`answers.${qId}.value`]: { $in: possibleStrings } });
+    }
+  });
+
+  const numAnswer = Number(trimmed);
+  if (!isNaN(numAnswer)) {
+    orConditions.push({ chassisNumber: String(numAnswer) });
+    orConditions.push({ chassisNumber: numAnswer });
+    orConditions.push({ [`answers.${trackingQId}`]: numAnswer });
+    orConditions.push({ [`answers.${questionId}`]: numAnswer });
+    orConditions.push({ [`answers._${questionId}`]: numAnswer });
+    orConditions.push({ [`answers._${trackingQId}`]: numAnswer });
+    orConditions.push({ [`answers.${trackingQId}.chassisNumber`]: numAnswer });
+    orConditions.push({ [`answers.${questionId}.chassisNumber`]: numAnswer });
+    orConditions.push({ [`answers.${trackingQId}.value`]: numAnswer });
+    orConditions.push({ [`answers.${questionId}.value`]: numAnswer });
+    orConditions.push({ 'answers.chassis_number': numAnswer });
+    orConditions.push({ 'answers.chassisNumber': numAnswer });
+    orConditions.push({ 'answers.id_number': numAnswer });
+    orConditions.push({ 'answers.idNumber': numAnswer });
+  }
+
+  return orConditions;
+};
+
 /**
  * Get current rank for a specific question and answer
  * Used for real-time ranking display during form filling
  */
-
 export const getRank = async (req, res) => {
   try {
     const formId = req.params.formId || req.query.formId;
@@ -1526,16 +1622,10 @@ export const getRank = async (req, res) => {
     }
 
     // Find the form to verify it exists and if tracking is enabled
-    const formQuery = { id: formId };
-    if (tenantId) formQuery.tenantId = tenantId;
-
-    let form = await Form.findOne(formQuery);
+    let form = await Form.findOne({ id: formId });
     if (!form && mongoose.Types.ObjectId.isValid(formId)) {
-      const altQuery = { _id: formId };
-      if (tenantId) altQuery.tenantId = tenantId;
-      form = await Form.findOne(altQuery);
+      form = await Form.findById(formId);
     }
-
     if (!form) {
       return res.status(404).json({
         success: false,
@@ -1577,102 +1667,187 @@ export const getRank = async (req, res) => {
     if (!strAnswer || strAnswer === "[object Object]" || strAnswer === "undefined") {
       return res.status(200).json({
         success: true,
-        data: { rank: 1 }
+        data: {
+          rank: null,
+          count: 0,
+          exists: false
+        }
       });
     }
 
-    // Count existing final responses with the EXACT SAME answer for this form
-    const formIds = [form.id, form._id ? form._id.toString() : null, formId].filter(Boolean);
-    const escapedAnswer = strAnswer.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const exactRegex = new RegExp(`^${escapedAnswer}$`, "i");
+    // Count existing final responses with the EXACT SAME answer for THIS form alone (isolated rank tracking)
+    const formIds = getThisFormIds(form, formId);
+    const extraQIds = getThisFormExtraQuestionIds(form);
 
-    const isChassisQuestion =
-      questionId === 'chassis_number' ||
-      questionId === 'chassisNumber' ||
-      questionId === 'chassis_id' ||
-      questionId === 'chassis' ||
-      questionId === 'identification_number' ||
-      questionId === 'identificationNumber' ||
-      (question && (question.type || '').toLowerCase().includes('chassis')) ||
-      (question && /identification|chassis|id\s*number|vin|serial/i.test(question.text || '')) ||
-      /identification|chassis|id\s*number|vin|serial/i.test(questionId);
+    const orConditions = buildChassisOrConditions(questionId, trackingQId, strAnswer, extraQIds);
 
-    const orConditions = [
-      { [`answers.${trackingQId}`]: exactRegex },
-      { [`answers.${questionId}`]: exactRegex },
-      { [`answers.${trackingQId}.chassisNumber`]: exactRegex },
-      { [`answers.${questionId}.chassisNumber`]: exactRegex },
-      { [`answers.${trackingQId}.value`]: exactRegex },
-      { [`answers.${questionId}.value`]: exactRegex },
-    ];
-
-    if (question?.text) {
-      orConditions.push(
-        { [`answers.${question.text}`]: exactRegex },
-        { [`answers.${question.text}.value`]: exactRegex }
-      );
-    }
-
-    if (isChassisQuestion) {
-      orConditions.push(
-        { [`answers.chassis_number`]: exactRegex },
-        { [`answers.chassisNumber`]: exactRegex },
-        { [`answers.chassis_id`]: exactRegex },
-        { [`answers.chassis`]: exactRegex },
-        { [`answers.identification_number`]: exactRegex },
-        { [`answers.identificationNumber`]: exactRegex },
-        { [`answers.Identification Number`]: exactRegex },
-        { [`answers.Identification number`]: exactRegex },
-        { [`answers.id_number`]: exactRegex },
-        { [`answers.chassis_number.chassisNumber`]: exactRegex },
-        { [`answers.chassisNumber.chassisNumber`]: exactRegex }
-      );
-    }
-
-    const numAnswer = Number(strAnswer);
-    if (!isNaN(numAnswer)) {
-      orConditions.push(
-        { [`answers.${trackingQId}`]: numAnswer },
-        { [`answers.${questionId}`]: numAnswer },
-        { [`answers.${trackingQId}.chassisNumber`]: numAnswer },
-        { [`answers.${questionId}.chassisNumber`]: numAnswer },
-        { [`answers.${trackingQId}.value`]: numAnswer },
-        { [`answers.${questionId}.value`]: numAnswer }
-      );
-      if (question?.text) {
-        orConditions.push(
-          { [`answers.${question.text}`]: numAnswer },
-          { [`answers.${question.text}.value`]: numAnswer }
-        );
-      }
-      if (isChassisQuestion) {
-        orConditions.push(
-          { [`answers.chassis_number`]: numAnswer },
-          { [`answers.chassisNumber`]: numAnswer },
-          { [`answers.chassis_id`]: numAnswer },
-          { [`answers.chassis`]: numAnswer },
-          { [`answers.identification_number`]: numAnswer },
-          { [`answers.identificationNumber`]: numAnswer },
-          { [`answers.Identification Number`]: numAnswer },
-          { [`answers.Identification number`]: numAnswer },
-          { [`answers.id_number`]: numAnswer }
-        );
-      }
+    if (!orConditions || orConditions.length === 0) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          rank: null,
+          count: 0,
+          exists: false
+        }
+      });
     }
 
     const query = {
-      questionId: { $in: formIds },
-      $or: orConditions,
-      isSectionSubmit: { $ne: true },
+      $or: [
+        { questionId: { $in: formIds } },
+        { formId: { $in: formIds } }
+      ],
+      $and: [
+        { $or: orConditions }
+      ],
+      isSectionSubmit: { $ne: true }
     };
 
-    if (tenantId) query.tenantId = tenantId;
+    if (tenantId) {
+      query.tenantId = tenantId;
+    }
 
-    const count = await Response.countDocuments(query);
+    const matchingResponses = await Response.find(query)
+      .select('id _id status answers createdAt isDispatched dispatchedAt dispatchedByName biwReview submittedBy createdBy')
+      .lean();
 
+    const sortedResponses = matchingResponses.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    const count = sortedResponses.length;
+
+    let reworkCount = 0;
+    let hasBeenReworked = false;
+
+    const history = sortedResponses.map((resp, index) => {
+      const answersMap = resp.answers instanceof Map ? Object.fromEntries(resp.answers) : (resp.answers || {});
+      let hasRework = false;
+      let hasReject = false;
+      for (const val of Object.values(answersMap)) {
+        if (val && typeof val === 'object' && val.status) {
+          const s = String(val.status).toLowerCase().trim();
+          if (s === 'rework' || s.includes('rework')) hasRework = true;
+          if (s === 'rejected' || s === 'reject') hasReject = true;
+        } else if (typeof val === 'string') {
+          const s = val.toLowerCase().trim();
+          if (s === 'rework' || s.includes('rework')) hasRework = true;
+          if (s === 'rejected' || s === 'reject') hasReject = true;
+        }
+      }
+
+      let status = 'Direct Ok';
+      if (hasReject) {
+        status = 'Rejected';
+      } else if (hasRework) {
+        reworkCount++;
+        hasBeenReworked = true;
+        status = `Rework ${reworkCount}`;
+      } else if (index > 0 || hasBeenReworked) {
+        status = 'Rework Accepted';
+      } else {
+        status = 'Direct Ok';
+      }
+
+      return {
+        rank: index + 1,
+        status: resp.status && resp.status !== 'pending' ? resp.status : status,
+        id: resp.id || resp._id,
+        createdAt: resp.createdAt,
+        submittedBy: resp.submittedBy || resp.createdBy || null,
+        isDispatched: resp.isDispatched || false,
+        dispatchedAt: resp.dispatchedAt || null,
+        dispatchedByName: resp.dispatchedByName || null,
+        biwReview: resp.biwReview || null
+      };
+    });
+
+    const lastResponse = count > 0 ? sortedResponses[count - 1] : null;
+    const previousStatus = history.length > 0 ? history[history.length - 1].status : (lastResponse ? lastResponse.status : null);
+
+    const isAnyDispatched = sortedResponses.some(r => r.isDispatched);
+    const lastDispatched = [...sortedResponses].reverse().find(r => r.isDispatched);
+    const lastBiwReviewed = [...sortedResponses].reverse().find(r => r.biwReview && r.biwReview.status);
+
+    // Determine parent/child relationship and compute follow-up badge info
+    let parentForm = null;
+    if (form.parentFormId) {
+      parentForm = await Form.findOne({
+        $or: [
+          { id: form.parentFormId },
+          ...(mongoose.Types.ObjectId.isValid(form.parentFormId) ? [{ _id: form.parentFormId }] : [])
+        ]
+      }).select('id _id title childForms').lean();
+    }
+    if (!parentForm) {
+      parentForm = await Form.findOne({
+        'childForms.formId': { $in: [form.id, form._id?.toString(), formId] }
+      }).select('id _id title childForms').lean();
+    }
+
+    const isChildForm = Boolean(form.parentFormId || parentForm);
+    const isParentForm = Boolean(form.childForms && form.childForms.length > 0);
+
+    let followUpBadge = null;
+    if (count > 0) {
+      const firstRespDate = new Date(sortedResponses[0].createdAt);
+      const daysElapsed = Math.max(0, Math.floor((Date.now() - firstRespDate.getTime()) / (1000 * 60 * 60 * 24)));
+
+      let badgeColor = 'green';
+      let badgeText = `Linked (${count} ${count === 1 ? 'Attempt' : 'Attempts'})`;
+      let statusLabel = 'Follow-up Linked';
+
+      if (isChildForm && parentForm) {
+        badgeColor = 'green';
+        badgeText = `Parent Form: ${parentForm.title} (Attempt #${count})`;
+        statusLabel = 'Parent Record Linked';
+      } else if (isParentForm) {
+        if (daysElapsed <= 10) {
+          badgeColor = 'white';
+          badgeText = `Pending (${daysElapsed}d / 10d)`;
+          statusLabel = 'Pending Window';
+        } else {
+          badgeColor = 'red';
+          badgeText = `Overdue (${daysElapsed}d)`;
+          statusLabel = 'Follow-up Overdue';
+        }
+      }
+
+      followUpBadge = {
+        exists: true,
+        isParentLinked: Boolean(parentForm),
+        parentFormTitle: parentForm?.title || null,
+        parentFormId: parentForm?.id || parentForm?._id?.toString() || null,
+        attemptsCount: count,
+        lastStatus: previousStatus,
+        lastSubmittedBy: lastResponse ? (lastResponse.submittedBy || lastResponse.createdBy || null) : null,
+        lastCreatedAt: lastResponse ? lastResponse.createdAt : null,
+        daysElapsed: daysElapsed,
+        color: badgeColor,
+        badgeText: badgeText,
+        statusLabel: statusLabel,
+        history: history
+      };
+    }
+
+    // ONLY SHOW ATTEMPT IF DATA ALREADY EXISTS IN DB:
+    // If count === 0: rank is null (no badge in UI)
+    // If count > 0: rank is count + 1 (attempt #2, #3, ...)
     return res.status(200).json({
       success: true,
-      data: { rank: count + 1 }
+      data: {
+        rank: count > 0 ? count + 1 : null,
+        count: count,
+        exists: count > 0,
+        history: count > 0 ? history : [],
+        previousStatus: previousStatus,
+        lastResponseId: lastResponse ? (lastResponse.id || lastResponse._id) : null,
+        isDispatched: isAnyDispatched,
+        dispatchedAt: lastDispatched ? lastDispatched.dispatchedAt : null,
+        dispatchedByName: lastDispatched ? lastDispatched.dispatchedByName : null,
+        biwReview: lastBiwReviewed ? lastBiwReviewed.biwReview : null,
+        chatCount: 0,
+        lastSubmittedBy: lastResponse ? (lastResponse.submittedBy || lastResponse.createdBy || null) : null,
+        parentMatch: followUpBadge,
+        followUpStatus: followUpBadge
+      }
     });
 
   } catch (error) {
@@ -1845,6 +2020,233 @@ export const getSuggestedAnswers = async (req, res) => {
       success: false,
       message: 'Failed to fetch suggested answers'
     });
+  }
+};
+
+/**
+ * GET /api/responses/attempts/:formId?since=<ISO>
+ * Returns prior attempts for every chassis on this form (or delta since a timestamp).
+ * Used to hydrate mobile cached_attempts.
+ */
+export const getFormAttempts = async (req, res) => {
+  try {
+    const { formId } = req.params;
+    const { since } = req.query;
+
+    if (!formId) {
+      return res.status(400).json({ success: false, message: 'formId is required' });
+    }
+
+    let form = await Form.findOne({ id: formId });
+    if (!form && mongoose.Types.ObjectId.isValid(formId)) {
+      form = await Form.findById(formId);
+    }
+    const formIds = form ? getThisFormIds(form, formId) : [formId];
+
+    const query = {
+      $or: [
+        { questionId: { $in: formIds } },
+        { formId: { $in: formIds } }
+      ]
+    };
+
+    if (since) {
+      const sinceDate = new Date(since);
+      if (!isNaN(sinceDate.getTime())) {
+        query.createdAt = { $gte: sinceDate };
+      }
+    }
+
+    const responses = await Response.find(query)
+      .sort({ createdAt: 1 })
+      .lean();
+
+    const chassisAttemptsMap = new Map();
+
+    const attempts = responses.map((resp) => {
+      let answersObj = resp.answers || {};
+      if (answersObj instanceof Map) {
+        answersObj = Object.fromEntries(answersObj);
+      }
+
+      let chassis = resp.chassisNumber || 
+                    answersObj.chassis_number || 
+                    answersObj.chassisNumber ||
+                    answersObj['Identification Number'] ||
+                    answersObj.identification_number ||
+                    answersObj.identificationNumber ||
+                    answersObj.identification ||
+                    answersObj.Identification ||
+                    answersObj['ID number'] ||
+                    answersObj['ID Number'] ||
+                    answersObj.id_number ||
+                    answersObj.idNumber;
+
+      if (!chassis) {
+        for (const [k, v] of Object.entries(answersObj)) {
+          if (v && typeof v === 'object' && (v.chassisNumber || v.value)) {
+            chassis = v.chassisNumber || v.value;
+            break;
+          }
+          const kLow = k.toLowerCase();
+          if ((kLow.includes('identification') || kLow.includes('chassis') || kLow.includes('vin')) && typeof v === 'string' && v.trim().length >= 1) {
+            chassis = v.trim();
+            break;
+          }
+        }
+      }
+      chassis = chassis ? String(chassis).trim() : 'UNKNOWN';
+
+      const currentCount = chassisAttemptsMap.get(chassis) || 0;
+      const rank = resp.rank || (currentCount + 1);
+      chassisAttemptsMap.set(chassis, Math.max(currentCount + 1, rank));
+
+      let status = resp.subStatus || resp.status || 'Accepted';
+      // Normalize status to Accepted / Rework / Rejected
+      if (String(status).toLowerCase().includes('rework')) status = 'Rework';
+      else if (String(status).toLowerCase().includes('reject')) status = 'Rejected';
+      else status = 'Accepted';
+
+      return {
+        attemptId: (resp._id || resp.id).toString(),
+        chassisNumber: chassis,
+        rank: rank,
+        status: status,
+        answers: answersObj,
+        submittedBy: resp.submittedByName || resp.submittedBy || 'Inspector',
+        submittedAt: resp.createdAt ? new Date(resp.createdAt).toISOString() : new Date().toISOString()
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        formId,
+        generatedAt: new Date().toISOString(),
+        attempts
+      }
+    });
+  } catch (error) {
+    console.error('[ATTEMPTS] Error fetching attempts:', error);
+    return res.status(500).json({ success: false, message: 'Failed to fetch attempts' });
+  }
+};
+
+/**
+ * POST /api/responses/batch-sync
+ * Accepts pending responses from mobile device, assigns real authoritative ranks, returns results.
+ */
+export const batchSyncResponses = async (req, res) => {
+  try {
+    const { responses } = req.body;
+    if (!Array.isArray(responses) || responses.length === 0) {
+      return res.status(400).json({ success: false, message: 'responses array is required' });
+    }
+
+    const results = [];
+
+    for (const item of responses) {
+      const {
+        idempotencyKey,
+        formId,
+        chassisNumber,
+        answers,
+        clientProvisionalRank,
+        submittedAt,
+        submittedBy
+      } = item;
+
+      let existing = null;
+      if (idempotencyKey) {
+        existing = await Response.findOne({
+          $or: [
+            { 'submissionMetadata.idempotencyKey': idempotencyKey },
+            { 'submissionMetadata.sessionId': idempotencyKey },
+            { sessionId: idempotencyKey }
+          ]
+        }).lean();
+      }
+
+      const chassis = chassisNumber || answers?.chassis_number || answers?.chassisNumber || 'UNKNOWN';
+
+      let form = await Form.findOne({ id: formId });
+      if (!form && mongoose.Types.ObjectId.isValid(formId)) {
+        form = await Form.findById(formId);
+      }
+      const formIds = form ? getThisFormIds(form, formId) : [formId];
+
+      const priorCount = await Response.countDocuments({
+        $and: [
+          { $or: [{ questionId: { $in: formIds } }, { formId: { $in: formIds } }] },
+          {
+            $or: [
+              { chassisNumber: chassis },
+              { 'answers.chassis_number': chassis },
+              { 'answers.chassisNumber': chassis }
+            ]
+          }
+        ]
+      });
+
+      if (existing) {
+        results.push({
+          idempotencyKey: idempotencyKey || existing._id.toString(),
+          serverId: existing._id.toString(),
+          assignedRank: existing.rank || (priorCount > 0 ? priorCount : 1)
+        });
+        continue;
+      }
+
+      const assignedRank = priorCount + 1;
+
+      let subStatus = 'Direct Ok';
+      if (answers && typeof answers === 'object') {
+        const statuses = Object.values(answers)
+          .map(v => typeof v === 'object' && v ? v.status : v)
+          .map(v => String(v || '').toLowerCase());
+        if (statuses.some(s => s.includes('reject'))) {
+          subStatus = 'Rejected';
+        } else if (statuses.some(s => s.includes('rework'))) {
+          subStatus = 'Rework';
+        }
+      }
+
+      const newResponse = new Response({
+        id: uuidv4(),
+        questionId: formId,
+        formId: formId,
+        chassisNumber: chassis,
+        rank: assignedRank,
+        answers: answers || {},
+        submittedBy: submittedBy || req.user?.username || 'Inspector Mobile',
+        submittedByName: submittedBy || req.user?.displayName || req.user?.username || 'Inspector',
+        status: subStatus === 'Direct Ok' ? 'pending' : subStatus.toLowerCase(),
+        subStatus: subStatus,
+        sessionId: idempotencyKey,
+        submissionMetadata: {
+          source: 'mobile-batch-sync',
+          idempotencyKey: idempotencyKey,
+          clientProvisionalRank: clientProvisionalRank
+        },
+        createdAt: submittedAt ? new Date(submittedAt) : new Date()
+      });
+
+      await newResponse.save();
+
+      results.push({
+        idempotencyKey: idempotencyKey || newResponse._id.toString(),
+        serverId: newResponse._id.toString(),
+        assignedRank: assignedRank
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: { results }
+    });
+  } catch (error) {
+    console.error('[BATCH-SYNC] Error processing batch sync:', error);
+    return res.status(500).json({ success: false, message: 'Failed to process batch sync' });
   }
 };
 

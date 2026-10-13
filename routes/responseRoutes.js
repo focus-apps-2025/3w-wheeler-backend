@@ -19,7 +19,9 @@ import {
   getRank,
   autoFillChassisNumbers,
   getBiwSummary,
-  bulkUpdateBiwReview
+  bulkUpdateBiwReview,
+  getFormAttempts,
+  batchSyncResponses
 } from '../controllers/responseController.js';
 import { getReviewsForResponse, getBulkReviewsForResponses } from '../controllers/userController.js';
 import {
@@ -164,6 +166,11 @@ router.get('/:tenantSlug/forms/:formId/rank', getRank);
 // 8. GET SUGGESTIONS (PUBLIC)
 router.get('/suggestions', getSuggestedAnswers);
 router.get('/:tenantSlug/forms/:formId/suggestions', getSuggestedAnswers);
+
+// 8b. GET ATTEMPTS & BATCH SYNC
+router.get('/attempts/:formId', getFormAttempts);
+router.get('/:tenantSlug/forms/:formId/attempts', getFormAttempts);
+router.post('/batch-sync', authenticateOptional, batchSyncResponses);
 
 // 9. GET PREVIOUS ANSWERS (PUBLIC)
 router.get('/previous-answers', getQuestionPreviousAnswers);
