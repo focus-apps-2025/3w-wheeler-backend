@@ -1872,34 +1872,10 @@ export const getSuggestedAnswers = async (req, res) => {
 
     const formId = paramFormId || queryFormId;
 
-    console.log(`[SUGGESTIONS] Request - Form: ${formId}, Question: ${questionId}, Answer: "${answer}", Tenant: ${tenantSlug}`);
-
     if (!formId || !questionId || answer === undefined) {
       return res.status(400).json({
         success: false,
         message: 'formId, questionId, and answer are required'
-      });
-    }
-
-    let tenantId;
-    if (tenantSlug) {
-      const tenant = await Tenant.findOne({ slug: tenantSlug, isActive: true });
-      if (tenant) {
-        tenantId = tenant._id;
-        console.log(`[SUGGESTIONS] Resolved tenantId: ${tenantId}`);
-      }
-    }
-
-    // Find the form to verify it exists
-    const formQuery = { id: formId };
-    if (tenantId) formQuery.tenantId = tenantId;
-
-    const form = await Form.findOne(formQuery);
-    if (!form) {
-      console.warn(`[SUGGESTIONS] Form not found: ${formId}`);
-      return res.status(404).json({
-        success: false,
-        message: 'Form not found'
       });
     }
 
@@ -1911,90 +1887,99 @@ export const getSuggestedAnswers = async (req, res) => {
       });
     }
 
-    const formIds = [form.id, form._id ? form._id.toString() : null, formId].filter(Boolean);
-    const query = {
-      questionId: { $in: formIds },
-      isSectionSubmit: { $ne: true }
-    };
-
-    const trackingQuestionId = `${questionId}_tracking`;
-    const escapedAnswer = strAnswer.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const exactRegex = {
-      $regex: `^${escapedAnswer}$`,
-      $options: 'i'
-    };
-
-    query.$or = [
-      { [`answers.${questionId}`]: exactRegex },
-      { [`answers.${trackingQuestionId}`]: exactRegex },
-      { [`answers._${questionId}`]: exactRegex },
-      { [`answers._${trackingQuestionId}`]: exactRegex },
-      { [`answers.${questionId}.chassisNumber`]: exactRegex },
-      { [`answers.${trackingQuestionId}.chassisNumber`]: exactRegex },
-      { [`answers.${questionId}.value`]: exactRegex },
-      { [`answers.${trackingQuestionId}.value`]: exactRegex }
-    ];
-
-    const numAnswer = Number(strAnswer);
-    if (!isNaN(numAnswer)) {
-      query.$or.push({ [`answers.${questionId}`]: numAnswer });
-      query.$or.push({ [`answers.${trackingQuestionId}`]: numAnswer });
-      query.$or.push({ [`answers._${questionId}`]: numAnswer });
-      query.$or.push({ [`answers._${trackingQuestionId}`]: numAnswer });
-      query.$or.push({ [`answers.${questionId}.chassisNumber`]: numAnswer });
-      query.$or.push({ [`answers.${trackingQuestionId}.chassisNumber`]: numAnswer });
-      query.$or.push({ [`answers.${questionId}.value`]: numAnswer });
-      query.$or.push({ [`answers.${trackingQuestionId}.value`]: numAnswer });
+    let tenantId;
+    if (tenantSlug) {
+      const tenant = await Tenant.findOne({ slug: tenantSlug, isActive: true });
+      if (tenant) {
+        tenantId = tenant._id;
+      }
     }
 
-    // Only filter by tenantId if the form is NOT global or if we have a specific tenantSlug
-    if (tenantId) {
-      const isValid = mongoose.Types.ObjectId.isValid(tenantId);
-      const oid = isValid ? new mongoose.Types.ObjectId(String(tenantId)) : null;
-      query.tenantId = oid ? { $in: [tenantId, oid] } : tenantId;
-      console.log(`[SUGGESTIONS] Using specific tenantId filter: ${tenantId}`);
-    } else if (form.tenantId && !form.isGlobal) {
-      const isValid = mongoose.Types.ObjectId.isValid(form.tenantId);
-      const oid = isValid ? new mongoose.Types.ObjectId(String(form.tenantId)) : null;
-      query.tenantId = oid ? { $in: [form.tenantId, oid] } : form.tenantId;
-      console.log(`[SUGGESTIONS] Falling back to form owner tenantId filter: ${form.tenantId}`);
-    } else {
-      console.log(`[SUGGESTIONS] No tenantId filter applied (Global form or no slug)`);
+    let form = await Form.findOne({ id: formId });
+    if (!form && mongoose.Types.ObjectId.isValid(formId)) {
+      form = await Form.findById(formId);
+    }
+    if (!form) {
+      return res.status(404).json({
+        success: false,
+        message: 'Form not found'
+      });
     }
 
-    console.log(`[SUGGESTIONS] DB Query: ${JSON.stringify(query)}`);
+    let trackingQId = questionId;
+    const findQuestion = (questions) => {
+      if (!questions || !Array.isArray(questions)) return null;
+      for (const q of questions) {
+        if (q.id === questionId || q._id?.toString() === questionId) return q;
+        if (q.followUpQuestions && q.followUpQuestions.length > 0) {
+          const found = findQuestion(q.followUpQuestions);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
 
-    const queryStartTime = Date.now();
-    // Fetch top 5 matching responses to find the one with the most data
-    const matchingResponses = await Response.find(query)
-      .sort({ isSectionSubmit: 1, createdAt: -1 })
-      .limit(5)
-      .lean();
+    let question = findQuestion(form.followUpQuestions || []);
+    if (!question && form.sections && Array.isArray(form.sections)) {
+      for (const section of form.sections) {
+        question = findQuestion(section.questions || []);
+        if (question) break;
+      }
+    }
 
-    const queryDuration = Date.now() - queryStartTime;
+    if (
+      question &&
+      (question.trackResponseQuestion === true ||
+        question.trackResponseQuestion === "true")
+    ) {
+      trackingQId = `${questionId}_tracking`;
+    }
 
-    console.log(`[SUGGESTIONS] DB Query took ${queryDuration}ms. Found ${matchingResponses.length} matches.`);
+    const formIds = getThisFormIds(form, formId);
+    const extraQIds = getThisFormExtraQuestionIds(form);
+    const orConditions = buildChassisOrConditions(questionId, trackingQId, strAnswer, extraQIds);
 
-    if (matchingResponses.length === 0) {
-      // Log why it might have failed
-      const anyRespCount = await Response.countDocuments({ questionId: formId });
-      console.log(`[SUGGESTIONS] No match for "${answer}". Total responses for form ${formId}: ${anyRespCount}`);
-
+    if (!orConditions || orConditions.length === 0) {
       return res.status(200).json({
         success: true,
         data: { suggestedAnswers: null }
       });
     }
 
-    // Sort matching responses: priority to non-partial, then by creation date (oldest first for ranking #1, #2, etc)
+    const query = {
+      $or: [
+        { questionId: { $in: formIds } },
+        { formId: { $in: formIds } }
+      ],
+      $and: [
+        { $or: orConditions }
+      ],
+      isSectionSubmit: { $ne: true }
+    };
+
+    if (tenantId) {
+      query.tenantId = tenantId;
+    }
+
+    const matchingResponses = await Response.find(query)
+      .select('answers responseRanks createdAt submittedAt status isSectionSubmit questionId _id id chassisNumber submittedBy')
+      .sort({ isSectionSubmit: 1, createdAt: 1 })
+      .limit(20)
+      .lean();
+
+    if (matchingResponses.length === 0) {
+      return res.status(200).json({
+        success: true,
+        data: { suggestedAnswers: null }
+      });
+    }
+
     const sortedResponses = matchingResponses.sort((a, b) => {
       if (a.isSectionSubmit !== b.isSectionSubmit) {
         return a.isSectionSubmit ? 1 : -1;
       }
       return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
     });
-
-    console.log(`[SUGGESTIONS] Found ${sortedResponses.length} matches.`);
 
     const suggestions = sortedResponses.map((resp, index) => {
       let answersObj = resp.answers || {};
@@ -2003,9 +1988,14 @@ export const getSuggestedAnswers = async (req, res) => {
       }
       return {
         rank: index + 1,
+        status: resp.status || 'Direct Ok',
         answers: answersObj,
         timestamp: resp.createdAt,
-        id: resp.id || resp._id
+        id: resp.id || resp._id,
+        attemptId: (resp._id || resp.id).toString(),
+        chassisNumber: strAnswer || resp.chassisNumber || 'UNKNOWN',
+        submittedBy: resp.submittedByName || resp.submittedBy || 'Inspector',
+        submittedAt: resp.createdAt ? new Date(resp.createdAt).toISOString() : new Date().toISOString()
       };
     });
 
@@ -2013,7 +2003,6 @@ export const getSuggestedAnswers = async (req, res) => {
       success: true,
       data: { suggestedAnswers: suggestions }
     });
-
   } catch (error) {
     console.error('[SUGGESTIONS] Error:', error);
     res.status(500).json({
