@@ -572,8 +572,9 @@ export const createResponse = async (req, res) => {
       }
     });
 
-    // Calculate ranks for specific questions
+    // Calculate ranks for specific questions - Track ranking logic commented out
     const responseRanks = {};
+    /*
     const formObj = form.toObject();
     const allQs = [];
 
@@ -704,6 +705,7 @@ export const createResponse = async (req, res) => {
         }
       }
     }
+    */
 
 
     // ========== IMAGE PROCESSING (Keep your existing code) ==========
@@ -1201,8 +1203,9 @@ export const batchImportResponses = async (req, res) => {
                 }
               }
             });
-            // Calculate ranks for specific questions
+            // Calculate ranks for specific questions - Track ranking logic commented out
             const responseRanks = {};
+            /*
             for (const question of rankTrackedQuestions) {
               const qId = question.id;
               const trackingQId = `${qId}_tracking`;
@@ -1217,6 +1220,7 @@ export const batchImportResponses = async (req, res) => {
                 map.set(answerKey, newRank);
               }
             }
+            */
 
             const responseData = {
               id: uuidv4(),
@@ -1364,8 +1368,9 @@ export const batchImportResponses = async (req, res) => {
             }
           });
 
-          // Calculate ranks for specific questions
+          // Calculate ranks for specific questions - Track ranking logic commented out
           const responseRanks = {};
+          /*
           for (const question of rankTrackedQuestions) {
             const qId = question.id;
             const trackingQId = `${qId}_tracking`;
@@ -1380,6 +1385,7 @@ export const batchImportResponses = async (req, res) => {
               map.set(answerKey, newRank);
             }
           }
+          */
 
           // Create response data
           const responseData = {
@@ -1507,22 +1513,7 @@ const getThisFormIds = (form, baseFormId) => {
   return Array.from(new Set(formIds));
 };
 
-const getThisFormExtraQuestionIds = (form) => {
-  const extraQIds = [];
-  const collectQ = (qs) => {
-    (qs || []).forEach(q => {
-      if (q.id) extraQIds.push(q.id);
-      if (q._id) extraQIds.push(q._id.toString());
-      if (q.text) extraQIds.push(q.text);
-      if (q.followUpQuestions) collectQ(q.followUpQuestions);
-    });
-  };
-  (form.sections || []).forEach(s => collectQ(s.questions));
-  collectQ(form.followUpQuestions);
-  return Array.from(new Set(extraQIds));
-};
-
-const buildChassisOrConditions = (questionId, trackingQId, strAnswer, extraQuestionIds = []) => {
+const buildChassisOrConditions = (questionId, trackingQId, strAnswer, question = null) => {
   const trimmed = String(strAnswer || '').trim();
   if (!trimmed) return [];
   const possibleStrings = Array.from(new Set([
@@ -1532,9 +1523,20 @@ const buildChassisOrConditions = (questionId, trackingQId, strAnswer, extraQuest
     trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase()
   ]));
 
+  const qText = question?.text ? String(question.text).trim() : null;
+  const isChassisQ = Boolean(
+    questionId === 'chassis_number' ||
+    questionId === 'chassisNumber' ||
+    questionId === 'chassis_id' ||
+    questionId === 'chassis' ||
+    questionId === 'identification_number' ||
+    questionId === 'identificationNumber' ||
+    (question && (question.type || '').toLowerCase().includes('chassis')) ||
+    (qText && /identification|chassis|id\s*number|id_number|id\s*no|vin|serial/i.test(qText)) ||
+    /identification|chassis|id\s*number|vin|serial/i.test(questionId)
+  );
+
   const orConditions = [
-    { chassisNumber: { $in: possibleStrings } },
-    { chassisNumber: trimmed },
     { [`answers.${trackingQId}`]: { $in: possibleStrings } },
     { [`answers.${questionId}`]: { $in: possibleStrings } },
     { [`answers._${questionId}`]: { $in: possibleStrings } },
@@ -1543,56 +1545,124 @@ const buildChassisOrConditions = (questionId, trackingQId, strAnswer, extraQuest
     { [`answers.${questionId}.chassisNumber`]: { $in: possibleStrings } },
     { [`answers.${trackingQId}.value`]: { $in: possibleStrings } },
     { [`answers.${questionId}.value`]: { $in: possibleStrings } },
-    { 'answers.chassis_number': { $in: possibleStrings } },
-    { 'answers.chassis_number.chassisNumber': { $in: possibleStrings } },
-    { 'answers.chassisNumber': { $in: possibleStrings } },
-    { 'answers.id_number': { $in: possibleStrings } },
-    { 'answers.idNumber': { $in: possibleStrings } },
-    { 'answers.Identification': { $in: possibleStrings } },
-    { 'answers.identification': { $in: possibleStrings } },
-    { 'answers.Identification Number': { $in: possibleStrings } },
-    { 'answers.identification_number': { $in: possibleStrings } },
-    { 'answers.identificationNumber': { $in: possibleStrings } },
-    { 'answers.IDENTIFICATION NUMBER': { $in: possibleStrings } },
-    { 'answers.Identification No': { $in: possibleStrings } },
-    { 'answers.identification_no': { $in: possibleStrings } },
-    { 'answers.ID number': { $in: possibleStrings } },
-    { 'answers.ID Number': { $in: possibleStrings } },
-    { 'answers.ID NUMBER': { $in: possibleStrings } },
-    { 'answers.ID_NUMBER': { $in: possibleStrings } },
-    { 'answers.chassis_no': { $in: possibleStrings } },
-    { 'answers.chassisNo': { $in: possibleStrings } },
-    { 'answers.Chassis / VIN': { $in: possibleStrings } },
-    { 'answers.VIN': { $in: possibleStrings } },
   ];
 
-  (extraQuestionIds || []).forEach(qId => {
-    if (qId && qId !== questionId && qId !== trackingQId) {
-      orConditions.push({ [`answers.${qId}`]: { $in: possibleStrings } });
-      orConditions.push({ [`answers.${qId}.chassisNumber`]: { $in: possibleStrings } });
-      orConditions.push({ [`answers.${qId}.value`]: { $in: possibleStrings } });
-    }
-  });
+  if (qText) {
+    orConditions.push({ [`answers.${qText}`]: { $in: possibleStrings } });
+    orConditions.push({ [`answers.${qText}.chassisNumber`]: { $in: possibleStrings } });
+    orConditions.push({ [`answers.${qText}.value`]: { $in: possibleStrings } });
+  }
+
+  if (isChassisQ) {
+    orConditions.push(
+      { chassisNumber: { $in: possibleStrings } },
+      { chassisNumber: trimmed },
+      { 'answers.chassis_number': { $in: possibleStrings } },
+      { 'answers.chassis_number.chassisNumber': { $in: possibleStrings } },
+      { 'answers.chassisNumber': { $in: possibleStrings } },
+      { 'answers.id_number': { $in: possibleStrings } },
+      { 'answers.idNumber': { $in: possibleStrings } },
+      { 'answers.Identification': { $in: possibleStrings } },
+      { 'answers.identification': { $in: possibleStrings } },
+      { 'answers.Identification Number': { $in: possibleStrings } },
+      { 'answers.identification_number': { $in: possibleStrings } },
+      { 'answers.identificationNumber': { $in: possibleStrings } },
+      { 'answers.IDENTIFICATION NUMBER': { $in: possibleStrings } },
+      { 'answers.Identification No': { $in: possibleStrings } },
+      { 'answers.identification_no': { $in: possibleStrings } },
+      { 'answers.ID number': { $in: possibleStrings } },
+      { 'answers.ID Number': { $in: possibleStrings } },
+      { 'answers.ID NUMBER': { $in: possibleStrings } },
+      { 'answers.ID_NUMBER': { $in: possibleStrings } },
+      { 'answers.chassis_no': { $in: possibleStrings } },
+      { 'answers.chassisNo': { $in: possibleStrings } },
+      { 'answers.Chassis / VIN': { $in: possibleStrings } },
+      { 'answers.VIN': { $in: possibleStrings } }
+    );
+  }
 
   const numAnswer = Number(trimmed);
   if (!isNaN(numAnswer)) {
-    orConditions.push({ chassisNumber: String(numAnswer) });
-    orConditions.push({ chassisNumber: numAnswer });
-    orConditions.push({ [`answers.${trackingQId}`]: numAnswer });
-    orConditions.push({ [`answers.${questionId}`]: numAnswer });
-    orConditions.push({ [`answers._${questionId}`]: numAnswer });
-    orConditions.push({ [`answers._${trackingQId}`]: numAnswer });
-    orConditions.push({ [`answers.${trackingQId}.chassisNumber`]: numAnswer });
-    orConditions.push({ [`answers.${questionId}.chassisNumber`]: numAnswer });
-    orConditions.push({ [`answers.${trackingQId}.value`]: numAnswer });
-    orConditions.push({ [`answers.${questionId}.value`]: numAnswer });
-    orConditions.push({ 'answers.chassis_number': numAnswer });
-    orConditions.push({ 'answers.chassisNumber': numAnswer });
-    orConditions.push({ 'answers.id_number': numAnswer });
-    orConditions.push({ 'answers.idNumber': numAnswer });
+    orConditions.push(
+      { [`answers.${trackingQId}`]: numAnswer },
+      { [`answers.${questionId}`]: numAnswer },
+      { [`answers._${questionId}`]: numAnswer },
+      { [`answers._${trackingQId}`]: numAnswer },
+      { [`answers.${trackingQId}.chassisNumber`]: numAnswer },
+      { [`answers.${questionId}.chassisNumber`]: numAnswer },
+      { [`answers.${trackingQId}.value`]: numAnswer },
+      { [`answers.${questionId}.value`]: numAnswer }
+    );
+    if (qText) {
+      orConditions.push({ [`answers.${qText}`]: numAnswer });
+    }
+    if (isChassisQ) {
+      orConditions.push(
+        { chassisNumber: String(numAnswer) },
+        { chassisNumber: numAnswer },
+        { 'answers.chassis_number': numAnswer },
+        { 'answers.chassisNumber': numAnswer },
+        { 'answers.id_number': numAnswer },
+        { 'answers.idNumber': numAnswer }
+      );
+    }
   }
 
   return orConditions;
+};
+
+const responseMatchesAnswer = (resp, questionId, trackingQId, strAnswer, question = null) => {
+  const normTarget = String(strAnswer || '').trim().toLowerCase();
+  if (!normTarget) return false;
+
+  const answersMap = resp.answers instanceof Map ? Object.fromEntries(resp.answers) : (resp.answers || {});
+
+  const qText = question?.text ? String(question.text).trim() : null;
+  const isChassisQ = Boolean(
+    questionId === 'chassis_number' ||
+    questionId === 'chassisNumber' ||
+    questionId === 'chassis_id' ||
+    questionId === 'chassis' ||
+    questionId === 'identification_number' ||
+    questionId === 'identificationNumber' ||
+    (question && (question.type || '').toLowerCase().includes('chassis')) ||
+    (qText && /identification|chassis|id\s*number|id_number|id\s*no|vin|serial/i.test(qText)) ||
+    /identification|chassis|id\s*number|vin|serial/i.test(questionId)
+  );
+
+  const checkValue = (val) => {
+    if (val === null || val === undefined) return false;
+    if (typeof val === 'object') {
+      const c = val.chassisNumber || val.value || val.text;
+      if (c && String(c).trim().toLowerCase() === normTarget) return true;
+    }
+    return String(val).trim().toLowerCase() === normTarget;
+  };
+
+  // 1. Direct keys
+  if (checkValue(answersMap[questionId])) return true;
+  if (checkValue(answersMap[trackingQId])) return true;
+  if (checkValue(answersMap[`_${questionId}`])) return true;
+  if (checkValue(answersMap[`_${trackingQId}`])) return true;
+  if (qText && checkValue(answersMap[qText])) return true;
+
+  // 2. Chassis fields and aliases
+  if (isChassisQ) {
+    if (resp.chassisNumber && String(resp.chassisNumber).trim().toLowerCase() === normTarget) return true;
+    const chassisAliases = [
+      'chassis_number', 'chassisNumber', 'chassis_id', 'chassis',
+      'id_number', 'idNumber', 'Identification', 'identification',
+      'Identification Number', 'identification_number', 'identificationNumber',
+      'IDENTIFICATION NUMBER', 'Identification No', 'identification_no',
+      'ID number', 'ID Number', 'ID NUMBER', 'ID_NUMBER',
+      'chassis_no', 'chassisNo', 'Chassis / VIN', 'VIN'
+    ];
+    for (const key of chassisAliases) {
+      if (checkValue(answersMap[key])) return true;
+    }
+  }
+
+  return false;
 };
 
 /**
@@ -1600,6 +1670,17 @@ const buildChassisOrConditions = (questionId, trackingQId, strAnswer, extraQuest
  * Used for real-time ranking display during form filling
  */
 export const getRank = async (req, res) => {
+  // Track ranking logic commented out
+  return res.status(200).json({
+    success: true,
+    data: {
+      rank: null,
+      count: 0,
+      exists: false,
+      history: []
+    }
+  });
+  /*
   try {
     const formId = req.params.formId || req.query.formId;
     const questionId = req.params.questionId || req.query.questionId;
@@ -1677,9 +1758,7 @@ export const getRank = async (req, res) => {
 
     // Count existing final responses with the EXACT SAME answer for THIS form alone (isolated rank tracking)
     const formIds = getThisFormIds(form, formId);
-    const extraQIds = getThisFormExtraQuestionIds(form);
-
-    const orConditions = buildChassisOrConditions(questionId, trackingQId, strAnswer, extraQIds);
+    const orConditions = buildChassisOrConditions(questionId, trackingQId, strAnswer, question);
 
     if (!orConditions || orConditions.length === 0) {
       return res.status(200).json({
@@ -1708,10 +1787,14 @@ export const getRank = async (req, res) => {
     }
 
     const matchingResponses = await Response.find(query)
-      .select('id _id status answers createdAt isDispatched dispatchedAt dispatchedByName biwReview submittedBy createdBy')
+      .select('id _id status answers createdAt isDispatched dispatchedAt dispatchedByName biwReview submittedBy createdBy chassisNumber')
       .lean();
 
-    const sortedResponses = matchingResponses.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    const verifiedResponses = matchingResponses.filter(resp =>
+      responseMatchesAnswer(resp, questionId, trackingQId, strAnswer, question)
+    );
+
+    const sortedResponses = verifiedResponses.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     const count = sortedResponses.length;
 
     let reworkCount = 0;
@@ -1857,6 +1940,7 @@ export const getRank = async (req, res) => {
       message: 'Internal server error'
     });
   }
+  */
 };
 
 
@@ -1936,8 +2020,7 @@ export const getSuggestedAnswers = async (req, res) => {
     }
 
     const formIds = getThisFormIds(form, formId);
-    const extraQIds = getThisFormExtraQuestionIds(form);
-    const orConditions = buildChassisOrConditions(questionId, trackingQId, strAnswer, extraQIds);
+    const orConditions = buildChassisOrConditions(questionId, trackingQId, strAnswer, question);
 
     if (!orConditions || orConditions.length === 0) {
       return res.status(200).json({
@@ -1967,14 +2050,18 @@ export const getSuggestedAnswers = async (req, res) => {
       .limit(20)
       .lean();
 
-    if (matchingResponses.length === 0) {
+    const verifiedResponses = matchingResponses.filter(resp =>
+      responseMatchesAnswer(resp, questionId, trackingQId, strAnswer, question)
+    );
+
+    if (verifiedResponses.length === 0) {
       return res.status(200).json({
         success: true,
         data: { suggestedAnswers: null }
       });
     }
 
-    const sortedResponses = matchingResponses.sort((a, b) => {
+    const sortedResponses = verifiedResponses.sort((a, b) => {
       if (a.isSectionSubmit !== b.isSectionSubmit) {
         return a.isSectionSubmit ? 1 : -1;
       }

@@ -159,9 +159,9 @@ router.post('/convert-image', async (req, res) => {
 router.post('/:tenantSlug/forms/:formId/responses', authenticateOptional, createResponse);
 
 
-// 7. GET RANK (PUBLIC)
-router.get('/rank', getRank);
-router.get('/:tenantSlug/forms/:formId/rank', getRank);
+// 7. GET RANK (PUBLIC) - Track ranking logic commented out
+// router.get('/rank', getRank);
+// router.get('/:tenantSlug/forms/:formId/rank', getRank);
 
 // 8. GET SUGGESTIONS (PUBLIC)
 router.get('/suggestions', getSuggestedAnswers);
